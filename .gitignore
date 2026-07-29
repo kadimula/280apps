@@ -26,7 +26,6 @@ docs/
 
 # e2e test in progress
 tests/
-scripts/
 
 
 # Personal agent tooling (sources live in gitignored .agents/)

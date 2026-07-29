@@ -7,5 +7,13 @@ directory holds only the edge dispatcher.
   the app's script (Workers for Platforms). `wrangler.jsonc` is prod,
   `wrangler.development.jsonc` is development.
 
+The control plane itself now also deploys as a Cloudflare Worker, alongside the
+dispatcher, from `packages/backend/` — its `wrangler.jsonc` (prod) and
+`wrangler.development.jsonc` (development) declare the `api.280apps.com` route,
+the R2 / Hyperdrive / Durable Object bindings, and the cleanup cron. One-time
+resources (R2 buckets, Hyperdrive configs with query caching disabled) are
+created by `packages/backend/scripts/bootstrap-resources.sh`. This is part of
+the control-plane Workers migration (plan Workstream B / §5).
+
 Server behavior, store, blobstore, runtime, API, and run/deploy docs: see
 `packages/backend/`.

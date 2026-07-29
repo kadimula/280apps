@@ -17,8 +17,14 @@ import type {
 } from './types.js';
 
 // BlobBody is the streamed content of one blob. It must be consumed as a raw
-// stream, never a buffered body (plan risk register: 100 MiB PUTs).
-export type BlobBody = Readable | AsyncIterable<Uint8Array>;
+// stream, never a buffered body (plan risk register: 100 MiB PUTs). The
+// async-iterable form is what the filesystem blob store and tests hand in; the
+// web ReadableStream form lets the R2 adapter forward the request body straight
+// through without re-wrapping it.
+export type BlobBody =
+  | Readable
+  | ReadableStream<Uint8Array>
+  | AsyncIterable<Uint8Array>;
 
 export interface Port {
   // Sync is begin, resume, and re-attach in one idempotent call. Idempotent on

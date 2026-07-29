@@ -61,12 +61,12 @@ export default {
 /** @returns {string | null} */
 function scriptFor(hostname, env) {
 	let label = hostname.split(".")[0];
-	// Staging serves apps at <script>-staging.280apps.run, a single label under
-	// the zone so the free Universal SSL wildcard (*.280apps.run) covers them; a
-	// second-level *.staging.280apps.run would need a paid cert. HOST_SUFFIX is
-	// set only on the staging dispatcher and strips that suffix back to the
-	// script name. Prod leaves it unset, so prod parsing is byte-for-byte the
-	// same as before.
+	// Development serves apps at <script>-development.280apps.run, a single label
+	// under the zone so the free Universal SSL wildcard (*.280apps.run) covers
+	// them; a second-level *.development.280apps.run would need a paid cert.
+	// HOST_SUFFIX is set only on the development dispatcher and strips that suffix
+	// back to the script name. Prod leaves it unset, so prod parsing is
+	// byte-for-byte the same as before.
 	const suffix = env.HOST_SUFFIX;
 	if (suffix && label.length > suffix.length && label.endsWith(suffix)) {
 		label = label.slice(0, -suffix.length);

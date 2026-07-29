@@ -28,169 +28,9 @@ import {
   type Store,
   type User,
 } from '../seams.js';
+import { migrations, qualify, type Qualifier } from './migrations.js';
 
 const { Pool } = pg;
-
-// epochDefault is the created_at default. Seconds since the epoch rather than a
-// timestamptz because these columns are only ever read as ordering keys and
-// compared against Date.now()/1000.
-const epochDefault = `EXTRACT(EPOCH FROM now())::bigint`;
-
-// migrations are applied on every boot. Each statement stands alone and is
-// idempotent, so starting an already-migrated database is a no-op rather than a
-// version check to keep in sync. Verbatim from store.go:131 (same tables, same
-// partial unique indexes).
-const migrations: string[] = [
-  `CREATE TABLE IF NOT EXISTS accounts (
-     id         TEXT PRIMARY KEY,
-     subject    TEXT NOT NULL DEFAULT '',
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  // One account per identity. Partial, so the subject-less accounts OpenSignup
-  // mints do not all collide on ''.
-  `CREATE UNIQUE INDEX IF NOT EXISTS accounts_by_subject
-     ON accounts(subject) WHERE subject <> ''`,
-  // Only the hash is stored, so a leaked database does not hand over the ability
-  // to push to every account in it.
-  `CREATE TABLE IF NOT EXISTS tokens (
-     token_hash TEXT PRIMARY KEY,
-     account_id TEXT NOT NULL,
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE TABLE IF NOT EXISTS device_codes (
-     device_hash TEXT PRIMARY KEY,
-     user_code   TEXT NOT NULL UNIQUE,
-     account_id  TEXT NOT NULL DEFAULT '',
-     status      TEXT NOT NULL,
-     expires_at  BIGINT NOT NULL,
-     created_at  BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE TABLE IF NOT EXISTS apps (
-     id            TEXT PRIMARY KEY,
-     account_id    TEXT NOT NULL,
-     slug          TEXT NOT NULL,
-     framework     TEXT NOT NULL,
-     url           TEXT NOT NULL,
-     script        TEXT NOT NULL UNIQUE,
-     salt          TEXT NOT NULL,
-     fingerprint   TEXT NOT NULL DEFAULT '',
-     client_ref    TEXT NOT NULL DEFAULT '',
-     store_id      TEXT NOT NULL DEFAULT '',
-     active_deploy TEXT NOT NULL DEFAULT '',
-     created_at    BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE INDEX IF NOT EXISTS apps_by_fingerprint ON apps(account_id, fingerprint)`,
-  // Enforces clientRef create-dedup in the database rather than in a
-  // read-then-write race: a retried push that lost its config file cannot
-  // produce a second app.
-  `CREATE UNIQUE INDEX IF NOT EXISTS apps_by_client_ref
-     ON apps(account_id, client_ref) WHERE client_ref <> ''`,
-  `CREATE TABLE IF NOT EXISTS deploys (
-     app_id     TEXT NOT NULL,
-     id         TEXT NOT NULL,
-     manifest   TEXT NOT NULL,
-     state      TEXT NOT NULL,
-     failure    TEXT NOT NULL DEFAULT '',
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault}),
-     PRIMARY KEY (app_id, id)
-   )`,
-  // Append-only. A serial id rather than a natural key because the useful order
-  // is the order things happened, and two events can share a second. The
-  // scoping columns default to '' rather than NULL so every read is a plain
-  // equality test.
-  `CREATE TABLE IF NOT EXISTS events (
-     id         BIGSERIAL PRIMARY KEY,
-     account_id TEXT NOT NULL DEFAULT '',
-     app_id     TEXT NOT NULL DEFAULT '',
-     deploy_id  TEXT NOT NULL DEFAULT '',
-     kind       TEXT NOT NULL,
-     detail     TEXT NOT NULL DEFAULT '',
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE INDEX IF NOT EXISTS events_by_time ON events(created_at DESC, id DESC)`,
-  `CREATE INDEX IF NOT EXISTS events_by_account ON events(account_id, created_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS events_by_app ON events(app_id, created_at DESC)`,
-
-  // Identity the backend now owns, since login moved off the frontend. A user's
-  // id is the subject the accounts table keys on, so it is assigned once and
-  // never changes; email is lowercased and unique so two providers for one
-  // person converge on one user.
-  `CREATE TABLE IF NOT EXISTS users (
-     id         TEXT PRIMARY KEY,
-     email      TEXT NOT NULL,
-     name       TEXT NOT NULL DEFAULT '',
-     image      TEXT NOT NULL DEFAULT '',
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS users_by_email ON users(email)`,
-  // One row per external login. The provider's handle for the user is the key,
-  // so a returning Google user resolves to the same id every time.
-  `CREATE TABLE IF NOT EXISTS oauth_accounts (
-     provider            TEXT NOT NULL,
-     provider_account_id TEXT NOT NULL,
-     user_id             TEXT NOT NULL,
-     created_at          BIGINT NOT NULL DEFAULT (${epochDefault}),
-     PRIMARY KEY (provider, provider_account_id)
-   )`,
-  `CREATE INDEX IF NOT EXISTS oauth_by_user ON oauth_accounts(user_id)`,
-  // Browser sessions. Only the token hash is stored, mirroring tokens above.
-  `CREATE TABLE IF NOT EXISTS sessions (
-     token_hash TEXT PRIMARY KEY,
-     user_id    TEXT NOT NULL,
-     expires_at BIGINT NOT NULL,
-     created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-   )`,
-  `CREATE INDEX IF NOT EXISTS sessions_by_user ON sessions(user_id)`,
-  // Login rate counters, one row per key (a client IP). expires_at is the end of
-  // the current window, so both read and increment compare against now with no
-  // interval arithmetic.
-  `CREATE TABLE IF NOT EXISTS login_rate_limits (
-     key        TEXT PRIMARY KEY,
-     count      BIGINT NOT NULL DEFAULT 0,
-     expires_at BIGINT NOT NULL
-   )`,
-
-  // One-time carry-over of the next-auth tables the frontend used to own. It is
-  // idempotent (NOT EXISTS guards on both id and email) and a no-op when those
-  // tables are absent, so it is safe to leave in the boot migration set: a fresh
-  // database simply skips it. It copies id/email/name/image and the Google
-  // account linkage; passwords are intentionally left behind, since login is now
-  // OIDC-only and a migrated password user signs in with Google on the same
-  // email and lands on their original id. The legacy tables live in the public
-  // schema (the frontend set no search_path); this platform runs in its own.
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'user'
-     ) THEN
-       INSERT INTO users (id, email, name, image)
-       SELECT u.id, lower(u.email), COALESCE(u.name, ''), COALESCE(u.image, '')
-       FROM public."user" u
-       WHERE u.email IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM users x WHERE x.id = u.id OR x.email = lower(u.email)
-         );
-
-       IF EXISTS (
-         SELECT 1 FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name = 'account'
-       ) THEN
-         INSERT INTO oauth_accounts (provider, provider_account_id, user_id)
-         SELECT a.provider, a."providerAccountId", a."userId"
-         FROM public."account" a
-         WHERE a.provider = 'google'
-           AND EXISTS (SELECT 1 FROM users u WHERE u.id = a."userId")
-         ON CONFLICT (provider, provider_account_id) DO NOTHING;
-       END IF;
-     END IF;
-   END $$`,
-];
-
-// safeSchema is the shape of a bare Postgres identifier. A schema name reaches
-// SQL by concatenation, since an identifier cannot be a bind parameter, so the
-// value is checked rather than trusted — it arrives from the environment.
-const safeSchema = /^[a-z_][a-z0-9_]*$/;
 
 // connectTimeout bounds the wait for a database to become reachable at boot, in
 // milliseconds. A container host's private network can take a moment to resolve
@@ -202,15 +42,6 @@ const connectTimeoutMs = 30_000;
 // is a slow way to run out of memory two years from now.
 const maxEventPage = 200;
 
-// withSearchPath pins a DSN to one schema. It goes in the connection string
-// rather than a SET, so every connection the pool opens lands in the same
-// place, including the ones it opens hours from now to replace a dead one.
-function withSearchPath(dsn: string, schema: string): string {
-  const u = new URL(dsn);
-  u.searchParams.set('options', `-c search_path=${schema}`);
-  return u.toString();
-}
-
 // open connects to (and migrates) the Postgres database at dsn, which is the
 // DATABASE_URL the host hands the process.
 //
@@ -218,16 +49,17 @@ function withSearchPath(dsn: string, schema: string): string {
 // database with another service without sharing a namespace. The schema is
 // created if missing: the platform owns its own tables, and needing a DBA to
 // run one DDL statement before the first boot is a step that gets forgotten.
+//
+// Boot still migrates. The statements are idempotent, so a database CI already
+// migrated is a no-op here; keeping the boot path means the container and
+// rollback paths do not depend on a separate runner having gone first.
 export async function open(dsn: string, schema: string): Promise<Store> {
   if (dsn === '') {
     throw new Error('store: empty DATABASE_URL');
   }
-  if (schema !== '') {
-    if (!safeSchema.test(schema)) {
-      throw new Error(`store: "${schema}" is not a valid schema name`);
-    }
-    dsn = withSearchPath(dsn, schema);
-  }
+  // migrations() validates the schema identifier and throws on a bad one, so
+  // build the statement list before opening the pool.
+  const stmts = migrations(schema);
 
   // A deploy control plane's write rate does not need a large pool, and a
   // bounded one keeps a restart loop from exhausting the server's connection
@@ -243,19 +75,16 @@ export async function open(dsn: string, schema: string): Promise<Store> {
   // database and only says so under load is the worst version of this error.
   try {
     await waitForDB(pool);
-    // Before the migrations, and safe to run while search_path already names
-    // it: an unqualified CREATE TABLE resolves to the schema once it exists.
-    if (schema !== '') {
-      await pool.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
-    }
-    for (const stmt of migrations) {
+    // Every statement is schema-qualified, so this no longer depends on a
+    // session search_path; the first statement creates the schema.
+    for (const stmt of stmts) {
       await pool.query(stmt);
     }
   } catch (err) {
     await pool.end();
     throw err;
   }
-  return new PgStore(pool);
+  return new PgStore(pool, schema);
 }
 
 // waitForDB pings until the database answers or connectTimeout elapses.
@@ -390,7 +219,17 @@ function eventDetail(kv: Record<string, string>): string {
 
 // PgStore is the database handle.
 class PgStore implements Store {
-  constructor(private readonly pool: pg.Pool) {}
+  // t addresses a table by its configured schema. Every statement below routes
+  // its table names through it, so nothing depends on a session search_path —
+  // the one requirement for surviving transaction-mode connection pooling.
+  private readonly t: Qualifier;
+
+  constructor(
+    private readonly pool: pg.Pool,
+    schema: string,
+  ) {
+    this.t = qualify(schema);
+  }
 
   async close(): Promise<void> {
     await this.pool.end();
@@ -427,7 +266,7 @@ class PgStore implements Store {
     }
     const res = await this.pool.query(
       `SELECT id, account_id, app_id, deploy_id, kind, detail, created_at
-       FROM events ORDER BY created_at DESC, id DESC LIMIT $1`,
+       FROM ${this.t('events')} ORDER BY created_at DESC, id DESC LIMIT $1`,
       [limit],
     );
     return res.rows.map(rowToEvent);
@@ -437,8 +276,8 @@ class PgStore implements Store {
 
   async accountByToken(tokenHash: string): Promise<Account | null> {
     const res = await this.pool.query(
-      `SELECT a.id, a.subject FROM accounts a
-       JOIN tokens t ON t.account_id = a.id
+      `SELECT a.id, a.subject FROM ${this.t('accounts')} a
+       JOIN ${this.t('tokens')} t ON t.account_id = a.id
        WHERE t.token_hash = $1`,
       [tokenHash],
     );
@@ -447,7 +286,7 @@ class PgStore implements Store {
 
   async accountBySubject(subject: string): Promise<Account | null> {
     const res = await this.pool.query(
-      `SELECT id, subject FROM accounts WHERE subject = $1`,
+      `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
       [subject],
     );
     return res.rows.length ? rowToAccount(res.rows[0]) : null;
@@ -455,7 +294,7 @@ class PgStore implements Store {
 
   async createAccount(a: Account): Promise<void> {
     await this.pool.query(
-      `INSERT INTO accounts (id, subject) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
       [a.id, a.subject],
     );
   }
@@ -471,12 +310,12 @@ class PgStore implements Store {
     // accounts_by_subject is partial, and the upsert target is matched to a
     // partial index only when the predicate is restated.
     await this.pool.query(
-      `INSERT INTO accounts (id, subject) VALUES ($1, $2)
+      `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2)
        ON CONFLICT (subject) WHERE subject <> '' DO NOTHING`,
       [newId, subject],
     );
     const res = await this.pool.query(
-      `SELECT id, subject FROM accounts WHERE subject = $1`,
+      `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
       [subject],
     );
     if (!res.rows.length) {
@@ -487,7 +326,7 @@ class PgStore implements Store {
 
   async addToken(accountId: string, tokenHash: string): Promise<void> {
     await this.pool.query(
-      `INSERT INTO tokens (token_hash, account_id) VALUES ($1, $2) ON CONFLICT (token_hash) DO NOTHING`,
+      `INSERT INTO ${this.t('tokens')} (token_hash, account_id) VALUES ($1, $2) ON CONFLICT (token_hash) DO NOTHING`,
       [tokenHash, accountId],
     );
   }
@@ -496,7 +335,7 @@ class PgStore implements Store {
 
   async userById(id: string): Promise<User | null> {
     const res = await this.pool.query(
-      `SELECT id, email, name, image FROM users WHERE id = $1`,
+      `SELECT id, email, name, image FROM ${this.t('users')} WHERE id = $1`,
       [id],
     );
     return res.rows.length ? rowToUser(res.rows[0]) : null;
@@ -504,7 +343,7 @@ class PgStore implements Store {
 
   async userByEmail(email: string): Promise<User | null> {
     const res = await this.pool.query(
-      `SELECT id, email, name, image FROM users WHERE email = $1`,
+      `SELECT id, email, name, image FROM ${this.t('users')} WHERE email = $1`,
       [email],
     );
     return res.rows.length ? rowToUser(res.rows[0]) : null;
@@ -512,14 +351,14 @@ class PgStore implements Store {
 
   async createUser(u: User): Promise<void> {
     await this.pool.query(
-      `INSERT INTO users (id, email, name, image) VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO ${this.t('users')} (id, email, name, image) VALUES ($1, $2, $3, $4)`,
       [u.id, u.email, u.name, u.image],
     );
   }
 
   async oauthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null> {
     const res = await this.pool.query(
-      `SELECT provider, provider_account_id, user_id FROM oauth_accounts
+      `SELECT provider, provider_account_id, user_id FROM ${this.t('oauth_accounts')}
        WHERE provider = $1 AND provider_account_id = $2`,
       [provider, providerAccountId],
     );
@@ -528,7 +367,7 @@ class PgStore implements Store {
 
   async linkOAuthAccount(a: OAuthAccount): Promise<void> {
     await this.pool.query(
-      `INSERT INTO oauth_accounts (provider, provider_account_id, user_id) VALUES ($1, $2, $3)
+      `INSERT INTO ${this.t('oauth_accounts')} (provider, provider_account_id, user_id) VALUES ($1, $2, $3)
        ON CONFLICT (provider, provider_account_id) DO NOTHING`,
       [a.provider, a.providerAccountId, a.userId],
     );
@@ -536,21 +375,21 @@ class PgStore implements Store {
 
   async createSession(s: Session): Promise<void> {
     await this.pool.query(
-      `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+      `INSERT INTO ${this.t('sessions')} (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
       [s.tokenHash, s.userId, s.expiresAt],
     );
   }
 
   async sessionByHash(tokenHash: string): Promise<Session | null> {
     const res = await this.pool.query(
-      `SELECT token_hash, user_id, expires_at FROM sessions WHERE token_hash = $1`,
+      `SELECT token_hash, user_id, expires_at FROM ${this.t('sessions')} WHERE token_hash = $1`,
       [tokenHash],
     );
     return res.rows.length ? rowToSession(res.rows[0]) : null;
   }
 
   async deleteSession(tokenHash: string): Promise<void> {
-    await this.pool.query(`DELETE FROM sessions WHERE token_hash = $1`, [tokenHash]);
+    await this.pool.query(`DELETE FROM ${this.t('sessions')} WHERE token_hash = $1`, [tokenHash]);
   }
 
   // touchLoginRate is a single upsert that resets the window when it has passed
@@ -560,13 +399,13 @@ class PgStore implements Store {
     // The arithmetic parameters are cast explicitly: an untyped $n inside `+`
     // defaults to text, and text + text is not an operator Postgres has.
     const res = await this.pool.query(
-      `INSERT INTO login_rate_limits (key, count, expires_at)
+      `INSERT INTO ${this.t('login_rate_limits')} AS lrl (key, count, expires_at)
        VALUES ($1, 1, $2::bigint + $3::bigint)
        ON CONFLICT (key) DO UPDATE SET
-         count = CASE WHEN login_rate_limits.expires_at <= $2::bigint THEN 1
-                      ELSE login_rate_limits.count + 1 END,
-         expires_at = CASE WHEN login_rate_limits.expires_at <= $2::bigint THEN $2::bigint + $3::bigint
-                           ELSE login_rate_limits.expires_at END
+         count = CASE WHEN lrl.expires_at <= $2::bigint THEN 1
+                      ELSE lrl.count + 1 END,
+         expires_at = CASE WHEN lrl.expires_at <= $2::bigint THEN $2::bigint + $3::bigint
+                           ELSE lrl.expires_at END
        RETURNING count`,
       [key, now, windowSecs],
     );
@@ -577,14 +416,14 @@ class PgStore implements Store {
 
   async createDeviceCode(d: DeviceCode): Promise<void> {
     await this.pool.query(
-      `INSERT INTO device_codes (device_hash, user_code, status, expires_at) VALUES ($1,$2,$3,$4)`,
+      `INSERT INTO ${this.t('device_codes')} (device_hash, user_code, status, expires_at) VALUES ($1,$2,$3,$4)`,
       [d.deviceHash, d.userCode, d.status, d.expiresAt],
     );
   }
 
   async deviceCodeByHash(hash: string): Promise<DeviceCode | null> {
     const res = await this.pool.query(
-      `SELECT device_hash, user_code, account_id, status, expires_at FROM device_codes WHERE device_hash = $1`,
+      `SELECT device_hash, user_code, account_id, status, expires_at FROM ${this.t('device_codes')} WHERE device_hash = $1`,
       [hash],
     );
     return res.rows.length ? rowToDeviceCode(res.rows[0]) : null;
@@ -596,14 +435,14 @@ class PgStore implements Store {
   async approveDeviceCode(userCode: string, accountId: string, now: number): Promise<boolean> {
     return this.inTx(async (tx) => {
       const res = await tx.query(
-        `UPDATE device_codes SET status = $1, account_id = $2
+        `UPDATE ${this.t('device_codes')} SET status = $1, account_id = $2
          WHERE user_code = $3 AND status = $4 AND expires_at > $5`,
         [DeviceStatus.Approved, accountId, userCode, DeviceStatus.Pending, now],
       );
       if (res.rowCount !== 1) {
         return false;
       }
-      await insertEvent(tx, { accountId, kind: EventKind.LoginApproved });
+      await this.insertEvent(tx, { accountId, kind: EventKind.LoginApproved });
       return true;
     });
   }
@@ -615,14 +454,14 @@ class PgStore implements Store {
       // RETURNING rather than a row count: the winner needs the account the
       // code was approved for, and the caller does not have it.
       const res = await tx.query(
-        `UPDATE device_codes SET status = $1 WHERE device_hash = $2 AND status = $3
+        `UPDATE ${this.t('device_codes')} SET status = $1 WHERE device_hash = $2 AND status = $3
          RETURNING account_id`,
         [DeviceStatus.Claimed, deviceHash, DeviceStatus.Approved],
       );
       if (res.rowCount !== 1) {
         return false;
       }
-      await insertEvent(tx, {
+      await this.insertEvent(tx, {
         accountId: res.rows[0].account_id,
         kind: EventKind.LoginClaimed,
       });
@@ -634,7 +473,7 @@ class PgStore implements Store {
 
   async app(accountId: string, appId: string): Promise<App | null> {
     const res = await this.pool.query(
-      `SELECT ${appCols} FROM apps WHERE account_id = $1 AND id = $2`,
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2`,
       [accountId, appId],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
@@ -644,7 +483,7 @@ class PgStore implements Store {
   // first. More than one is the ambiguous_identity case.
   async appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]> {
     const res = await this.pool.query(
-      `SELECT ${appCols} FROM apps WHERE account_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
       [accountId, fingerprint],
     );
     return res.rows.map(rowToApp);
@@ -653,7 +492,7 @@ class PgStore implements Store {
   // appsByAccount returns everything an account owns, newest first.
   async appsByAccount(accountId: string): Promise<App[]> {
     const res = await this.pool.query(
-      `SELECT ${appCols} FROM apps WHERE account_id = $1 ORDER BY created_at DESC, id`,
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 ORDER BY created_at DESC, id`,
       [accountId],
     );
     return res.rows.map(rowToApp);
@@ -661,7 +500,7 @@ class PgStore implements Store {
 
   async appByClientRef(accountId: string, ref: string): Promise<App | null> {
     const res = await this.pool.query(
-      `SELECT ${appCols} FROM apps WHERE account_id = $1 AND client_ref = $2`,
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND client_ref = $2`,
       [accountId, ref],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
@@ -673,7 +512,7 @@ class PgStore implements Store {
       // (account, clientRef), and losing that race must stay an error the
       // caller can recognize and resolve to the existing app.
       await tx.query(
-        `INSERT INTO apps (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO ${this.t('apps')} (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           a.id,
           a.accountId,
@@ -688,7 +527,7 @@ class PgStore implements Store {
           a.activeDeploy,
         ],
       );
-      await insertEvent(tx, {
+      await this.insertEvent(tx, {
         accountId: a.accountId,
         appId: a.id,
         kind: EventKind.AppCreated,
@@ -704,16 +543,16 @@ class PgStore implements Store {
   async deleteApp(accountId: string, appId: string): Promise<boolean> {
     return this.inTx(async (tx) => {
       const del = await tx.query(
-        `DELETE FROM apps WHERE account_id = $1 AND id = $2 RETURNING slug`,
+        `DELETE FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2 RETURNING slug`,
         [accountId, appId],
       );
       if (del.rowCount !== 1) {
         return false; // already gone; deleting twice is not a failure
       }
-      await tx.query(`DELETE FROM deploys WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('deploys')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row this statement would read
       // the account from no longer exists.
-      await insertEvent(tx, {
+      await this.insertEvent(tx, {
         accountId,
         appId,
         kind: EventKind.AppDeleted,
@@ -724,12 +563,12 @@ class PgStore implements Store {
   }
 
   async setStoreId(appId: string, storeId: string): Promise<void> {
-    await this.pool.query(`UPDATE apps SET store_id = $1 WHERE id = $2`, [storeId, appId]);
+    await this.pool.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
   }
 
   // appByScript resolves a hostname label to an app, for the serving edge.
   async appByScript(script: string): Promise<App | null> {
-    const res = await this.pool.query(`SELECT ${appCols} FROM apps WHERE script = $1`, [script]);
+    const res = await this.pool.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 
@@ -737,7 +576,7 @@ class PgStore implements Store {
 
   async deploy(appId: string, deployId: string): Promise<Deploy | null> {
     const res = await this.pool.query(
-      `SELECT app_id, id, manifest, state, failure FROM deploys WHERE app_id = $1 AND id = $2`,
+      `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')} WHERE app_id = $1 AND id = $2`,
       [appId, deployId],
     );
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
@@ -747,7 +586,7 @@ class PgStore implements Store {
   // digests the app will accept.
   async openDeploys(appId: string): Promise<Deploy[]> {
     const res = await this.pool.query(
-      `SELECT app_id, id, manifest, state, failure FROM deploys
+      `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
        WHERE app_id = $1 AND state NOT IN ($2, $3)`,
       [appId, State.Live, State.Failed],
     );
@@ -760,10 +599,10 @@ class PgStore implements Store {
   async openDeploy(d: Deploy): Promise<Deploy> {
     const manifest = JSON.stringify(d.manifest);
     await this.pool.query(
-      `INSERT INTO deploys (app_id, id, manifest, state, failure) VALUES ($1,$2,$3,$4,'')
+      `INSERT INTO ${this.t('deploys')} AS d (app_id, id, manifest, state, failure) VALUES ($1,$2,$3,$4,'')
        ON CONFLICT (app_id, id) DO UPDATE SET
-         state   = CASE WHEN deploys.state = $5 THEN $6 ELSE deploys.state END,
-         failure = CASE WHEN deploys.state = $7 THEN ''  ELSE deploys.failure END`,
+         state   = CASE WHEN d.state = $5 THEN $6 ELSE d.state END,
+         failure = CASE WHEN d.state = $7 THEN ''  ELSE d.failure END`,
       [d.appId, d.id, manifest, State.Uploading, State.Failed, State.Uploading, State.Failed],
     );
     const got = await this.deploy(d.appId, d.id);
@@ -778,7 +617,7 @@ class PgStore implements Store {
   // last-blob-landed moment; exactly one may act on it.
   async claimActivation(appId: string, deployId: string): Promise<boolean> {
     const res = await this.pool.query(
-      `UPDATE deploys SET state = $1 WHERE app_id = $2 AND id = $3 AND state = $4`,
+      `UPDATE ${this.t('deploys')} SET state = $1 WHERE app_id = $2 AND id = $3 AND state = $4`,
       [State.Activating, appId, deployId, State.Uploading],
     );
     return res.rowCount === 1;
@@ -797,15 +636,15 @@ class PgStore implements Store {
   async finishLive(appId: string, deployId: string): Promise<void> {
     await this.inTx(async (tx) => {
       await tx.query(
-        `UPDATE deploys SET state = $1, failure = '' WHERE app_id = $2 AND id = $3`,
+        `UPDATE ${this.t('deploys')} SET state = $1, failure = '' WHERE app_id = $2 AND id = $3`,
         [State.Live, appId, deployId],
       );
       await tx.query(
-        `DELETE FROM deploys WHERE app_id = $1 AND id <> $2 AND state = $3`,
+        `DELETE FROM ${this.t('deploys')} WHERE app_id = $1 AND id <> $2 AND state = $3`,
         [appId, deployId, State.Live],
       );
-      await tx.query(`UPDATE apps SET active_deploy = $1 WHERE id = $2`, [deployId, appId]);
-      await insertAppEvent(tx, appId, deployId, EventKind.DeployLive, '');
+      await tx.query(`UPDATE ${this.t('apps')} SET active_deploy = $1 WHERE id = $2`, [deployId, appId]);
+      await this.insertAppEvent(tx, appId, deployId, EventKind.DeployLive, '');
     });
   }
 
@@ -814,43 +653,43 @@ class PgStore implements Store {
   async finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void> {
     await this.inTx(async (tx) => {
       await tx.query(
-        `UPDATE deploys SET state = $1, failure = $2 WHERE app_id = $3 AND id = $4`,
+        `UPDATE ${this.t('deploys')} SET state = $1, failure = $2 WHERE app_id = $3 AND id = $4`,
         [State.Failed, encodeFailure(failure), appId, deployId],
       );
       // The code, not the message: a message carries a path or an upstream
       // error string, and the useful question of this table is which kinds of
       // failure happen, not what one of them said.
       const code = failure !== null ? failure.code : '';
-      await insertAppEvent(tx, appId, deployId, EventKind.DeployFailed, eventDetail({ code }));
+      await this.insertAppEvent(tx, appId, deployId, EventKind.DeployFailed, eventDetail({ code }));
     });
   }
-}
 
-// insertEvent appends one event through the pool or a transaction.
-async function insertEvent(
-  x: Pick<PoolClient, 'query'>,
-  e: { accountId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
-): Promise<void> {
-  await x.query(
-    `INSERT INTO events (account_id, app_id, deploy_id, kind, detail) VALUES ($1,$2,$3,$4,$5)`,
-    [e.accountId ?? '', e.appId ?? '', e.deployId ?? '', e.kind, e.detail ?? ''],
-  );
-}
+  // insertEvent appends one event through the pool or a transaction.
+  private async insertEvent(
+    x: Pick<PoolClient, 'query'>,
+    e: { accountId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
+  ): Promise<void> {
+    await x.query(
+      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail) VALUES ($1,$2,$3,$4,$5)`,
+      [e.accountId ?? '', e.appId ?? '', e.deployId ?? '', e.kind, e.detail ?? ''],
+    );
+  }
 
-// insertAppEvent appends an app-scoped event, taking the account from the app
-// row. Deploy transitions know an app id and nothing else, and threading an
-// account through them only to denormalize it here would be a parameter that
-// exists to be forgotten.
-async function insertAppEvent(
-  x: Pick<PoolClient, 'query'>,
-  appId: string,
-  deployId: string,
-  kind: string,
-  detail: string,
-): Promise<void> {
-  await x.query(
-    `INSERT INTO events (account_id, app_id, deploy_id, kind, detail)
-     SELECT account_id, id, $1, $2, $3 FROM apps WHERE id = $4`,
-    [deployId, kind, detail, appId],
-  );
+  // insertAppEvent appends an app-scoped event, taking the account from the app
+  // row. Deploy transitions know an app id and nothing else, and threading an
+  // account through them only to denormalize it here would be a parameter that
+  // exists to be forgotten.
+  private async insertAppEvent(
+    x: Pick<PoolClient, 'query'>,
+    appId: string,
+    deployId: string,
+    kind: string,
+    detail: string,
+  ): Promise<void> {
+    await x.query(
+      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail)
+       SELECT account_id, id, $1, $2, $3 FROM ${this.t('apps')} WHERE id = $4`,
+      [deployId, kind, detail, appId],
+    );
+  }
 }

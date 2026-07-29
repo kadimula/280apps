@@ -28,6 +28,10 @@ Product and tech vision (direction, not shipped): any app deploys (push instruct
 - Agent integrations: `packages/cli/src/setup/`. `280 setup` JSON-merges (never overwrites) a SessionStart hook into Claude Code, Codex, OpenCode and installs the skill. `packages/cli/skill/SKILL.md` is generated from the home view: `pnpm --filter two80 skill:gen`; CI runs `280 setup --check` to fail on drift.
 
 
+## Local notes
+
+Private/local notes and infra details live in `CLAUDE.local.md` (gitignored, not committed). Never put secrets (connection strings, keys, tokens, passwords) in this committed file; they belong in `CLAUDE.local.md` or a secrets manager.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

@@ -15,8 +15,18 @@ packages/*/dist/
 docs/
 *.local.md
 
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Cloudflare Wrangler local cache
+.wrangler/
+**/.wrangler/
+
 # e2e test in progress
 tests/
+scripts/
 
 
 # Personal agent tooling (sources live in gitignored .agents/)

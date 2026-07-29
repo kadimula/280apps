@@ -1,0 +1,8 @@
+{
+  "name": "nextjs-sample",
+  "features": [
+    { "key": "home", "name": "Home", "routes": "/" }
+  ],
+  "secrets": [],
+  "crons": []
+}

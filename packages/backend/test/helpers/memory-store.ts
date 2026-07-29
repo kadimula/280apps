@@ -13,6 +13,7 @@ import {
   type Deploy,
   type DeviceCode,
   type Event,
+  type ExpiryCounts,
   type OAuthAccount,
   type Session,
   type Store,
@@ -124,6 +125,31 @@ export class MemoryStore implements Store {
     }
     cur.count += 1;
     return cur.count <= limit;
+  }
+
+  async deleteExpired(now: number): Promise<ExpiryCounts> {
+    let sessions = 0;
+    for (const [k, s] of [...this.sessions.entries()]) {
+      if (s.expiresAt <= now) {
+        this.sessions.delete(k);
+        sessions++;
+      }
+    }
+    let deviceCodes = 0;
+    for (const [k, d] of [...this.deviceByHash.entries()]) {
+      if (d.expiresAt <= now) {
+        this.deviceByHash.delete(k);
+        deviceCodes++;
+      }
+    }
+    let rateLimits = 0;
+    for (const [k, r] of [...this.loginRate.entries()]) {
+      if (r.expiresAt <= now) {
+        this.loginRate.delete(k);
+        rateLimits++;
+      }
+    }
+    return { sessions, deviceCodes, rateLimits };
   }
 
   // ---- device codes ----

@@ -44,7 +44,7 @@ describe('blobstore', () => {
     const data = Buffer.from('worker bytes');
     const d = digestOf(data);
     expect(await store.has('app_1', d)).toBe(false);
-    await store.put('app_1', d, bodyFrom(data));
+    await store.put('app_1', d, data.length, bodyFrom(data));
     expect(await store.has('app_1', d)).toBe(true);
     const got = await store.get('app_1', d);
     expect(Buffer.from(got).equals(data)).toBe(true);
@@ -53,15 +53,15 @@ describe('blobstore', () => {
   it('put is idempotent for identical content', async () => {
     const data = Buffer.from('same');
     const d = digestOf(data);
-    await store.put('app_1', d, bodyFrom(data));
-    await store.put('app_1', d, bodyFrom(data)); // rename over an existing blob
+    await store.put('app_1', d, data.length, bodyFrom(data));
+    await store.put('app_1', d, data.length, bodyFrom(data)); // rename over an existing blob
     expect(Buffer.from(await store.get('app_1', d)).toString()).toBe('same');
   });
 
   it('put stores an empty blob', async () => {
     const data = Buffer.alloc(0);
     const d = digestOf(data);
-    await store.put('app_1', d, bodyFrom(data));
+    await store.put('app_1', d, data.length, bodyFrom(data));
     expect(await store.has('app_1', d)).toBe(true);
     expect((await store.get('app_1', d)).length).toBe(0);
   });
@@ -71,7 +71,7 @@ describe('blobstore', () => {
     const wrong = digestOf('different bytes'); // valid hex, wrong content
     let caught: unknown;
     try {
-      await store.put('app_1', wrong, bodyFrom(data));
+      await store.put('app_1', wrong, data.length, bodyFrom(data));
     } catch (err) {
       caught = err;
     }
@@ -94,7 +94,7 @@ describe('blobstore', () => {
   it('fans out on the digest first byte', async () => {
     const data = Buffer.from('layout');
     const d = digestOf(data);
-    await store.put('app_1', d, bodyFrom(data));
+    await store.put('app_1', d, data.length, bodyFrom(data));
     const p = join(root, 'app_1', d.slice(0, 2), d);
     expect((await stat(p)).isFile()).toBe(true);
   });
@@ -102,7 +102,7 @@ describe('blobstore', () => {
   it('blobs are app-scoped: one app storing a digest does not satisfy another', async () => {
     const data = Buffer.from('identical bytes in both apps');
     const d = digestOf(data);
-    await store.put('app_one', d, bodyFrom(data));
+    await store.put('app_one', d, data.length, bodyFrom(data));
     expect(await store.has('app_one', d)).toBe(true);
     expect(await store.has('app_two', d)).toBe(false);
   });
@@ -112,7 +112,7 @@ describe('blobstore', () => {
     const b = Buffer.from('b');
     const c = Buffer.from('c');
     const [da, db, dc] = [digestOf(a), digestOf(b), digestOf(c)];
-    await store.put('app_1', db, bodyFrom(b)); // b is present
+    await store.put('app_1', db, b.length, bodyFrom(b)); // b is present
     const want = [
       { path: '', digest: da, size: a.length },
       { path: '', digest: db, size: b.length },
@@ -125,7 +125,7 @@ describe('blobstore', () => {
   it('deleteApp removes everything and is an idempotent no-op when empty', async () => {
     const data = Buffer.from('gone soon');
     const d = digestOf(data);
-    await store.put('app_del', d, bodyFrom(data));
+    await store.put('app_del', d, data.length, bodyFrom(data));
     await store.deleteApp('app_del');
     expect(await store.has('app_del', d)).toBe(false);
     // Deleting an app that stored nothing succeeds.

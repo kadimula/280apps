@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Hono } from 'hono';
 import { Server } from '../src/api.js';
 import type { HonoEnv } from '../src/observe.js';
-import { newPlatform, type Harness } from './helpers/harness.js';
+import { newPlatform, testDeps, type Harness } from './helpers/harness.js';
 
 interface Exchange {
   case: string;
@@ -115,7 +115,7 @@ let app: Hono<HonoEnv>;
 
 beforeAll(async () => {
   harness = await newPlatform();
-  app = new Server({ platform: harness.platform, openSignup: true }).handler();
+  app = new Server({ buildDeps: () => testDeps(harness, { openSignup: true }) }).handler();
 });
 
 afterAll(async () => {

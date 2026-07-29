@@ -1,0 +1,127 @@
+// Request-scoped dependency construction: the Worker's assembly point, the
+// counterpart to the deleted Node bootstrap. buildRequestDeps turns one Env into
+// the per-request I/O container the deps middleware puts on the context — a
+// Platform over a lazily-connected pg client and the R2 blob store, the auth
+// service, and the request-scoped config the handlers read. Nothing here is an
+// isolate singleton except appLocks, which is a coordination map, not I/O.
+
+import { Platform } from './deploysvc.js';
+import { Auth } from './authsvc.js';
+import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
+import { newPgStore } from './store/store.js';
+import { R2BlobStore } from './blobstore/r2.js';
+import { MemoryRuntime, cloudflare } from './runtime/index.js';
+import type { ExpiryCounts, Runtime, Store } from './seams.js';
+import type { Logger } from './observe.js';
+import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
+
+// appLocks is the isolate-scoped per-app activation lock registry every
+// per-request Platform shares, so activation serialization outlives one request
+// (Platform.locks). One map per isolate; the accepted phase-1a limit is that it
+// does not reach across isolates — that is the AppActivator DO's later job.
+const appLocks = new Map<string, Promise<unknown>>();
+
+// buildRequestDeps constructs the request-scoped I/O container from Env. The pg
+// client is lazy (connects on the first statement) and closed after the response
+// via the returned close(); the R2 store, runtime, and auth are cheap plain
+// objects around it. This is called once per request by the deps middleware.
+export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
+  const config = readConfig(env);
+
+  const store = newPgStore(config.dbConnectionString, config.dbSchema);
+  const blobs = new R2BlobStore(env.BLOBS);
+  const runtime = selectRuntime(config, log);
+  const auth = buildAuth(store, config, log);
+
+  const platform = new Platform({
+    store,
+    blobs,
+    runtime,
+    appDomain: config.appDomain,
+    hostSuffix: config.hostSuffix,
+    locks: appLocks,
+  });
+
+  return {
+    platform,
+    auth,
+    openSignup: config.openSignup,
+    verificationUri: config.verificationUri,
+    minCliVersion: config.minCliVersion,
+    close: () => store.close(),
+  };
+}
+
+// selectRuntime picks where apps run. Misconfiguration is a request failure
+// rather than a degraded mode: a platform that accepts pushes and hosts nothing
+// is the one outcome with no honest error message for the agent. (Reads config,
+// not process.env; otherwise verbatim from the deleted main.ts.)
+export function selectRuntime(config: Config, log: Logger): Runtime {
+  if (config.runtime === 'memory') {
+    log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
+    return new MemoryRuntime();
+  }
+  for (const [name, v] of [
+    ['CF_ACCOUNT_ID', config.cf.accountId],
+    ['CF_API_TOKEN', config.cf.apiToken],
+    ['CF_DISPATCH_NAMESPACE', config.cf.namespace],
+  ] as const) {
+    if (v === '') {
+      throw new Error(`${name} is required (or set TWO80_RUNTIME=memory)`);
+    }
+  }
+  if (config.cf.isrCacheKV === '') {
+    log.warn('CF_ISR_CACHE_KV unset: Next.js ISR will not persist between requests');
+  }
+  return new cloudflare.Runtime({
+    accountId: config.cf.accountId,
+    apiToken: config.cf.apiToken,
+    namespace: config.cf.namespace,
+    isrCacheKV: config.cf.isrCacheKV,
+    compatibilityDate: config.cf.compatibilityDate,
+    d1Location: config.cf.d1Location,
+  });
+}
+
+// buildAuth wires the browser-login flow, or returns undefined when no provider
+// is configured. Undefined is not fatal: a memory-runtime dev loop with no
+// Google credentials still serves the deploy API. But the web surface (login,
+// the dashboard, activate) is inert without it, so it is called out.
+export function buildAuth(store: Store, config: Config, log: Logger): Auth | undefined {
+  const providers: Record<string, OidcProvider> = {};
+  if (config.google.clientId !== '' && config.google.clientSecret !== '') {
+    providers.google = new GoogleProvider({
+      clientId: config.google.clientId,
+      clientSecret: config.google.clientSecret,
+    });
+  }
+
+  if (Object.keys(providers).length === 0) {
+    log.warn(
+      'no login provider configured (set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET): the web surface cannot sign anyone in',
+    );
+    return undefined;
+  }
+
+  return new Auth(store, {
+    providers,
+    apiOrigin: config.apiOrigin,
+    frontendOrigin: config.frontendOrigin,
+    cookieDomain: config.cookieDomain,
+    sessionTtlSecs: config.sessionTtlDays * 24 * 60 * 60,
+    rate: { windowSecs: config.loginRate.windowSecs, max: config.loginRate.max },
+  });
+}
+
+// sweepExpired is the scheduled cleanup's core, factored out of the Worker so it
+// is testable against any Store: delete the expired sessions, device codes, and
+// lapsed login-rate windows, and log the counts. Invisible on the wire.
+export async function sweepExpired(store: Store, log: Logger, now: number): Promise<ExpiryCounts> {
+  const counts = await store.deleteExpired(now);
+  log.info('scheduled cleanup', {
+    sessions: counts.sessions,
+    deviceCodes: counts.deviceCodes,
+    rateLimits: counts.rateLimits,
+  });
+  return counts;
+}

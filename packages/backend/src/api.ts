@@ -28,10 +28,11 @@ import {
   type SyncResult,
   type DeleteResult,
 } from '@280/contracts';
-import { Platform, type Service } from './deploysvc.js';
+import type { Service } from './deploysvc.js';
 import { docsRoutes } from './docs.js';
 import { Auth, AuthError } from './authsvc.js';
 import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
+import type { RequestDeps } from './config.js';
 import { DeviceStatus, type User } from './seams.js';
 
 // SESSION_COOKIE names the browser session the backend now owns. STATE_COOKIE is
@@ -43,9 +44,14 @@ const STATE_COOKIE = '280_oauth';
 // refuse a CLI too old to speak this API. Spec: deployhttp.HeaderCLIVersion.
 const HEADER_CLI_VERSION = 'X-280-Cli-Version';
 
-// MaxBlobBytes bounds one uploaded blob. The seam caps the worker; this is the
-// backstop for assets, whose only other limit would be disk (api.go:33).
-export const MAX_BLOB_BYTES = 100 << 20;
+// MaxBlobBytes bounds one uploaded blob. Deliberately set UNDER Cloudflare's
+// ~100 MB edge request-body limit (phase-1a size-cap exception): a blob at the
+// old 100 MiB cap is larger than the edge accepts, so the largest legal upload
+// would die at the edge with an HTML 413 the CLI cannot parse, instead of a
+// typed seam error. 95 MiB keeps the whole range under the edge limit and still
+// leaves the largest realistic asset room. Raise only against a verified higher
+// zone limit.
+export const MAX_BLOB_BYTES = 95 << 20; // 99,614,720 bytes
 
 // Body limits per route (plan §3 table).
 const SYNC_LIMIT = 8 << 20;
@@ -64,45 +70,41 @@ const USER_CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
 const DASHBOARD_CONFIRM = 'delete';
 
 export interface ServerConfig {
-  platform: Platform;
+  // buildDeps constructs the request-scoped I/O container from the Hono context:
+  // c.env is the Workers Env the deps read their bindings from, and
+  // c.executionCtx is the lifetime the pg client's close is scheduled on. The
+  // Worker passes the Env-driven builder (buildRequestDeps); tests pass one that
+  // returns a shared in-memory Platform. Everything a handler needs — Platform,
+  // auth, openSignup, verificationUri, minCliVersion — comes from here, so the
+  // router itself is the isolate's only singleton and holds no I/O.
+  buildDeps: (c: Context<HonoEnv>) => RequestDeps | Promise<RequestDeps>;
   logger?: Logger;
-  // OpenSignup provisions an account for any bearer token that presents one.
-  openSignup?: boolean;
-  // VerificationURI is the browser page a human approves a login on.
-  verificationUri?: string;
-  // Auth owns the browser login flow and the sessions that authenticate the web
-  // surface. Unset disables both the /auth/* endpoints and the session-gated
-  // /internal/* endpoints outright: failing closed is the only safe default.
-  auth?: Auth;
-  // MinCLIVersion is the oldest CLI release this API still serves. Empty enforces
-  // nothing, which is the right default.
-  minCliVersion?: string;
 }
 
 export class Server {
-  private readonly platform: Platform;
+  private readonly buildDeps: ServerConfig['buildDeps'];
   private readonly log?: Logger;
-  private readonly openSignup: boolean;
-  private readonly verificationUri: string;
-  private readonly auth?: Auth;
-  private readonly minCliVersion: string;
 
   constructor(cfg: ServerConfig) {
-    this.platform = cfg.platform;
+    this.buildDeps = cfg.buildDeps;
     this.log = cfg.logger;
-    this.openSignup = cfg.openSignup ?? false;
-    this.verificationUri = cfg.verificationUri ?? '';
-    this.auth = cfg.auth;
-    this.minCliVersion = cfg.minCliVersion ?? '';
   }
 
-  // handler returns the router.
+  // handler returns the router. It is built once per isolate and reused across
+  // every request; the leading deps middleware is what makes that safe, building
+  // a fresh I/O container per request rather than closing over one here.
   handler(): Hono<HonoEnv> {
     const app = new Hono<HonoEnv>();
 
     // Wrapping the whole app rather than each route is what makes the access log
     // cover a route someone adds later without remembering to.
     app.use('*', observe({ logger: () => this.logger(), renderPanic: (e) => this.renderPanic(e) }));
+
+    // The deps container, built per request and put on the context, with its
+    // cleanup scheduled after the response. It runs inside observe, so a build
+    // failure renders as the seam's error with a request id rather than a
+    // dropped connection.
+    app.use('*', (c, next) => this.withDeps(c, next));
 
     app.post('/v1/sync', this.route((c) => this.handleSync(c)));
     app.put('/v1/apps/:app/blobs/:digest', this.route((c) => this.handlePutBlob(c)));
@@ -137,6 +139,42 @@ export class Server {
     app.route('/v1/docs', docsRoutes());
 
     return app;
+  }
+
+  // withDeps builds the request-scoped I/O container, puts it on the context,
+  // and schedules its cleanup once the response is on its way.
+  private async withDeps(c: Context<HonoEnv>, next: () => Promise<void>): Promise<void> {
+    const deps = await this.buildDeps(c);
+    c.set('deps', deps);
+    const close = deps.close;
+    if (close === undefined) {
+      await next();
+      return;
+    }
+    try {
+      await next();
+    } finally {
+      this.scheduleClose(c, close);
+    }
+  }
+
+  // scheduleClose runs close after the response ships: on Workers via
+  // ctx.waitUntil (the request stays alive until the pg client closes, but the
+  // reply is not delayed); with no execution context (in-process tests) the
+  // promise simply runs fire-and-forget.
+  private scheduleClose(c: Context<HonoEnv>, close: () => Promise<void>): void {
+    const done = close().catch(() => {});
+    try {
+      c.executionCtx.waitUntil(done);
+    } catch {
+      void done;
+    }
+  }
+
+  // deps is the request-scoped I/O container the leading middleware built. Every
+  // handler reaches its Platform, auth, and per-request config through here.
+  private deps(c: Context<HonoEnv>): RequestDeps {
+    return c.get('deps');
   }
 
   // route renders a handler's thrown DeployErr as the seam's error response; an
@@ -205,7 +243,7 @@ export class Server {
     const userCode = randomUserCode();
     const expiresAt = nowSecs() + DEVICE_CODE_TTL_SECS;
     try {
-      await this.platform.store.createDeviceCode({
+      await this.deps(c).platform.store.createDeviceCode({
         deviceHash: hashToken(deviceCode),
         userCode,
         accountId: '',
@@ -218,7 +256,7 @@ export class Server {
     return c.json({
       deviceCode,
       userCode: displayUserCode(userCode),
-      verificationUri: this.verificationUri,
+      verificationUri: this.deps(c).verificationUri,
       expiresIn: DEVICE_CODE_TTL_SECS,
       interval: DEVICE_POLL_SECS,
     });
@@ -243,7 +281,7 @@ export class Server {
 
     let dc;
     try {
-      dc = await this.platform.store.deviceCodeByHash(hashToken(deviceCode));
+      dc = await this.deps(c).platform.store.deviceCodeByHash(hashToken(deviceCode));
     } catch {
       throw unavailable('login lookup failed');
     }
@@ -268,7 +306,7 @@ export class Server {
     // token for this code, so a duplicated poll cannot produce two credentials.
     let won: boolean;
     try {
-      won = await this.platform.store.claimDeviceCode(dc.deviceHash);
+      won = await this.deps(c).platform.store.claimDeviceCode(dc.deviceHash);
     } catch {
       throw unavailable('could not complete login');
     }
@@ -282,7 +320,7 @@ export class Server {
 
     const token = randomSecret(32);
     try {
-      await this.platform.store.addToken(dc.accountId, hashToken(token));
+      await this.deps(c).platform.store.addToken(dc.accountId, hashToken(token));
     } catch {
       throw unavailable('could not complete login');
     }
@@ -302,13 +340,13 @@ export class Server {
     // approve a login for anyone but itself.
     let acct;
     try {
-      acct = await this.platform.store.ensureAccount(user.id, newAccountId());
+      acct = await this.deps(c).platform.store.ensureAccount(user.id, newAccountId());
     } catch {
       throw unavailable('could not resolve the account');
     }
     let ok: boolean;
     try {
-      ok = await this.platform.store.approveDeviceCode(normalizeUserCode(req.userCode), acct.id, nowSecs());
+      ok = await this.deps(c).platform.store.approveDeviceCode(normalizeUserCode(req.userCode), acct.id, nowSecs());
     } catch {
       throw unavailable('could not record the approval');
     }
@@ -327,7 +365,7 @@ export class Server {
 
     let acct;
     try {
-      acct = await this.platform.store.accountBySubject(user.id);
+      acct = await this.deps(c).platform.store.accountBySubject(user.id);
     } catch {
       throw unavailable('could not resolve the account');
     }
@@ -339,7 +377,7 @@ export class Server {
 
     let apps;
     try {
-      apps = await this.platform.store.appsByAccount(acct.id);
+      apps = await this.deps(c).platform.store.appsByAccount(acct.id);
     } catch {
       throw unavailable('could not list apps');
     }
@@ -366,7 +404,7 @@ export class Server {
 
     let acct;
     try {
-      acct = await this.platform.store.accountBySubject(user.id);
+      acct = await this.deps(c).platform.store.accountBySubject(user.id);
     } catch {
       throw unavailable('could not resolve the account');
     }
@@ -375,7 +413,7 @@ export class Server {
       throw new DeployErr({ code: DeployCode.NoSuchApp, message: 'that app does not exist on this account' });
     }
 
-    const svc = this.platform.for(acct.id);
+    const svc = this.deps(c).platform.for(acct.id);
 
     // The dry run does the looking up: it fails closed on an app this account
     // does not own, and it is where the slug comes from.
@@ -398,7 +436,7 @@ export class Server {
   // failure here (unknown provider, rate limit) bounces back to the frontend
   // login page rather than showing a bare error to a human.
   private async handleAuthStart(c: Context<HonoEnv>): Promise<Response> {
-    const auth = this.auth;
+    const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
     try {
       const { authUrl, stateCookie } = await auth.start(
@@ -418,7 +456,7 @@ export class Server {
   // state cookie, and returns the browser to the destination the start endpoint
   // vetted.
   private async handleAuthCallback(c: Context<HonoEnv>): Promise<Response> {
-    const auth = this.auth;
+    const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
     // A provider can decline; treat it like any other failed login.
     if ((c.req.query('error') ?? '') !== '') return this.authBounce(c, auth);
@@ -444,7 +482,7 @@ export class Server {
   // handleAuthMe is what the frontend reads to render the signed-in state. It
   // never errors: no session is a null user, not a failure.
   private async handleAuthMe(c: Context<HonoEnv>): Promise<Response> {
-    const auth = this.auth;
+    const auth = this.deps(c).auth;
     if (auth === undefined) return c.json({ user: null });
     const user = await auth.me(getCookie(c, SESSION_COOKIE) ?? '');
     return c.json({ user: user === null ? null : encodeUser(user) });
@@ -453,7 +491,7 @@ export class Server {
   // handleAuthLogout clears the session everywhere: the row, so the token is
   // dead, and the cookie, so the browser stops sending it.
   private async handleAuthLogout(c: Context<HonoEnv>): Promise<Response> {
-    const auth = this.auth;
+    const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
     await auth.logout(getCookie(c, SESSION_COOKIE) ?? '');
     deleteCookie(c, SESSION_COOKIE, this.cookieOpts(c, 0));
@@ -478,7 +516,7 @@ export class Server {
     domain?: string;
     maxAge: number;
   } {
-    const domain = this.auth?.cookieDomain ?? '';
+    const domain = this.deps(c).auth?.cookieDomain ?? '';
     return {
       httpOnly: true,
       sameSite: 'Lax',
@@ -496,10 +534,11 @@ export class Server {
   // Auth is a closed door: the internal endpoints answer not-found rather than
   // trusting an unauthenticated caller.
   private async sessionUser(c: Context<HonoEnv>): Promise<User> {
-    if (this.auth === undefined) {
+    const auth = this.deps(c).auth;
+    if (auth === undefined) {
       throw new DeployErr({ code: DeployCode.NotFound, message: 'the internal API is not configured' });
     }
-    const user = await this.auth.me(getCookie(c, SESSION_COOKIE) ?? '');
+    const user = await auth.me(getCookie(c, SESSION_COOKIE) ?? '');
     if (user === null) {
       throw new DeployErr({ code: DeployCode.Unauthorized, message: 'not signed in' });
     }
@@ -510,12 +549,12 @@ export class Server {
   // before the token lookup: a binary that cannot speak this API gets the same
   // answer whether or not it is signed in, and the answer costs no DB round trip.
   private tooOld(c: Context<HonoEnv>): void {
-    if (!version.valid(this.minCliVersion)) return;
+    if (!version.valid(this.deps(c).minCliVersion)) return;
     const got = c.req.header(HEADER_CLI_VERSION) ?? '';
-    if (!version.valid(got) || !version.less(got, this.minCliVersion)) return;
+    if (!version.valid(got) || !version.less(got, this.deps(c).minCliVersion)) return;
     throw new DeployErr({
       code: DeployCode.CLITooOld,
-      message: `this 280 CLI (${got}) is older than 280 supports (${this.minCliVersion})`,
+      message: `this 280 CLI (${got}) is older than 280 supports (${this.deps(c).minCliVersion})`,
       fix: 'run the same command again; 280 updates itself',
     });
   }
@@ -535,24 +574,24 @@ export class Server {
 
     let acct;
     try {
-      acct = await this.platform.store.accountByToken(hash);
+      acct = await this.deps(c).platform.store.accountByToken(hash);
     } catch {
       throw new DeployErr({ code: DeployCode.Unavailable, message: 'auth lookup failed', retryable: true });
     }
     if (acct === null) {
-      if (!this.openSignup) throw noAccount();
+      if (!this.deps(c).openSignup) throw noAccount();
       // Derive the id from the token so a repeated presentation of the same
       // token lands on the same account even if the insert below raced.
       acct = { id: 'acct_' + hash.slice(0, 12), subject: '' };
       try {
-        await this.platform.store.createAccount(acct);
-        await this.platform.store.addToken(acct.id, hash);
+        await this.deps(c).platform.store.createAccount(acct);
+        await this.deps(c).platform.store.addToken(acct.id, hash);
       } catch {
         throw new DeployErr({ code: DeployCode.Unavailable, message: 'could not create account', retryable: true });
       }
     }
     markAccount(c, acct.id);
-    return this.platform.for(acct.id);
+    return this.deps(c).platform.for(acct.id);
   }
 
   // ---- responses ----

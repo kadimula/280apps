@@ -143,7 +143,11 @@ export class FsBlobStore implements BlobStore {
   // to satisfy a manifest entry, which is the only thing standing between a
   // truncated file and a silently broken live app. The body is streamed to a
   // temp file with an incremental hash, never buffered.
-  async put(appID: string, d: Digest, body: BlobBody): Promise<void> {
+  //
+  // size is ignored: the hash over the streamed bytes is the whole verification,
+  // so a wrong length surfaces as a hash mismatch either way. It is on the seam
+  // for the R2 backing, which frames a fixed-length stream from it.
+  async put(appID: string, d: Digest, _size: number, body: BlobBody): Promise<void> {
     const dst = this.path(appID, d);
     const dir = dirname(dst);
     await mkdir(dir, { recursive: true });

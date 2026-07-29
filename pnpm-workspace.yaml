@@ -1,0 +1,5 @@
+# TS rewrite workspace (plan §2). Covers packages/* ONLY.
+# frontend/ is intentionally excluded: it is its own npm project with its own
+# Railway build and must not be destabilized by the root workspace.
+packages:
+  - 'packages/*'

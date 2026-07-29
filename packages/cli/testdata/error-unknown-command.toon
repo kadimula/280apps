@@ -1,0 +1,4 @@
+error: unknown_command
+message: "unknown command \"frobnicate\""
+fix: run 280 help
+retryable: false

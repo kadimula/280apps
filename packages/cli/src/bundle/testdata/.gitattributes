@@ -1,0 +1,5 @@
+# The manifest-diff fixture is content-addressed: every byte feeds a SHA-256
+# digest asserted against the Go golden. Treat it as binary so no platform
+# rewrites line endings on checkout (GitHub's Windows runners default to
+# core.autocrlf=true), which would change digests and break the parity test.
+* -text

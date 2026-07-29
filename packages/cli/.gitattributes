@@ -1,0 +1,4 @@
+# The committed agent skill is canonical LF: `280 setup --check` compares it to
+# the CLI-generated content, and a CRLF checkout (git autocrlf on Windows) must
+# not read as drift. The generator and installers also emit LF.
+skill/SKILL.md text eol=lf

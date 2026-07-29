@@ -1,0 +1,35 @@
+{
+  "name": "two80",
+  "version": "0.4.0",
+  "description": "Deploy and share your app. One verb: 280 push.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "280": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "skill"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "skill:gen": "tsup && node dist/bin.js setup --write",
+    "skill:check": "node dist/bin.js setup --check"
+  },
+  "dependencies": {
+    "@toon-format/toon": "^4.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@280/contracts": "workspace:*",
+    "tsup": "^8.3.0"
+  }
+}

@@ -1,0 +1,97 @@
+// The docs endpoints are unauthenticated GETs the frontend proxies at their
+// public URLs (/setup.md, /platform-support.md, /the-280-way). They carry no
+// per-app randomness, so unlike the deploy routes they can be asserted against
+// their exact source rendering rather than replayed from a Go recording.
+
+import { describe, expect, it } from 'vitest';
+import { Server } from '../src/api.js';
+import {
+  docsCapabilities,
+  platformSupportMarkdown,
+  setupMarkdown,
+  the280WayMarkdown,
+  SUPPORT_MATRIX,
+  CAPABILITY_REQUIREMENT,
+} from '../src/docs.js';
+import { newPlatform } from './helpers/harness.js';
+
+describe('docs endpoints', () => {
+  async function server() {
+    const harness = await newPlatform();
+    const app = new Server({ platform: harness.platform }).handler();
+    return { app, cleanup: harness.cleanup };
+  }
+
+  it('serves setup.md as markdown', async () => {
+    const { app, cleanup } = await server();
+    try {
+      const res = await app.request('/v1/docs/setup.md');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+      expect(await res.text()).toBe(setupMarkdown());
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('serves the support matrix as markdown', async () => {
+    const { app, cleanup } = await server();
+    try {
+      const res = await app.request('/v1/docs/platform-support.md');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
+      const body = await res.text();
+      expect(body).toBe(platformSupportMarkdown());
+      // The matrix is a real table an agent parses, not an empty stub.
+      expect(body).toContain('| Stack | Feature | Supported | Notes |');
+      expect(body).toContain(CAPABILITY_REQUIREMENT);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('serves the 280 way as markdown with the crux intact', async () => {
+    const { app, cleanup } = await server();
+    try {
+      const res = await app.request('/v1/docs/the-280-way.md');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
+      const body = await res.text();
+      expect(body).toBe(the280WayMarkdown());
+      // Every blessed answer, the Never list, the snippets, the loop.
+      expect(body).toContain('# The 280 way');
+      expect(body).toContain('## Never');
+      expect(body).toContain('```json');
+      expect(body).toContain('drizzle-orm/neon-http');
+      expect(body).toContain('## The loop');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('serves capabilities as JSON for the docs page', async () => {
+    const { app, cleanup } = await server();
+    try {
+      const res = await app.request('/v1/docs/capabilities');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/json');
+      const body = (await res.json()) as ReturnType<typeof docsCapabilities>;
+      expect(body.requirement).toBe(CAPABILITY_REQUIREMENT);
+      expect(body.matrix).toEqual(SUPPORT_MATRIX);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('does not require auth', async () => {
+    const { app, cleanup } = await server();
+    try {
+      // No Authorization header at all; deploy routes would 401 here.
+      const res = await app.request('/v1/docs/setup.md');
+      expect(res.status).toBe(200);
+    } finally {
+      await cleanup();
+    }
+  });
+});

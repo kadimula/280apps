@@ -1,0 +1,46 @@
+{
+  "name": "@280/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./deploy/http": {
+      "types": "./dist/deploy/http.d.ts",
+      "import": "./dist/deploy/http.js"
+    },
+    "./deploy/fake": {
+      "types": "./dist/deploy/fake.d.ts",
+      "import": "./dist/deploy/fake.js"
+    },
+    "./deploy/conformance": {
+      "types": "./dist/deploy/conformance.d.ts",
+      "import": "./dist/deploy/conformance.js"
+    },
+    "./auth/http": {
+      "types": "./dist/auth/http.d.ts",
+      "import": "./dist/auth/http.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "testdata"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  }
+}

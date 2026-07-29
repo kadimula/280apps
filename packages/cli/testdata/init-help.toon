@@ -1,0 +1,10 @@
+280 init - detect framework, write .280/config.json (push does this for you)
+
+Flags:
+  --name <slug>             app name (default: package.json name)
+  --framework next|static   skip detection
+
+Examples:
+  280 init
+  280 init --framework next
+  280 init --name my-app --framework static

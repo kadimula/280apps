@@ -1,0 +1,23 @@
+.claude/worktrees/
+platform/data/
+platform/dispatcher/node_modules/
+.claude/
+.agents/
+.github/
+
+
+# TS rewrite workspace (packages/*)
+node_modules/
+packages/*/dist/
+
+# Local-only: editor scratch + private notes
+.lavish/
+docs/
+*.local.md
+
+# e2e test in progress
+tests/
+
+
+# Personal agent tooling (sources live in gitignored .agents/)
+skills-lock.json

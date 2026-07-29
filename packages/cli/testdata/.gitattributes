@@ -1,0 +1,3 @@
+# Golden CLI stdout fixtures are byte-compared; keep LF so the Windows CI
+# matrix does not see CRLF (plan W2 Done: mac/linux/windows green).
+*.toon text eol=lf

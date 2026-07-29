@@ -1,0 +1,4 @@
+framework: static
+name: demo
+created: true
+help[1]: Run `280 push` to deploy

@@ -1,0 +1,26 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-dispatcher-staging",
+	"main": "src/index.js",
+	"compatibility_date": "2026-07-23",
+	"workers_dev": false,
+	"observability": { "enabled": true },
+
+	// Staging serves apps at <script>-staging.280apps.run: one label under the
+	// zone, so the free Universal SSL wildcard (*.280apps.run) already covers the
+	// TLS. This route is more specific than prod's *.280apps.run/* (its literal
+	// tail is longer), so *-staging hosts route here while every prod host stays
+	// on the prod dispatcher. A prod script is <slug>-<10 base36 token>, whose
+	// first label never ends in "-staging", so this route can never shadow prod.
+	"routes": [{ "pattern": "*-staging.280apps.run/*", "zone_name": "280apps.run" }],
+
+	// Switchboard into the staging dispatch namespace user Workers upload to.
+	"dispatch_namespaces": [{ "binding": "DISPATCHER", "namespace": "apps-staging" }],
+
+	// HOST_SUFFIX turns on the -staging suffix stripping in src/index.js so the
+	// dispatcher recovers the bare script name. Prod sets no such var.
+	"vars": { "WEB_ORIGIN": "https://280apps.com", "HOST_SUFFIX": "-staging" }
+
+	// Same as prod: NO compatibility_flags on the dispatcher itself; those are
+	// set per tenant script at upload time by the platform.
+}

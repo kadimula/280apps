@@ -1,0 +1,4 @@
+280 whoami - print auth state
+
+Examples:
+  280 whoami

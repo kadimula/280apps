@@ -1,0 +1,608 @@
+[
+  {
+    "case": "CreateOnFirstSync",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000000\",\"slug\":\"demo\",\"url\":\"https://demo-0000000000.280apps.run\"},\"deployId\":\"dep_0000000000000000\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "SyncIsIdempotent",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000001\",\"slug\":\"demo\",\"url\":\"https://demo-0000000001.280apps.run\"},\"deployId\":\"dep_0000000000000001\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "SyncIsIdempotent",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000001\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000001\",\"slug\":\"demo\",\"url\":\"https://demo-0000000001.280apps.run\"},\"deployId\":\"dep_0000000000000001\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"path\":\"/b.css\",\"size\":1},{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000002\",\"slug\":\"demo\",\"url\":\"https://demo-0000000002.280apps.run\"},\"deployId\":\"dep_0000000000000002\",\"missing\":[\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000002/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000002/blobs/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "reqBlobB64": "YQ==",
+    "status": 204
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000002/blobs/3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+    "reqBlobB64": "Yg==",
+    "status": 204
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000002/deploys/dep_0000000000000002",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000002.280apps.run\"}"
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000002/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "UploadAllThenLive",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000002/deploys/dep_0000000000000002",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000002.280apps.run\"}"
+  },
+  {
+    "case": "MissingShrinksAsBlobsLand",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"path\":\"/b.css\",\"size\":1},{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000003\",\"slug\":\"demo\",\"url\":\"https://demo-0000000003.280apps.run\"},\"deployId\":\"dep_0000000000000003\",\"missing\":[\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "MissingShrinksAsBlobsLand",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000003/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "MissingShrinksAsBlobsLand",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000003\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"path\":\"/b.css\",\"size\":1},{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000003\",\"slug\":\"demo\",\"url\":\"https://demo-0000000003.280apps.run\"},\"deployId\":\"dep_0000000000000003\",\"missing\":[\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"df294ded9f82bd40040a95f7fad14017060ceb80f2c8a2d081d4abf38c3bd48e\",\"path\":\"/a.js\",\"size\":7}],\"cache\":[{\"digest\":\"648861fd3830f09893f8e90796834d3b37966d574139a151ebd794bf4650d38b\",\"path\":\"b1/about.cache\",\"size\":17},{\"digest\":\"f025f958f395c82b233218c1f12ff2137ae5c06066d0c0481b717c340e49d4e8\",\"path\":\"b1/index.cache\",\"size\":17}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000004\",\"slug\":\"demo\",\"url\":\"https://demo-0000000004.280apps.run\"},\"deployId\":\"dep_0000000000000004\",\"missing\":[\"648861fd3830f09893f8e90796834d3b37966d574139a151ebd794bf4650d38b\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"df294ded9f82bd40040a95f7fad14017060ceb80f2c8a2d081d4abf38c3bd48e\",\"f025f958f395c82b233218c1f12ff2137ae5c06066d0c0481b717c340e49d4e8\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000004/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000004/blobs/df294ded9f82bd40040a95f7fad14017060ceb80f2c8a2d081d4abf38c3bd48e",
+    "reqBlobB64": "YXNzZXQgYQ==",
+    "status": 204
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000004/blobs/648861fd3830f09893f8e90796834d3b37966d574139a151ebd794bf4650d38b",
+    "reqBlobB64": "cHJlcmVuZGVyZWQgYWJvdXQ=",
+    "status": 204
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000004/deploys/dep_0000000000000004",
+    "status": 200,
+    "respBody": "{\"state\":\"uploading\"}"
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000004/blobs/f025f958f395c82b233218c1f12ff2137ae5c06066d0c0481b717c340e49d4e8",
+    "reqBlobB64": "cHJlcmVuZGVyZWQgaW5kZXg=",
+    "status": 204
+  },
+  {
+    "case": "CacheEntriesTravelAsBlobs",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000004/deploys/dep_0000000000000004",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000004.280apps.run\"}"
+  },
+  {
+    "case": "CacheEntryIdentifiesTheDeploy",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"cache\":[{\"digest\":\"6e834993f98af99e350b193badf4ff20ca46379233dfc81e8d10f20e42707025\",\"path\":\"b1/index.cache\",\"size\":14}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000005\",\"slug\":\"demo\",\"url\":\"https://demo-0000000005.280apps.run\"},\"deployId\":\"dep_0000000000000005\",\"missing\":[\"6e834993f98af99e350b193badf4ff20ca46379233dfc81e8d10f20e42707025\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "CacheEntryIdentifiesTheDeploy",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000005/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "CacheEntryIdentifiesTheDeploy",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000005/blobs/6e834993f98af99e350b193badf4ff20ca46379233dfc81e8d10f20e42707025",
+    "reqBlobB64": "cHJlcmVuZGVyZWQgdjE=",
+    "status": 204
+  },
+  {
+    "case": "CacheEntryIdentifiesTheDeploy",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000005/deploys/dep_0000000000000005",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000005.280apps.run\"}"
+  },
+  {
+    "case": "CacheEntryIdentifiesTheDeploy",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000005\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"cache\":[{\"digest\":\"72d2686589753215f29e28f8523a9bdfd51cdc3f2be7cd2e4ebab452c551a03c\",\"path\":\"b1/index.cache\",\"size\":14}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000005\",\"slug\":\"demo\",\"url\":\"https://demo-0000000005.280apps.run\"},\"deployId\":\"dep_0000000000000006\",\"missing\":[\"72d2686589753215f29e28f8523a9bdfd51cdc3f2be7cd2e4ebab452c551a03c\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "FingerprintAutoLink",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000006\",\"slug\":\"demo\",\"url\":\"https://demo-0000000006.280apps.run\"},\"deployId\":\"dep_0000000000000007\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "FingerprintAutoLink",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000006\",\"slug\":\"demo\",\"url\":\"https://demo-0000000006.280apps.run\"},\"deployId\":\"dep_0000000000000007\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"fingerprint_linked\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "AmbiguousIdentity",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000007\",\"slug\":\"demo\",\"url\":\"https://demo-0000000007.280apps.run\"},\"deployId\":\"dep_0000000000000008\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "AmbiguousIdentity",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"forceNew\":true,\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000008\",\"slug\":\"demo\",\"url\":\"https://demo-0000000008.280apps.run\"},\"deployId\":\"dep_0000000000000009\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "AmbiguousIdentity",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 409,
+    "respBody": "{\"candidates\":[\"app_000000000007\",\"app_000000000008\"],\"code\":\"ambiguous_identity\",\"fix\":\"run 280 link \\u003capp-id\\u003e to pick one, or 280 push --new\",\"message\":\"2 apps match this project\"}"
+  },
+  {
+    "case": "ForceNewCreatesSecondApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000009\",\"slug\":\"demo\",\"url\":\"https://demo-0000000009.280apps.run\"},\"deployId\":\"dep_000000000000000a\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "ForceNewCreatesSecondApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"forceNew\":true,\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000a\",\"slug\":\"demo\",\"url\":\"https://demo-0000000010.280apps.run\"},\"deployId\":\"dep_000000000000000b\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "ClientRefDedupesCreate",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"clientRef\":\"nonce-1\",\"framework\":\"next\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000b\",\"slug\":\"demo\",\"url\":\"https://demo-0000000011.280apps.run\"},\"deployId\":\"dep_000000000000000c\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "ClientRefDedupesCreate",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"clientRef\":\"nonce-1\",\"framework\":\"next\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000b\",\"slug\":\"demo\",\"url\":\"https://demo-0000000011.280apps.run\"},\"deployId\":\"dep_000000000000000c\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "NoSuchApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_does_not_exist\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 404,
+    "respBody": "{\"code\":\"no_such_app\",\"fix\":\"run 280 list, then 280 link \\u003capp-id\\u003e, or 280 push --new\",\"message\":\"app \\\"app_does_not_exist\\\" does not exist on this account\"}"
+  },
+  {
+    "case": "PreflightRejectsOversizeWorker",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":10485761}}}",
+    "status": 422,
+    "respBody": "{\"code\":\"preflight_rejected\",\"fix\":\"shrink the server bundle, then run 280 push again\",\"message\":\"worker is 10485761 raw bytes; the limit is 10485760\"}"
+  },
+  {
+    "case": "DigestMismatchThenRecovery",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000c\",\"slug\":\"demo\",\"url\":\"https://demo-0000000012.280apps.run\"},\"deployId\":\"dep_000000000000000d\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "DigestMismatchThenRecovery",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000c/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "Y29ycnVwdGVk",
+    "status": 422,
+    "respBody": "{\"code\":\"digest_mismatch\",\"fix\":\"run 280 push again\",\"message\":\"uploaded bytes do not match the declared digest; the build output changed underneath the push\"}"
+  },
+  {
+    "case": "DigestMismatchThenRecovery",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000c/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "DigestMismatchThenRecovery",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000c/blobs/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "reqBlobB64": "YQ==",
+    "status": 204
+  },
+  {
+    "case": "DigestMismatchThenRecovery",
+    "method": "GET",
+    "path": "/v1/apps/app_00000000000c/deploys/dep_000000000000000d",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000012.280apps.run\"}"
+  },
+  {
+    "case": "InvalidBlobRejected",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000d\",\"slug\":\"demo\",\"url\":\"https://demo-0000000013.280apps.run\"},\"deployId\":\"dep_000000000000000e\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "InvalidBlobRejected",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000d/blobs/52b6bc061f1a316848645b959d02908b6a52563b8ee439d3e7473bd3989550a9",
+    "reqBlobB64": "bmV2ZXIgZGVjbGFyZWQ=",
+    "status": 409,
+    "respBody": "{\"code\":\"invalid_blob\",\"fix\":\"run 280 push again\",\"message\":\"digest 52b6bc061f1a316848645b959d02908b6a52563b8ee439d3e7473bd3989550a9 is not named by any open deploy\"}"
+  },
+  {
+    "case": "StatusUnknownDeployNotFound",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000e\",\"slug\":\"demo\",\"url\":\"https://demo-0000000014.280apps.run\"},\"deployId\":\"dep_000000000000000f\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "StatusUnknownDeployNotFound",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000e/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "StatusUnknownDeployNotFound",
+    "method": "GET",
+    "path": "/v1/apps/app_00000000000e/deploys/dep_000000000000000f",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000014.280apps.run\"}"
+  },
+  {
+    "case": "StatusUnknownDeployNotFound",
+    "method": "GET",
+    "path": "/v1/apps/app_00000000000e/deploys/dep_never_existed",
+    "status": 404,
+    "respBody": "{\"code\":\"not_found\",\"fix\":\"run 280 push again\",\"message\":\"deploy \\\"dep_never_existed\\\" not found for app \\\"app_00000000000e\\\"\"}"
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"path\":\"/b.css\",\"size\":1},{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000f\",\"slug\":\"demo\",\"url\":\"https://demo-0000000015.280apps.run\"},\"deployId\":\"dep_0000000000000010\",\"missing\":[\"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000f/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000f/blobs/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "reqBlobB64": "YQ==",
+    "status": 204
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "PUT",
+    "path": "/v1/apps/app_00000000000f/blobs/3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+    "reqBlobB64": "Yg==",
+    "status": 204
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "GET",
+    "path": "/v1/apps/app_00000000000f/deploys/dep_0000000000000010",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000015.280apps.run\"}"
+  },
+  {
+    "case": "RedeployUploadsOnlyChangedBlobs",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_00000000000f\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1},{\"digest\":\"cedb74363eaa2cce00a193c84a9e706c37607d497363bb4eef79b13fbd7ed258\",\"path\":\"/b.css\",\"size\":4}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_00000000000f\",\"slug\":\"demo\",\"url\":\"https://demo-0000000015.280apps.run\"},\"deployId\":\"dep_0000000000000011\",\"missing\":[\"cedb74363eaa2cce00a193c84a9e706c37607d497363bb4eef79b13fbd7ed258\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe\",\"path\":\"/index.html\",\"size\":2}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000010\",\"slug\":\"demo\",\"url\":\"https://demo-0000000016.280apps.run\"},\"deployId\":\"dep_0000000000000012\",\"missing\":[\"3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe\",\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000010/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000010/blobs/3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe",
+    "reqBlobB64": "djE=",
+    "status": 204
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000010/deploys/dep_0000000000000012",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000016.280apps.run\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000010\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"fb04dcb6970e4c3d1873de51fd5a50d7bb46b3383113602665c350ec40b5f990\",\"path\":\"/index.html\",\"size\":2}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000010\",\"slug\":\"demo\",\"url\":\"https://demo-0000000016.280apps.run\"},\"deployId\":\"dep_0000000000000013\",\"missing\":[\"fb04dcb6970e4c3d1873de51fd5a50d7bb46b3383113602665c350ec40b5f990\"],\"resolution\":\"existing\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000010/blobs/fb04dcb6970e4c3d1873de51fd5a50d7bb46b3383113602665c350ec40b5f990",
+    "reqBlobB64": "djI=",
+    "status": 204
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000010/deploys/dep_0000000000000013",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000016.280apps.run\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000010\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe\",\"path\":\"/index.html\",\"size\":2}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000010\",\"slug\":\"demo\",\"url\":\"https://demo-0000000016.280apps.run\"},\"deployId\":\"dep_0000000000000012\",\"missing\":null,\"resolution\":\"existing\",\"state\":\"live\"}"
+  },
+  {
+    "case": "RevertRepushReactivates",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000010/deploys/dep_0000000000000013",
+    "status": 404,
+    "respBody": "{\"code\":\"not_found\",\"fix\":\"run 280 push again\",\"message\":\"deploy \\\"dep_0000000000000013\\\" not found for app \\\"app_000000000010\\\"\"}"
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000011\",\"slug\":\"demo\",\"url\":\"https://demo-0000000017.280apps.run\"},\"deployId\":\"dep_0000000000000014\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000011/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000011/blobs/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "reqBlobB64": "YQ==",
+    "status": 204
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000011/deploys/dep_0000000000000014",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000017.280apps.run\"}"
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "POST",
+    "path": "/v1/apps/app_000000000011/delete",
+    "reqBody": "{\"appId\":\"app_000000000011\"}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000011\",\"slug\":\"demo\",\"url\":\"https://demo-0000000017.280apps.run\"},\"deleted\":false}"
+  },
+  {
+    "case": "DeleteDryRunChangesNothing",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000011/deploys/dep_0000000000000014",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000017.280apps.run\"}"
+  },
+  {
+    "case": "DeleteRejectsWrongName",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":null,\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000012\",\"slug\":\"demo\",\"url\":\"https://demo-0000000018.280apps.run\"},\"deployId\":\"dep_0000000000000015\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "DeleteRejectsWrongName",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000012/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "DeleteRejectsWrongName",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000012/deploys/dep_0000000000000015",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000018.280apps.run\"}"
+  },
+  {
+    "case": "DeleteRejectsWrongName",
+    "method": "POST",
+    "path": "/v1/apps/app_000000000012/delete",
+    "reqBody": "{\"appId\":\"app_000000000012\",\"confirm\":\"some-other-app\"}",
+    "status": 428,
+    "respBody": "{\"code\":\"confirmation_required\",\"fix\":\"run 280 delete --yes demo\",\"message\":\"\\\"some-other-app\\\" does not name this app\"}"
+  },
+  {
+    "case": "DeleteRejectsWrongName",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000012/deploys/dep_0000000000000015",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000018.280apps.run\"}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000013\",\"slug\":\"demo\",\"url\":\"https://demo-0000000019.280apps.run\"},\"deployId\":\"dep_0000000000000016\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000013/blobs/87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e",
+    "reqBlobB64": "d29ya2Vy",
+    "status": 204
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "PUT",
+    "path": "/v1/apps/app_000000000013/blobs/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "reqBlobB64": "YQ==",
+    "status": 204
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "GET",
+    "path": "/v1/apps/app_000000000013/deploys/dep_0000000000000016",
+    "status": 200,
+    "respBody": "{\"state\":\"live\",\"url\":\"https://demo-0000000019.280apps.run\"}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "POST",
+    "path": "/v1/apps/app_000000000013/delete",
+    "reqBody": "{\"appId\":\"app_000000000013\",\"confirm\":\"demo\"}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000013\",\"slug\":\"demo\",\"url\":\"https://demo-0000000019.280apps.run\"},\"deleted\":true}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"appId\":\"app_000000000013\",\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 404,
+    "respBody": "{\"code\":\"no_such_app\",\"fix\":\"run 280 list, then 280 link \\u003capp-id\\u003e, or 280 push --new\",\"message\":\"app \\\"app_000000000013\\\" does not exist on this account\"}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "POST",
+    "path": "/v1/apps/app_000000000013/delete",
+    "reqBody": "{\"appId\":\"app_000000000013\",\"confirm\":\"demo\"}",
+    "status": 404,
+    "respBody": "{\"code\":\"no_such_app\",\"fix\":\"run 280 push to create it\",\"message\":\"app \\\"app_000000000013\\\" does not exist on this account\"}"
+  },
+  {
+    "case": "DeleteDestroysTheApp",
+    "method": "POST",
+    "path": "/v1/sync",
+    "reqBody": "{\"identity\":{\"framework\":\"next\",\"gitRemote\":\"git@github.com:x/demo.git\",\"slug\":\"demo\"},\"manifest\":{\"assets\":[{\"digest\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\",\"path\":\"/a.js\",\"size\":1}],\"kind\":\"bundle\",\"worker\":{\"digest\":\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"size\":6}}}",
+    "status": 200,
+    "respBody": "{\"app\":{\"id\":\"app_000000000014\",\"slug\":\"demo\",\"url\":\"https://demo-0000000020.280apps.run\"},\"deployId\":\"dep_0000000000000017\",\"missing\":[\"87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e\",\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"],\"resolution\":\"created\",\"state\":\"uploading\"}"
+  }
+]

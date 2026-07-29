@@ -1,0 +1,5 @@
+280 login - authenticate this machine; prints a link to show your user, then
+re-run to finish. Never waits.
+
+Examples:
+  280 login

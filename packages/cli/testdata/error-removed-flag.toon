@@ -1,0 +1,3 @@
+error: removed_flag
+message: flag --json was removed
+help: "--json was removed; stdout is always TOON now, just drop the flag"

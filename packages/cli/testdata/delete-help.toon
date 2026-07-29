@@ -1,0 +1,9 @@
+280 delete - destroy this project's app: its URL, content, and data
+
+Flags:
+  --yes <name>   confirm; must name the app. Bare 280 delete prints the name
+                 and deletes nothing.
+
+Examples:
+  280 delete
+  280 delete --yes my-app

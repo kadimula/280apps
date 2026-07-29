@@ -1,0 +1,4 @@
+error: confirmation_required
+message: "deleting demo destroys the app, its URL, and its data"
+fix: run 280 delete --yes demo
+retryable: false

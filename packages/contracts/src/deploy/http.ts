@@ -223,6 +223,8 @@ function errMessage(err: unknown): string {
 // toWebStream adapts a BlobBody to the web ReadableStream fetch wants, without
 // buffering it: the 100 MiB PUT must stream (plan risk register).
 function toWebStream(body: BlobBody): WebReadableStream {
-  const readable = body instanceof Readable ? body : Readable.from(body);
-  return Readable.toWeb(readable) as unknown as WebReadableStream;
+  if (body instanceof Readable) return Readable.toWeb(body) as unknown as WebReadableStream;
+  // A web ReadableStream is already what fetch wants; forward it unchanged.
+  if (body instanceof ReadableStream) return body as unknown as WebReadableStream;
+  return Readable.toWeb(Readable.from(body)) as unknown as WebReadableStream;
 }

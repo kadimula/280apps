@@ -1,0 +1,70 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-backend",
+	// src/worker.ts is owned by a later wave of the Workers migration and does not
+	// exist yet. That is expected: this config declares the deploy target and the
+	// bindings that file will read; wrangler only needs main to exist at deploy
+	// time, not to parse this file. See platform/README.md and the migration plan
+	// (Workstream B / §5).
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-07-23",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"observability": { "enabled": true },
+
+	// Smart placement lets Cloudflare run the control plane close to the Neon
+	// origin (reached through Hyperdrive) instead of at the eyeball edge, which is
+	// where the deploy/activation round-trips actually spend their time.
+	"placement": { "mode": "smart" },
+
+	// The API front door. api.280apps.com is the origin the CLI and the login
+	// redirect target both point at (TWO80_API_ORIGIN below).
+	"routes": [{ "pattern": "api.280apps.com/*", "zone_name": "280apps.com" }],
+
+	// Deploy artifacts (uploaded blobs). Bucket created by scripts/bootstrap-resources.sh.
+	"r2_buckets": [{ "binding": "BLOBS", "bucket_name": "two80-blobs" }],
+
+	// Postgres (the existing Neon project) reached through Hyperdrive. The config
+	// is created by scripts/bootstrap-resources.sh with query caching DISABLED —
+	// an enabled cache silently breaks the device-login and deploy-poll
+	// read-your-writes loops. The id below is printed by that script; treat an
+	// enabled cache on this config as a provisioning bug.
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_PROD_HYPERDRIVE_ID" }],
+
+	// Activation runs inside the request that lands the last blob; the Durable
+	// Object serializes per-app activation so two in-flight pushes can't race.
+	"durable_objects": {
+		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AppActivator"] }],
+
+	// Scheduled cleanup: sweep expired sessions, device codes, and login rate
+	// counters (store.ts). Daily at 03:00 UTC. The worker's scheduled() handler
+	// is owned by a later wave.
+	"triggers": { "crons": ["0 3 * * *"] },
+
+	// Non-secret tunables. Secrets are NOT here — set them with `wrangler secret put`:
+	//   wrangler secret put GOOGLE_CLIENT_ID
+	//   wrangler secret put GOOGLE_CLIENT_SECRET
+	//   wrangler secret put CF_ACCOUNT_ID
+	//   wrangler secret put CF_API_TOKEN
+	//   wrangler secret put DATABASE_URL      # Neon connection string
+	// (CF_ACCOUNT_ID / CF_API_TOKEN drive the runtime adapter's calls to the CF
+	// REST API — the dispatch namespace and ISR KV are reached over REST, not via
+	// a Worker binding, which is why there is no KV or dispatch-namespace binding.)
+	"vars": {
+		"TWO80_RUNTIME": "cloudflare",
+		"TWO80_LOG_FORMAT": "json",
+		"TWO80_DB_SCHEMA": "platform",
+		"TWO80_APP_DOMAIN": "280apps.run",
+		"TWO80_API_ORIGIN": "https://api.280apps.com",
+		"TWO80_FRONTEND_ORIGIN": "https://www.280apps.com",
+		"TWO80_VERIFICATION_URI": "https://280apps.com/activate",
+		"TWO80_COOKIE_DOMAIN": ".280apps.com",
+		"CF_DISPATCH_NAMESPACE": "apps",
+		// KV namespace id for Next.js ISR cache (non-secret). Empty ⇒ ISR does not
+		// persist between requests (store warns, not fatal). Fill in the id once
+		// the namespace exists.
+		"CF_ISR_CACHE_KV": ""
+	}
+}

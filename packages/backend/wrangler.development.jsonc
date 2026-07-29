@@ -1,0 +1,52 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-backend-development",
+	// See wrangler.jsonc for why src/worker.ts need not exist yet.
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-07-23",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"observability": { "enabled": true },
+
+	"placement": { "mode": "smart" },
+
+	// Development serves the API at api-development.280apps.com: the same
+	// -development label convention the dispatcher uses for app hosts
+	// (platform/dispatcher/wrangler.development.jsonc), one level under the zone.
+	"routes": [{ "pattern": "api-development.280apps.com/*", "zone_name": "280apps.com" }],
+
+	// Separate dev bucket / Hyperdrive config so development never touches prod
+	// blobs or shares a connection pool. Both created by scripts/bootstrap-resources.sh.
+	"r2_buckets": [{ "binding": "BLOBS", "bucket_name": "two80-blobs-development" }],
+
+	// Hyperdrive config for development, ALSO created with query caching DISABLED
+	// (the same read-your-writes requirement holds in every environment). The id
+	// is printed by scripts/bootstrap-resources.sh.
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_DEVELOPMENT_HYPERDRIVE_ID" }],
+
+	"durable_objects": {
+		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AppActivator"] }],
+
+	"triggers": { "crons": ["0 3 * * *"] },
+
+	// Secrets are set per environment with `wrangler secret put ... --env` / against
+	// this named worker (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, CF_ACCOUNT_ID,
+	// CF_API_TOKEN, DATABASE_URL) — never committed here. See wrangler.jsonc.
+	"vars": {
+		"TWO80_RUNTIME": "cloudflare",
+		"TWO80_LOG_FORMAT": "json",
+		"TWO80_DB_SCHEMA": "platform",
+		"TWO80_APP_DOMAIN": "280apps.run",
+		// Development apps serve at <script>-development.280apps.run; the suffix
+		// turns on the dispatcher's suffix stripping (see the dispatcher dev config).
+		"TWO80_APP_HOST_SUFFIX": "-development",
+		"TWO80_API_ORIGIN": "https://api-development.280apps.com",
+		"TWO80_FRONTEND_ORIGIN": "https://www-development.280apps.com",
+		"TWO80_VERIFICATION_URI": "https://280apps.com/activate",
+		"TWO80_COOKIE_DOMAIN": ".280apps.com",
+		"CF_DISPATCH_NAMESPACE": "apps-development",
+		"CF_ISR_CACHE_KV": ""
+	}
+}

@@ -42,6 +42,9 @@ importers:
         specifier: ^8.13.0
         version: 8.22.0
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260729.1
+        version: 5.20260729.1
       '@types/pg':
         specifier: ^8.11.0
         version: 8.20.0
@@ -69,6 +72,9 @@ importers:
         version: 3.25.76
 
 packages:
+
+  '@cloudflare/workers-types@5.20260729.1':
+    resolution: {integrity: sha512-X5r/4y0gKMq/B72qkz/tEwNK4c3v2regT3to6Ia8qqC66E0+YIN/fU7x0JG6ej2rLxtU3TV3aVhfK9y8+jMMAw==}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -1415,6 +1421,8 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@cloudflare/workers-types@5.20260729.1': {}
 
   '@esbuild/aix-ppc64@0.27.7':
     optional: true

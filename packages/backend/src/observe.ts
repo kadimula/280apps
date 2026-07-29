@@ -8,6 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { Env, RequestDeps } from './config.js';
 
 // RequestIdHeader travels both ways: honored when a caller sends one, minted
 // when it does not, and echoed on every response so a bug report can quote a
@@ -26,12 +27,16 @@ export interface Logger {
   error(msg: string, attrs?: Record<string, unknown>): void;
 }
 
-// HonoEnv carries the per-request state a handler learns that the log line
-// wants but the request itself does not carry.
+// HonoEnv carries the Cloudflare bindings (c.env) and the per-request state a
+// handler learns that the log line wants but the request itself does not carry.
+// deps is the request-scoped I/O container the leading middleware builds; every
+// handler reads its Platform and auth from there rather than from the singleton.
 export type HonoEnv = {
+  Bindings: Env;
   Variables: {
     requestId: string;
     account: string;
+    deps: RequestDeps;
   };
 };
 
@@ -116,18 +121,13 @@ function newRequestId(): string {
   return randomBytes(8).toString('hex');
 }
 
-// clientIp prefers the forwarded header, since every request arrives through the
-// host's proxy. The value is caller-controlled and therefore only ever a log
-// field: nothing authenticates on it.
+// clientIp is the connecting address Cloudflare puts on CF-Connecting-IP: the
+// real eyeball, set by the edge and not forgeable by the caller (unlike
+// X-Forwarded-For, whose first hop the client controls behind the proxy). Here
+// it is only ever a log field; api.ts reads the same header to key the login
+// rate limiter, where forgeability would matter.
 export function clientIp(c: Context<HonoEnv>): string {
-  const fwd = c.req.header('X-Forwarded-For');
-  if (fwd) {
-    const comma = fwd.indexOf(',');
-    return (comma >= 0 ? fwd.slice(0, comma) : fwd).trim();
-  }
-  // hono on the node adapter exposes the remote address here.
-  const info = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
-  return info?.incoming?.socket?.remoteAddress ?? '';
+  return c.req.header('CF-Connecting-IP') ?? '';
 }
 
 function errText(err: unknown): string {
@@ -139,8 +139,12 @@ function stackOf(err: unknown): string {
   return err instanceof Error && err.stack ? err.stack : '';
 }
 
+// now is a millisecond clock for request-duration timing. Date.now() is the
+// Workers-safe equivalent of the Node process.hrtime it replaces; the frozen-
+// clock behavior between I/O points is not chased here — a coarse duration is
+// all the access log wants.
 function now(): number {
-  return Number(process.hrtime.bigint() / 1_000_000n);
+  return Date.now();
 }
 
 function took(start: number): number {

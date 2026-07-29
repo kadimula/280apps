@@ -114,6 +114,14 @@ export interface Event {
   createdAt: number;
 }
 
+// ExpiryCounts reports how many rows one scheduled cleanup removed, per table,
+// for the log line the sweep writes.
+export interface ExpiryCounts {
+  sessions: number;
+  deviceCodes: number;
+  rateLimits: number;
+}
+
 // Store is the platform's control-plane database (store.go:121).
 export interface Store {
   close(): Promise<void>;
@@ -144,6 +152,13 @@ export interface Store {
   // fixed window and reports whether it is still under the limit. The window is
   // stored, not held in a process, so replicas share one counter.
   touchLoginRate(key: string, now: number, windowSecs: number, limit: number): Promise<boolean>;
+
+  // deleteExpired removes rows no longer valid as of now: browser sessions and
+  // device codes past their expiry, and login-rate windows that have lapsed. It
+  // is the scheduled cleanup's whole job (worker.ts scheduled()); the counts it
+  // returns are only for the log line. Idempotent: a second sweep with nothing
+  // expired removes nothing.
+  deleteExpired(now: number): Promise<ExpiryCounts>;
 
   // device codes
   createDeviceCode(d: DeviceCode): Promise<void>;
@@ -178,7 +193,13 @@ export interface Store {
 // and stores nothing in that case.
 export interface BlobStore {
   has(appId: string, digest: Digest): Promise<boolean>;
-  put(appId: string, digest: Digest, body: BlobBody): Promise<void>;
+  // put stores body under digest for the app. size is the blob's declared length
+  // from the manifest (BlobInfo.size), not the client's Content-Length: the R2
+  // backing uses it to frame a FixedLengthStream so a body that ends short or
+  // long is rejected as digest_mismatch, and the filesystem backing ignores it
+  // (it hashes the bytes regardless). Rejects digest_mismatch when the bytes do
+  // not hash to digest, storing nothing.
+  put(appId: string, digest: Digest, size: number, body: BlobBody): Promise<void>;
   get(appId: string, digest: Digest): Promise<Uint8Array>;
   deleteApp(appId: string): Promise<void>;
   missing(appId: string, want: BlobInfo[]): Promise<Digest[]>;

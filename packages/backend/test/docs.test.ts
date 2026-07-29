@@ -13,12 +13,12 @@ import {
   SUPPORT_MATRIX,
   CAPABILITY_REQUIREMENT,
 } from '../src/docs.js';
-import { newPlatform } from './helpers/harness.js';
+import { newPlatform, testDeps } from './helpers/harness.js';
 
 describe('docs endpoints', () => {
   async function server() {
     const harness = await newPlatform();
-    const app = new Server({ platform: harness.platform }).handler();
+    const app = new Server({ buildDeps: () => testDeps(harness) }).handler();
     return { app, cleanup: harness.cleanup };
   }
 

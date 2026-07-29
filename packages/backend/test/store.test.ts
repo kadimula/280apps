@@ -192,6 +192,34 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.claimDeviceCode('dev-hash')).toBe(false); // still pending
   });
 
+  // ---- scheduled cleanup ----
+
+  it('deleteExpired removes only lapsed sessions, device codes, and rate windows', async () => {
+    const t = now();
+    await store.createUser({ id: 'usr_exp', email: 'exp@example.com', name: '', image: '' });
+    await store.createSession({ tokenHash: 'sess_old', userId: 'usr_exp', expiresAt: t - 1 });
+    await store.createSession({ tokenHash: 'sess_new', userId: 'usr_exp', expiresAt: t + 3600 });
+    await store.createDeviceCode(
+      deviceFixture({ deviceHash: 'dc_old', userCode: 'OLDX-0001', expiresAt: t - 1 }),
+    );
+    await store.createDeviceCode(
+      deviceFixture({ deviceHash: 'dc_new', userCode: 'NEWX-0002', expiresAt: t + 3600 }),
+    );
+    // touchLoginRate stores expires_at = start + window: the first window lapsed
+    // before now, the second is current.
+    await store.touchLoginRate('ip_old', t - 1000, 1, 100);
+    await store.touchLoginRate('ip_new', t, 600, 100);
+
+    expect(await store.deleteExpired(t)).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1 });
+
+    expect(await store.sessionByHash('sess_old')).toBeNull();
+    expect(await store.sessionByHash('sess_new')).not.toBeNull();
+    expect(await store.deviceCodeByHash('dc_old')).toBeNull();
+    expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();
+    // A second sweep with nothing left to expire removes nothing.
+    expect(await store.deleteExpired(t)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0 });
+  });
+
   // ---- apps ----
 
   it('createApp writes the app and an app.created event', async () => {

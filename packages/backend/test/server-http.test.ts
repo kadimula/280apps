@@ -7,10 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { serve } from '@hono/node-server';
 import type { AddressInfo } from 'node:net';
 import type { Server as NodeHttpServer } from 'node:http';
-import { Platform } from '../src/deploysvc.js';
 import { Server } from '../src/api.js';
 import { REQUEST_ID_HEADER } from '../src/observe.js';
-import { newPlatform, testManifest, type Harness } from './helpers/harness.js';
+import { newPlatform, testDeps, testManifest, type Harness } from './helpers/harness.js';
 
 let harness: Harness;
 let node: NodeHttpServer;
@@ -18,8 +17,7 @@ let base: string;
 
 beforeAll(async () => {
   harness = await newPlatform();
-  const platform = harness.platform as Platform;
-  const app = new Server({ platform, openSignup: true }).handler();
+  const app = new Server({ buildDeps: () => testDeps(harness, { openSignup: true }) }).handler();
   await new Promise<void>((resolve) => {
     node = serve({ fetch: app.fetch, port: 0 }, () => resolve()) as NodeHttpServer;
     node.requestTimeout = 6 * 60 * 1000;

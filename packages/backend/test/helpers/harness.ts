@@ -20,7 +20,9 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
-import { Server, type ServerConfig } from '../../src/api.js';
+import { Server } from '../../src/api.js';
+import type { Auth } from '../../src/authsvc.js';
+import type { RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
 import { MemoryRuntime } from '../../src/runtime/index.js';
@@ -79,11 +81,38 @@ export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Serv
   return h.platform.for(accountId);
 }
 
+// TestServerOpts is the test-facing surface: the per-request config a case wants
+// on the deps container, plus an optional shared harness and access logger. The
+// new Server takes a buildDeps closure, not these fields; testDeps wraps them.
+export interface TestServerOpts {
+  harness?: Harness;
+  auth?: Auth;
+  openSignup?: boolean;
+  verificationUri?: string;
+  minCliVersion?: string;
+  logger?: Logger;
+}
+
+// testDeps returns the request-scoped deps a test drives the router with. The
+// harness store is shared across requests and torn down once, so there is no
+// per-request close(): the production close (ending the pg client) has no
+// analogue here.
+export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' | 'logger'> = {}): RequestDeps {
+  return {
+    platform: harness.platform,
+    auth: opts.auth,
+    openSignup: opts.openSignup ?? false,
+    verificationUri: opts.verificationUri ?? '',
+    minCliVersion: opts.minCliVersion ?? '',
+  };
+}
+
 export async function newServer(
-  cfg: Omit<ServerConfig, 'platform'> & { harness?: Harness },
+  cfg: TestServerOpts = {},
 ): Promise<{ server: Server; app: Hono<HonoEnv>; harness: Harness }> {
   const harness = cfg.harness ?? (await newPlatform());
-  const server = new Server({ ...cfg, platform: harness.platform });
+  const deps = testDeps(harness, cfg);
+  const server = new Server({ buildDeps: () => deps, logger: cfg.logger });
   return { server, app: server.handler(), harness };
 }
 

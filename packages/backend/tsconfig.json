@@ -2,7 +2,13 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // The backend compiles for the Workers runtime (src/worker.ts) as well as
+    // Node, so its globals — R2Bucket, Hyperdrive, DurableObject*,
+    // FixedLengthStream, ExecutionContext, ScheduledController — come from
+    // @cloudflare/workers-types alongside node. skipLibCheck (base) keeps the two
+    // global sets from colliding in their own .d.ts files.
+    "types": ["node", "@cloudflare/workers-types"]
   },
   "include": ["src"]
 }

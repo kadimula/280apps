@@ -14,7 +14,7 @@
 import type { Manifest, DeployError } from '@280/contracts';
 import { manifestSchema, errorSchema, State } from '@280/contracts';
 import pg from 'pg';
-import type { PoolClient } from 'pg';
+import type { QueryResult } from 'pg';
 import {
   DeviceStatus,
   EventKind,
@@ -23,6 +23,7 @@ import {
   type Deploy,
   type DeviceCode,
   type Event,
+  type ExpiryCounts,
   type OAuthAccount,
   type Session,
   type Store,
@@ -30,7 +31,126 @@ import {
 } from '../seams.js';
 import { migrations, qualify, type Qualifier } from './migrations.js';
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
+
+// Queryable is the query surface one statement runs against, satisfied by both
+// a pooled client and a single Client.
+interface Queryable {
+  query(text: string, params?: unknown[]): Promise<QueryResult>;
+}
+
+// Backend is how PgStore reaches Postgres: a plain statement, or a function run
+// against one connection inside BEGIN/COMMIT. Two shapes back it — a Pool (boot
+// and tests, where a query checks a connection out and returns it) and a single
+// lazily-connected Client (the Worker, where one connection serves one request
+// and is ended after the response). Everything the store does routes through
+// here, so the store body is identical whichever backs it.
+interface Backend {
+  query(text: string, params?: unknown[]): Promise<QueryResult>;
+  transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+
+// PoolBackend backs the store with a connection pool: the boot path and the
+// tests. A transaction checks one client out of the pool and returns it.
+class PoolBackend implements Backend {
+  constructor(private readonly pool: pg.Pool) {}
+
+  query(text: string, params?: unknown[]): Promise<QueryResult> {
+    return this.pool.query(text, params as unknown[] | undefined);
+  }
+
+  async transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const out = await fn(client);
+      await client.query('COMMIT');
+      return out;
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // no-op once committed; the original error is what matters
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  close(): Promise<void> {
+    return this.pool.end();
+  }
+}
+
+// ClientBackend backs the store with one lazily-connected client: the Worker's
+// per-request path. The client connects on the first statement (so a request
+// that never touches the database opens no connection) and is ended once, after
+// the response, by close(). A single client cannot run statements concurrently,
+// which is exactly right: one request drives the store sequentially, and a
+// transaction is BEGIN/COMMIT on that same client rather than a checkout.
+class ClientBackend implements Backend {
+  private client: pg.Client | null = null;
+  private connecting: Promise<pg.Client> | null = null;
+
+  constructor(private readonly connectionString: string) {}
+
+  private conn(): Promise<pg.Client> {
+    if (this.client !== null) return Promise.resolve(this.client);
+    if (this.connecting === null) {
+      const client = new Client({ connectionString: this.connectionString });
+      this.connecting = client.connect().then(() => {
+        this.client = client;
+        return client;
+      });
+    }
+    return this.connecting;
+  }
+
+  async query(text: string, params?: unknown[]): Promise<QueryResult> {
+    const c = await this.conn();
+    return c.query(text, params as unknown[] | undefined);
+  }
+
+  async transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
+    const c = await this.conn();
+    await c.query('BEGIN');
+    try {
+      const out = await fn(c);
+      await c.query('COMMIT');
+      return out;
+    } catch (err) {
+      try {
+        await c.query('ROLLBACK');
+      } catch {
+        // no-op once committed; the original error is what matters
+      }
+      throw err;
+    }
+  }
+
+  async close(): Promise<void> {
+    // Ending a client that never connected throws, so only close one we opened.
+    const opened = this.client;
+    if (opened !== null) {
+      this.client = null;
+      this.connecting = null;
+      await opened.end();
+      return;
+    }
+    const pending = this.connecting;
+    if (pending !== null) {
+      this.connecting = null;
+      try {
+        const c = await pending;
+        await c.end();
+      } catch {
+        // connect never completed; nothing to end
+      }
+    }
+  }
+}
 
 // connectTimeout bounds the wait for a database to become reachable at boot, in
 // milliseconds. A container host's private network can take a moment to resolve
@@ -84,7 +204,16 @@ export async function open(dsn: string, schema: string): Promise<Store> {
     await pool.end();
     throw err;
   }
-  return new PgStore(pool, schema);
+  return new PgStore(new PoolBackend(pool), schema);
+}
+
+// newPgStore builds a store over one lazily-connected client, for the Worker's
+// request scope: the client connects on the first statement, against the
+// (Hyperdrive) connection string, and is ended after the response. It does NOT
+// migrate — DDL runs only through the standalone CI runner (migrate.ts), never
+// at runtime — and holds no pool, so no I/O object is carried across requests.
+export function newPgStore(connectionString: string, schema: string): Store {
+  return new PgStore(new ClientBackend(connectionString), schema);
 }
 
 // waitForDB pings until the database answers or connectTimeout elapses.
@@ -225,37 +354,22 @@ class PgStore implements Store {
   private readonly t: Qualifier;
 
   constructor(
-    private readonly pool: pg.Pool,
+    private readonly db: Backend,
     schema: string,
   ) {
     this.t = qualify(schema);
   }
 
   async close(): Promise<void> {
-    await this.pool.end();
+    await this.db.close();
   }
 
   // inTx runs fn in a transaction. Every event is written by the same
   // transaction as the change it describes, so a deploy that went live without
   // its event, or an event for a transition that rolled back, are both states
   // the database will not produce.
-  private async inTx<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const out = await fn(client);
-      await client.query('COMMIT');
-      return out;
-    } catch (err) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        // no-op once committed; the original error is what matters
-      }
-      throw err;
-    } finally {
-      client.release();
-    }
+  private inTx<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
+    return this.db.transaction(fn);
   }
 
   // ---- events ----
@@ -264,7 +378,7 @@ class PgStore implements Store {
     if (limit <= 0 || limit > maxEventPage) {
       limit = maxEventPage;
     }
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT id, account_id, app_id, deploy_id, kind, detail, created_at
        FROM ${this.t('events')} ORDER BY created_at DESC, id DESC LIMIT $1`,
       [limit],
@@ -275,7 +389,7 @@ class PgStore implements Store {
   // ---- accounts ----
 
   async accountByToken(tokenHash: string): Promise<Account | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT a.id, a.subject FROM ${this.t('accounts')} a
        JOIN ${this.t('tokens')} t ON t.account_id = a.id
        WHERE t.token_hash = $1`,
@@ -285,7 +399,7 @@ class PgStore implements Store {
   }
 
   async accountBySubject(subject: string): Promise<Account | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
       [subject],
     );
@@ -293,7 +407,7 @@ class PgStore implements Store {
   }
 
   async createAccount(a: Account): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
       [a.id, a.subject],
     );
@@ -309,12 +423,12 @@ class PgStore implements Store {
     // The conflict target repeats the index's WHERE clause because
     // accounts_by_subject is partial, and the upsert target is matched to a
     // partial index only when the predicate is restated.
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2)
        ON CONFLICT (subject) WHERE subject <> '' DO NOTHING`,
       [newId, subject],
     );
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
       [subject],
     );
@@ -325,7 +439,7 @@ class PgStore implements Store {
   }
 
   async addToken(accountId: string, tokenHash: string): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('tokens')} (token_hash, account_id) VALUES ($1, $2) ON CONFLICT (token_hash) DO NOTHING`,
       [tokenHash, accountId],
     );
@@ -334,7 +448,7 @@ class PgStore implements Store {
   // ---- users, oauth logins, sessions ----
 
   async userById(id: string): Promise<User | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT id, email, name, image FROM ${this.t('users')} WHERE id = $1`,
       [id],
     );
@@ -342,7 +456,7 @@ class PgStore implements Store {
   }
 
   async userByEmail(email: string): Promise<User | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT id, email, name, image FROM ${this.t('users')} WHERE email = $1`,
       [email],
     );
@@ -350,14 +464,14 @@ class PgStore implements Store {
   }
 
   async createUser(u: User): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('users')} (id, email, name, image) VALUES ($1, $2, $3, $4)`,
       [u.id, u.email, u.name, u.image],
     );
   }
 
   async oauthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT provider, provider_account_id, user_id FROM ${this.t('oauth_accounts')}
        WHERE provider = $1 AND provider_account_id = $2`,
       [provider, providerAccountId],
@@ -366,7 +480,7 @@ class PgStore implements Store {
   }
 
   async linkOAuthAccount(a: OAuthAccount): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('oauth_accounts')} (provider, provider_account_id, user_id) VALUES ($1, $2, $3)
        ON CONFLICT (provider, provider_account_id) DO NOTHING`,
       [a.provider, a.providerAccountId, a.userId],
@@ -374,14 +488,14 @@ class PgStore implements Store {
   }
 
   async createSession(s: Session): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('sessions')} (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
       [s.tokenHash, s.userId, s.expiresAt],
     );
   }
 
   async sessionByHash(tokenHash: string): Promise<Session | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT token_hash, user_id, expires_at FROM ${this.t('sessions')} WHERE token_hash = $1`,
       [tokenHash],
     );
@@ -389,7 +503,7 @@ class PgStore implements Store {
   }
 
   async deleteSession(tokenHash: string): Promise<void> {
-    await this.pool.query(`DELETE FROM ${this.t('sessions')} WHERE token_hash = $1`, [tokenHash]);
+    await this.db.query(`DELETE FROM ${this.t('sessions')} WHERE token_hash = $1`, [tokenHash]);
   }
 
   // touchLoginRate is a single upsert that resets the window when it has passed
@@ -398,7 +512,7 @@ class PgStore implements Store {
   async touchLoginRate(key: string, now: number, windowSecs: number, limit: number): Promise<boolean> {
     // The arithmetic parameters are cast explicitly: an untyped $n inside `+`
     // defaults to text, and text + text is not an operator Postgres has.
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `INSERT INTO ${this.t('login_rate_limits')} AS lrl (key, count, expires_at)
        VALUES ($1, 1, $2::bigint + $3::bigint)
        ON CONFLICT (key) DO UPDATE SET
@@ -412,17 +526,43 @@ class PgStore implements Store {
     return toNum(res.rows[0].count) <= limit;
   }
 
+  // deleteExpired sweeps the three time-boxed tables in one transaction: expired
+  // browser sessions and device codes, and lapsed login-rate windows. Run by the
+  // scheduled cleanup; the counts are for its log line. Everything else in the
+  // schema (accounts, apps, deploys, events) is retained by design.
+  async deleteExpired(now: number): Promise<ExpiryCounts> {
+    return this.inTx(async (tx) => {
+      const sessions = await tx.query(
+        `DELETE FROM ${this.t('sessions')} WHERE expires_at <= $1`,
+        [now],
+      );
+      const deviceCodes = await tx.query(
+        `DELETE FROM ${this.t('device_codes')} WHERE expires_at <= $1`,
+        [now],
+      );
+      const rateLimits = await tx.query(
+        `DELETE FROM ${this.t('login_rate_limits')} WHERE expires_at <= $1`,
+        [now],
+      );
+      return {
+        sessions: sessions.rowCount ?? 0,
+        deviceCodes: deviceCodes.rowCount ?? 0,
+        rateLimits: rateLimits.rowCount ?? 0,
+      };
+    });
+  }
+
   // ---- device codes ----
 
   async createDeviceCode(d: DeviceCode): Promise<void> {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('device_codes')} (device_hash, user_code, status, expires_at) VALUES ($1,$2,$3,$4)`,
       [d.deviceHash, d.userCode, d.status, d.expiresAt],
     );
   }
 
   async deviceCodeByHash(hash: string): Promise<DeviceCode | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT device_hash, user_code, account_id, status, expires_at FROM ${this.t('device_codes')} WHERE device_hash = $1`,
       [hash],
     );
@@ -472,7 +612,7 @@ class PgStore implements Store {
   // ---- apps ----
 
   async app(accountId: string, appId: string): Promise<App | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2`,
       [accountId, appId],
     );
@@ -482,7 +622,7 @@ class PgStore implements Store {
   // appsByFingerprint returns every app matching a project fingerprint, oldest
   // first. More than one is the ambiguous_identity case.
   async appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
       [accountId, fingerprint],
     );
@@ -491,7 +631,7 @@ class PgStore implements Store {
 
   // appsByAccount returns everything an account owns, newest first.
   async appsByAccount(accountId: string): Promise<App[]> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 ORDER BY created_at DESC, id`,
       [accountId],
     );
@@ -499,7 +639,7 @@ class PgStore implements Store {
   }
 
   async appByClientRef(accountId: string, ref: string): Promise<App | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND client_ref = $2`,
       [accountId, ref],
     );
@@ -563,19 +703,19 @@ class PgStore implements Store {
   }
 
   async setStoreId(appId: string, storeId: string): Promise<void> {
-    await this.pool.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
+    await this.db.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
   }
 
   // appByScript resolves a hostname label to an app, for the serving edge.
   async appByScript(script: string): Promise<App | null> {
-    const res = await this.pool.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
+    const res = await this.db.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 
   // ---- deploys ----
 
   async deploy(appId: string, deployId: string): Promise<Deploy | null> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')} WHERE app_id = $1 AND id = $2`,
       [appId, deployId],
     );
@@ -585,7 +725,7 @@ class PgStore implements Store {
   // openDeploys returns the app's non-terminal deploys. These define which blob
   // digests the app will accept.
   async openDeploys(appId: string): Promise<Deploy[]> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
        WHERE app_id = $1 AND state NOT IN ($2, $3)`,
       [appId, State.Live, State.Failed],
@@ -598,7 +738,7 @@ class PgStore implements Store {
   // returns the deploy as it now stands.
   async openDeploy(d: Deploy): Promise<Deploy> {
     const manifest = JSON.stringify(d.manifest);
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO ${this.t('deploys')} AS d (app_id, id, manifest, state, failure) VALUES ($1,$2,$3,$4,'')
        ON CONFLICT (app_id, id) DO UPDATE SET
          state   = CASE WHEN d.state = $5 THEN $6 ELSE d.state END,
@@ -616,7 +756,7 @@ class PgStore implements Store {
   // whether this caller won. Parallel blob uploads can each observe the same
   // last-blob-landed moment; exactly one may act on it.
   async claimActivation(appId: string, deployId: string): Promise<boolean> {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `UPDATE ${this.t('deploys')} SET state = $1 WHERE app_id = $2 AND id = $3 AND state = $4`,
       [State.Activating, appId, deployId, State.Uploading],
     );
@@ -666,7 +806,7 @@ class PgStore implements Store {
 
   // insertEvent appends one event through the pool or a transaction.
   private async insertEvent(
-    x: Pick<PoolClient, 'query'>,
+    x: Queryable,
     e: { accountId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
   ): Promise<void> {
     await x.query(
@@ -680,7 +820,7 @@ class PgStore implements Store {
   // account through them only to denormalize it here would be a parameter that
   // exists to be forgotten.
   private async insertAppEvent(
-    x: Pick<PoolClient, 'query'>,
+    x: Queryable,
     appId: string,
     deployId: string,
     kind: string,

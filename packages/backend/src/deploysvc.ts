@@ -77,6 +77,17 @@ export interface PlatformDeps {
   // so the dispatcher recovers it by stripping the suffix (HOST_SUFFIX). Empty is
   // the default and reproduces Go byte for byte; the divergence is a new env.
   hostSuffix?: string;
+  // locks is the per-app activation lock registry. The Platform is now built per
+  // request (it captures the request's store), but activation serialization must
+  // outlive one request, so the Worker passes a single isolate-scoped map that
+  // every per-request Platform shares. Omitted ⇒ a fresh map (the tests, whose
+  // Platform lives for the whole case). This is a coordination primitive, not an
+  // I/O object, so sharing it across requests is safe.
+  //
+  // Phase-1a limit: this only serializes within one isolate. Cross-isolate
+  // per-app serialization is the real AppActivator DO's job, a later wave; until
+  // then two isolates can still race one app's activation.
+  locks?: Map<string, Promise<unknown>>;
 }
 
 export class Platform {
@@ -86,12 +97,14 @@ export class Platform {
   readonly appDomain: string;
   readonly hostSuffix: string;
 
-  // activating serializes activation per app. The store's claim already makes
-  // exactly one caller responsible for a given deploy; this additionally keeps
-  // two different deploys of one app from racing each other into the runtime,
-  // where the loser would silently become the served version. A per-app promise
-  // chain is the single-process equivalent of the Go sync.Mutex.
-  private readonly locks = new Map<string, Promise<unknown>>();
+  // locks serializes activation per app. The store's claim already makes exactly
+  // one caller responsible for a given deploy; this additionally keeps two
+  // different deploys of one app from racing each other into the runtime, where
+  // the loser would silently become the served version. A per-app promise chain
+  // is the single-isolate equivalent of the Go sync.Mutex. Shared across
+  // per-request Platforms when the caller passes one (the Worker), so the guard
+  // survives beyond a single request.
+  private readonly locks: Map<string, Promise<unknown>>;
 
   constructor(deps: PlatformDeps) {
     this.store = deps.store;
@@ -99,6 +112,7 @@ export class Platform {
     this.runtime = deps.runtime;
     this.appDomain = deps.appDomain;
     this.hostSuffix = deps.hostSuffix ?? '';
+    this.locks = deps.locks ?? new Map<string, Promise<unknown>>();
   }
 
   // for returns the Port scoped to an account. Created per request so the
@@ -279,6 +293,9 @@ export class Service implements Port {
 
   // ---- PutBlob ----
 
+  // The size the client sent (Content-Length) is deliberately ignored: the blob
+  // store is framed to the size the open deploy's manifest declared, not to a
+  // claim the caller controls.
   async putBlob(appId: string, digest: Digest, _size: number, body: BlobBody): Promise<void> {
     if (!validDigest(digest)) {
       throw new DeployErr({
@@ -304,9 +321,12 @@ export class Service implements Port {
     if (has) return;
 
     const open = await this.wrapInternal('list open deploys', () => this.p.store.openDeploys(appId));
-    if (!wanted(open, digest)) {
-      // The app only ever accepts bytes it has already declared it needs, so an
-      // upload endpoint can never be used as general storage.
+    // The manifest that named this blob also declared its size. Look both up in
+    // one pass: an unwanted digest is rejected here (the upload endpoint is
+    // never general storage), and a wanted one carries the declared size the
+    // blob store frames the body to.
+    const declared = declaredSize(open, digest);
+    if (declared === null) {
       throw new DeployErr({
         code: DeployCode.InvalidBlob,
         message: `digest ${digest} is not named by any open deploy`,
@@ -315,7 +335,7 @@ export class Service implements Port {
     }
 
     try {
-      await this.p.blobs.put(appId, digest, body);
+      await this.p.blobs.put(appId, digest, declared, body);
     } catch (err) {
       const de = asDeployErr(err);
       if (de !== null) throw de;
@@ -547,13 +567,18 @@ function checkCacheKey(key: string): void {
   }
 }
 
-function wanted(open: Deploy[], digest: Digest): boolean {
+// declaredSize returns the size an open deploy's manifest declared for digest,
+// or null when no open deploy names it. The size is the byte length the blob
+// store frames the upload to; null is the "not named by any open deploy"
+// rejection. The first match wins: a digest is content, so any manifest that
+// names it declares the same size.
+function declaredSize(open: Deploy[], digest: Digest): number | null {
   for (const d of open) {
     for (const b of manifestBlobs(d.manifest)) {
-      if (b.digest === digest) return true;
+      if (b.digest === digest) return b.size;
     }
   }
-  return false;
+  return null;
 }
 
 // runtimeApp projects the control plane's app onto what a runtime is allowed to

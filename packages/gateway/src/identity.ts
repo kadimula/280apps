@@ -33,8 +33,7 @@ export class IdentityError extends Error {
   }
 }
 
-// MVP tenant is the email domain (design §5.5 "evergreen.com"); Entra `tid` is a
-// documented follow-up.
+// MVP tenant is the email domain; Entra `tid` is a documented follow-up.
 export function tenantFromEmail(email: string): string {
   const at = email.lastIndexOf('@');
   return at >= 0 ? email.slice(at + 1).toLowerCase() : '';

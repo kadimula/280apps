@@ -1,13 +1,16 @@
-// Turns a built project directory into a deploy Manifest plus the blob content it
-// names. Two frameworks: `static` content-addresses the build dir; `next` runs the
-// pinned OpenNext adapter and wrangler. Spec: bundle.go (Build), normative.
+// bundle turns a project directory into a deploy Manifest plus the blob content
+// it names, ready for the deploy seam's Sync/PutBlob loop. Both frameworks
+// produce a container build context: `next` generates a Dockerfile that builds
+// and runs the app unchanged; `static` serves a prebuilt site from a container.
+// A user Dockerfile at the repo root is the escape hatch (see bundle/container).
 
-import { buildNext } from './next.js';
+import { buildNextContainer } from './container.js';
 import { buildStatic, type Bundle } from './static.js';
 import { fail } from './walk.js';
 
-// Duplicated from detect.FrameworkNext/Static so bundle has no dependency on the
-// detect module.
+// Framework names this package can build. Mirrors detect.FrameworkNext /
+// FrameworkStatic (cli/src/detect); duplicated as a constant so bundle has no
+// dependency on the detect module.
 export const Framework = {
   Static: 'static',
   Next: 'next',
@@ -18,7 +21,7 @@ export function build(root: string, framework: string): Bundle {
     case Framework.Static:
       return buildStatic(root);
     case Framework.Next:
-      return buildNext(root);
+      return buildNextContainer(root);
     default:
       return fail(
         'unknown framework ' + framework,
@@ -27,23 +30,12 @@ export function build(root: string, framework: string): Bundle {
   }
 }
 
-export function assetPaths(m: { assets: { path: string }[] }): string[] {
-  return m.assets.map((a) => a.path);
+// contextPaths returns the manifest's build-context file paths, for logging.
+export function contextPaths(m: { files: { path: string }[] }): string[] {
+  return m.files.map((f) => f.path);
 }
 
 export type { Bundle };
-export { buildStatic, staticWorker, staticDir } from './static.js';
-export {
-  buildNext,
-  nextBundle,
-  cacheKey,
-  walkCache,
-  checkEnvelope,
-  envelopeError,
-  checkNativeModules,
-  readBundledWorker,
-  ensureAdapterConfig,
-  requireNextBuild,
-  requireNodeToolchain,
-} from './next.js';
-export { PreflightError, fail, walkAssets, fileExists } from './walk.js';
+export { buildStatic, staticDir } from './static.js';
+export { buildNextContainer, buildStaticContainer, APP_PORT } from './container.js';
+export { PreflightError, fail, walkContext, walkFiles, fileExists, dirExists } from './walk.js';

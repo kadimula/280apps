@@ -1,18 +1,17 @@
 // MemoryRuntime tests. Spec: platform/internal/runtime/memory.go.
 
 import { describe, it, expect } from 'vitest';
-import { digestBytes, MANIFEST_KIND_BUNDLE, type Manifest, type Digest } from '@280/contracts';
+import { digestBytes, MANIFEST_KIND_CONTAINER, type Manifest, type Digest } from '@280/contracts';
 import type { Activation, RuntimeApp } from '../../src/seams.js';
 import { MemoryRuntime } from '../../src/runtime/memory.js';
 
 function activation(opts: { appId?: string; deployId?: string; storeId?: string }): Activation {
-  const worker = new TextEncoder().encode('worker');
+  const worker = new TextEncoder().encode('FROM scratch\n');
   const blobs = new Map<Digest, Uint8Array>([[digestBytes(worker), worker]]);
   const m: Manifest = {
-    kind: MANIFEST_KIND_BUNDLE,
-    worker: { path: '', digest: digestBytes(worker), size: worker.length },
-    assets: [],
-    cache: [],
+    kind: MANIFEST_KIND_CONTAINER,
+    build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+    files: [{ path: 'Dockerfile', digest: digestBytes(worker), size: worker.length }],
   };
   const app: RuntimeApp = {
     id: opts.appId ?? 'app_1',
@@ -59,7 +58,7 @@ describe('MemoryRuntime', () => {
     await expect(rt.activate(activation({}))).resolves.toBeDefined();
   });
 
-  it('rejects a manifest whose worker blob was never uploaded', async () => {
+  it('rejects a manifest whose Dockerfile blob was never uploaded', async () => {
     const rt = new MemoryRuntime();
     const act = activation({});
     act.asset = async (): Promise<Uint8Array> => {

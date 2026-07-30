@@ -50,14 +50,14 @@
 	// Non-secret tunables. Secrets are NOT here — set them with `wrangler secret put`:
 	//   wrangler secret put GOOGLE_CLIENT_ID
 	//   wrangler secret put GOOGLE_CLIENT_SECRET
-	//   wrangler secret put CF_ACCOUNT_ID
-	//   wrangler secret put CF_API_TOKEN
-	//   wrangler secret put DATABASE_URL      # Neon connection string
-	// (CF_ACCOUNT_ID / CF_API_TOKEN drive the runtime adapter's calls to the CF
-	// REST API — the dispatch namespace and ISR KV are reached over REST, not via
-	// a Worker binding, which is why there is no KV or dispatch-namespace binding.)
+	//   wrangler secret put TWO80_BUILD_TOKEN   # shared secret for the build host
+	//   wrangler secret put DATABASE_URL        # Neon connection string
+	// The control plane runs on Workers and cannot build container images, so it
+	// hands each build context to the self-hosted Docker build host at
+	// TWO80_BUILD_HOST (which holds the Cloudflare registry credentials, not this
+	// Worker). That is why there is no CF_API_TOKEN / registry binding here.
 	"vars": {
-		"TWO80_RUNTIME": "cloudflare",
+		"TWO80_RUNTIME": "container",
 		"TWO80_LOG_FORMAT": "json",
 		"TWO80_DB_SCHEMA": "platform",
 		"TWO80_APP_DOMAIN": "280apps.run",
@@ -65,10 +65,7 @@
 		"TWO80_FRONTEND_ORIGIN": "https://www.280apps.com",
 		"TWO80_VERIFICATION_URI": "https://280apps.com/activate",
 		"TWO80_COOKIE_DOMAIN": ".280apps.com",
-		"CF_DISPATCH_NAMESPACE": "apps",
-		// KV namespace id for Next.js ISR cache (non-secret). Empty ⇒ ISR does not
-		// persist between requests (store warns, not fatal). Fill in the id once
-		// the namespace exists.
-		"CF_ISR_CACHE_KV": ""
+		// The self-hosted Docker build host. Empty ⇒ set TWO80_RUNTIME=memory.
+		"TWO80_BUILD_HOST": ""
 	}
 }

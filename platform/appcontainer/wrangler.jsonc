@@ -1,0 +1,25 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-appcontainer",
+	"main": "src/worker.js",
+	"compatibility_date": "2026-06-01",
+	"compatibility_flags": ["nodejs_compat"],
+
+	// The container class every 280 app runs in, with the locked security defaults
+	// (enableInternet=false, interceptHttps=true) in src/container.js. `image`
+	// points at the build context the CLI buildpack produces — for the local proof,
+	// materialize a hello-world app's context there (see README.md); in production
+	// the self-hosted DockerBuilder supplies the app's own image.
+	"durable_objects": {
+		"bindings": [{ "class_name": "App280Container", "name": "APP" }]
+	},
+	"containers": [
+		{
+			"class_name": "App280Container",
+			"image": "./proof-context",
+			"instance_type": "dev",
+			"max_instances": 1
+		}
+	],
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["App280Container"] }]
+}

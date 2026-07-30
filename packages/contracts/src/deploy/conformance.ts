@@ -1,7 +1,16 @@
-// The deploy seam's behavioral suite: every Port adapter must pass it, so drift
-// between the fake and the real service is a failing build. Spec:
-// contracts/deploy/conformance/conformance.go (normative). Framework-agnostic:
-// exports `cases`, run against the fake (unit) and the HTTP client (integration).
+// The deploy seam's behavioral test suite. Every adapter of Port must pass it:
+// Fake in unit tests, and the production HTTP adapter pointed at the real
+// service in integration. Drift between fake and service is a failing build,
+// which is what keeps the fake an executable contract rather than a stale stub.
+//
+// Spec: contracts/deploy/conformance/conformance.go. Go is normative — all 20
+// named cases, the URL regex, and wantCode asserting a fix on every
+// non-retryable error are ported exactly.
+//
+// This module is framework-agnostic: it exports `cases`, an array of named
+// checks that throw on failure. A test file registers them with its runner, and
+// the same array runs against the fake (unit) and the HTTP client (integration,
+// via TWO80_CONFORMANCE_URL) with no change here.
 
 import {
   Resolution,
@@ -9,9 +18,10 @@ import {
   stateTerminal,
   digestBytes,
   canonicalDigest,
-  MANIFEST_KIND_BUNDLE,
-  MAX_WORKER_GZIP_BYTES,
+  MANIFEST_KIND_CONTAINER,
+  MAX_BUILD_CONTEXT_BYTES,
   DeployCode,
+  type BlobInfo,
   type Digest,
   type Identity,
   type Manifest,
@@ -21,13 +31,15 @@ import type { Port } from '../port.js';
 import { Readable } from 'node:stream';
 import { asDeployError, type DeployErr } from './error.js';
 
-// A fresh, empty Port (an empty account) for one case.
+// MakePort returns a fresh, empty Port (an empty account) for one case.
 export type MakePort = () => Port;
 
 export interface ConformanceCase {
   name: string;
   run: (mk: MakePort) => Promise<void>;
 }
+
+// ---- assertion + error helpers ----
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -37,8 +49,9 @@ function q(s: string): string {
   return JSON.stringify(s);
 }
 
-// Expects fn to reject with the typed error carrying code, and enforces the
-// invariants: non-empty message, and a fix on every non-retryable error.
+// wantCode runs fn expecting it to reject with the seam's typed error carrying
+// code, and enforces the same invariants Go's wantCode does: non-empty message,
+// and a fix on every non-retryable error (conformance.go:143).
 async function wantCode(fn: () => Promise<unknown>, code: string): Promise<DeployErr> {
   let err: unknown;
   let threw = false;
@@ -57,6 +70,8 @@ async function wantCode(fn: () => Promise<unknown>, code: string): Promise<Deplo
   return de;
 }
 
+// ---- context + identity helpers ----
+
 interface Bundle {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
@@ -66,44 +81,47 @@ function bytes(s: string): Uint8Array {
   return Buffer.from(s, 'utf8');
 }
 
-function mkBundle(worker: Uint8Array, assets: Record<string, Uint8Array> | null): Bundle {
-  return mkCacheBundle(worker, assets, null);
+// A constant Dockerfile so every context is buildable and its blob is shared
+// across deploys (a redeploy re-uploads only the files that actually changed).
+const DOCKERFILE = bytes('FROM node:20-bookworm-slim\nCMD ["node","server.js"]\n');
+
+// mkContext builds a container manifest from a flat set of context files. It
+// always includes a Dockerfile, so the context passes preflight and names a
+// valid build recipe; callers add the source files that vary per case.
+function mkContext(files: Record<string, Uint8Array>): Bundle {
+  const content = new Map<Digest, Uint8Array>();
+  const list: BlobInfo[] = [];
+  const add = (path: string, data: Uint8Array): void => {
+    const d = digestBytes(data);
+    content.set(d, data);
+    list.push({ path, digest: d, size: data.length });
+  };
+  add('Dockerfile', DOCKERFILE);
+  for (const [path, data] of Object.entries(files)) add(path, data);
+  return {
+    manifest: {
+      kind: MANIFEST_KIND_CONTAINER,
+      build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+      files: list,
+    },
+    content,
+  };
 }
 
-// mkBundle plus a prerendered cache seed, keyed the way the adapter emits it
-// ("<buildId>/<route>.cache") rather than by URL path.
-function mkCacheBundle(
-  worker: Uint8Array,
-  assets: Record<string, Uint8Array> | null,
-  cache: Record<string, Uint8Array> | null,
-): Bundle {
-  const content = new Map<Digest, Uint8Array>();
-  const wd = digestBytes(worker);
-  content.set(wd, worker);
-  const manifest: Manifest = {
-    kind: MANIFEST_KIND_BUNDLE,
-    worker: { path: '', digest: wd, size: worker.length },
-    assets: [],
-    cache: [],
-  };
-  for (const [path, data] of Object.entries(assets ?? {})) {
-    const d = digestBytes(data);
-    content.set(d, data);
-    manifest.assets.push({ path, digest: d, size: data.length });
-  }
-  for (const [key, data] of Object.entries(cache ?? {})) {
-    const d = digestBytes(data);
-    content.set(d, data);
-    manifest.cache.push({ path: key, digest: d, size: data.length });
-  }
-  return { manifest, content };
+// fileDigest returns a named context file's blob info, for cases that re-put or
+// corrupt a specific file.
+function fileDigest(m: Manifest, path: string): BlobInfo {
+  const f = m.files.find((x) => x.path === path);
+  assert(f !== undefined, `context has no file ${q(path)}`);
+  return f;
 }
 
 function identity(slug: string, remote: string): Identity {
   return { appId: '', slug, framework: 'next', gitRemote: remote, clientRef: '', forceNew: false };
 }
 
-// A fresh stream per call, the streamed form PutBlob consumes.
+// bodyOf yields the blob as one Uint8Array chunk (a Node Readable), the streamed
+// form PutBlob consumes. A fresh stream per call, exactly as Go's bytes.Reader.
 function bodyOf(data: Uint8Array): Readable {
   return Readable.from([Buffer.from(data)]);
 }
@@ -120,7 +138,7 @@ async function putAll(p: Port, appId: string, missing: Digest[], b: Bundle): Pro
   }
 }
 
-// The exact loop the CLI runs: Sync, upload missing, poll.
+// pushToLive runs the exact loop the CLI runs: Sync, upload missing, poll.
 async function pushToLive(p: Port, id: Identity, b: Bundle): Promise<SyncResult> {
   const res = await mustSync(p, id, b.manifest);
   await putAll(p, res.app.id, res.missing, b);
@@ -128,7 +146,8 @@ async function pushToLive(p: Port, id: Identity, b: Bundle): Promise<SyncResult>
   return res;
 }
 
-// Polls until the deploy activates, which the platform does on its own once the last blob lands.
+// waitLive polls until the deploy activates, which the platform does on its own
+// once the last blob lands.
 async function waitLive(p: Port, appId: string, deployId: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
     const st = await p.status(appId, deployId);
@@ -138,19 +157,17 @@ async function waitLive(p: Port, appId: string, deployId: string): Promise<void>
   throw new Error('deploy never reached live');
 }
 
-function hasDigest(list: Digest[], want: Digest): boolean {
-  return list.includes(want);
-}
-
 // URL scheme: <slug>-<10 base36>.<domain>.
 const urlRe = /^https:\/\/[a-z0-9-]+-[a-z0-9]{10}\.[a-z0-9.-]+$/;
+
+// ---- the 20 cases, in the order conformance.go registers them ----
 
 export const cases: ConformanceCase[] = [
   {
     name: 'CreateOnFirstSync',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a') });
+      const b = mkContext({ 'public/a.js': bytes('a') });
       const res = await mustSync(p, identity('demo', 'git@github.com:x/demo.git'), b.manifest);
       assert(res.resolution === Resolution.Created, `resolution = ${q(res.resolution)}, want created`);
       assert(res.app.id !== '' && res.deployId !== '', `empty app or deploy id: ${JSON.stringify(res)}`);
@@ -165,7 +182,7 @@ export const cases: ConformanceCase[] = [
     name: 'SyncIsIdempotent',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a') });
+      const b = mkContext({ 'public/a.js': bytes('a') });
       const id = identity('demo', 'git@github.com:x/demo.git');
       const first = await mustSync(p, id, b.manifest);
       id.appId = first.app.id; // as the CLI persists it
@@ -184,11 +201,11 @@ export const cases: ConformanceCase[] = [
     name: 'UploadAllThenLive',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a'), '/b.css': bytes('b') });
+      const b = mkContext({ 'public/a.js': bytes('a'), 'public/b.css': bytes('b') });
       const res = await pushToLive(p, identity('demo', 'git@github.com:x/demo.git'), b);
       // Re-put after live: idempotent no-op.
-      const d = b.manifest.worker.digest;
-      await p.putBlob(res.app.id, d, b.manifest.worker.size, bodyOf(b.content.get(d)!));
+      const f = fileDigest(b.manifest, 'Dockerfile');
+      await p.putBlob(res.app.id, f.digest, f.size, bodyOf(b.content.get(f.digest)!));
       const st = await p.status(res.app.id, res.deployId);
       assert(st.state === State.Live && st.url !== '', `want live with URL, got ${JSON.stringify(st)}`);
     },
@@ -197,7 +214,7 @@ export const cases: ConformanceCase[] = [
     name: 'MissingShrinksAsBlobsLand',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a'), '/b.css': bytes('b') });
+      const b = mkContext({ 'public/a.js': bytes('a'), 'public/b.css': bytes('b') });
       const id = identity('demo', 'git@github.com:x/demo.git');
       const res = await mustSync(p, id, b.manifest);
       const one = res.missing[0]!;
@@ -212,67 +229,58 @@ export const cases: ConformanceCase[] = [
     },
   },
   {
-    name: 'CacheEntriesTravelAsBlobs',
+    name: 'PartialContextStaysInProgress',
     async run(mk) {
       const p = mk();
-      const b = mkCacheBundle(
-        bytes('worker'),
-        { '/a.js': bytes('asset a') },
-        { 'b1/index.cache': bytes('prerendered index'), 'b1/about.cache': bytes('prerendered about') },
-      );
+      const b = mkContext({
+        'public/a.js': bytes('asset a'),
+        'app/index.js': bytes('page index'),
+        'app/about.js': bytes('page about'),
+      });
       const res = await mustSync(p, identity('demo', 'git@github.com:x/demo.git'), b.manifest);
       assert(
         res.missing.length === b.content.size,
-        `missing = ${res.missing.length} blobs, want all ${b.content.size} including the cache seed`,
+        `missing = ${res.missing.length} blobs, want all ${b.content.size} context files`,
       );
-      for (const c of b.manifest.cache) {
-        assert(
-          hasDigest(res.missing, c.digest),
-          `cache entry ${q(c.path)} (${c.digest}) was not reported missing: ${res.missing}`,
-        );
-      }
-      // Everything but one cache entry: the deploy must still be waiting.
-      const hold = b.manifest.cache[0]!.digest;
+      // Everything but one file: the deploy must still be waiting.
+      const hold = res.missing[0]!;
       const rest = res.missing.filter((d) => d !== hold);
       await putAll(p, res.app.id, rest, b);
       const st = await p.status(res.app.id, res.deployId);
       assert(
         !stateTerminal(st.state),
-        `state = ${q(st.state)} with cache entry ${hold} still missing, want in progress`,
+        `state = ${q(st.state)} with file ${hold} still missing, want in progress`,
       );
       await putAll(p, res.app.id, [hold], b);
       await waitLive(p, res.app.id, res.deployId);
     },
   },
   {
-    name: 'CacheEntryIdentifiesTheDeploy',
+    name: 'FileContentIdentifiesTheDeploy',
     async run(mk) {
       const p = mk();
-      const worker = bytes('worker');
-      const v1 = mkCacheBundle(worker, null, { 'b1/index.cache': bytes('prerendered v1') });
-      const v2 = mkCacheBundle(worker, null, { 'b1/index.cache': bytes('prerendered v2') });
+      const v1 = mkContext({ 'app/page.js': bytes('page v1') });
+      const v2 = mkContext({ 'app/page.js': bytes('page v2') });
       assert(
         canonicalDigest(v1.manifest) !== canonicalDigest(v2.manifest),
-        'changing a cache entry did not change the manifest canonical digest',
+        'changing a file did not change the manifest canonical digest',
       );
-      const asAsset: Manifest = {
-        kind: MANIFEST_KIND_BUNDLE,
-        worker: v1.manifest.worker,
-        assets: v1.manifest.cache,
-        cache: [],
-      };
+      // The same bytes at a different path are a different manifest: the path is
+      // part of the build context, so it is part of the digest.
+      const moved = mkContext({ 'app/moved.js': bytes('page v1') });
       assert(
-        canonicalDigest(asAsset) !== canonicalDigest(v1.manifest),
-        'the same blob as an asset and as a cache entry share a canonical digest',
+        canonicalDigest(moved.manifest) !== canonicalDigest(v1.manifest),
+        'the same bytes at a different context path share a canonical digest',
       );
       const id = identity('demo', 'git@github.com:x/demo.git');
       const first = await pushToLive(p, id, v1);
       id.appId = first.app.id;
       const second = await mustSync(p, id, v2.manifest);
-      assert(second.deployId !== first.deployId, 'a changed cache entry produced the same deploy id');
+      assert(second.deployId !== first.deployId, 'a changed file produced the same deploy id');
+      const changed = fileDigest(v2.manifest, 'app/page.js').digest;
       assert(
-        second.missing.length === 1 && second.missing[0] === v2.manifest.cache[0]!.digest,
-        `missing = ${second.missing}, want only the changed cache entry ${v2.manifest.cache[0]!.digest}`,
+        second.missing.length === 1 && second.missing[0] === changed,
+        `missing = ${second.missing}, want only the changed file ${changed}`,
       );
     },
   },
@@ -280,7 +288,7 @@ export const cases: ConformanceCase[] = [
     name: 'FingerprintAutoLink',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const remote = 'git@github.com:x/demo.git';
       const first = await mustSync(p, identity('demo', remote), b.manifest);
       // A fresh clone: no appId in config, same remote and slug.
@@ -296,7 +304,7 @@ export const cases: ConformanceCase[] = [
     name: 'AmbiguousIdentity',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const remote = 'git@github.com:x/demo.git';
       await mustSync(p, identity('demo', remote), b.manifest);
       const dup = identity('demo', remote);
@@ -313,7 +321,7 @@ export const cases: ConformanceCase[] = [
     name: 'ForceNewCreatesSecondApp',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const remote = 'git@github.com:x/demo.git';
       const first = await mustSync(p, identity('demo', remote), b.manifest);
       const dup = identity('demo', remote);
@@ -329,7 +337,7 @@ export const cases: ConformanceCase[] = [
     name: 'ClientRefDedupesCreate',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const id: Identity = {
         appId: '',
         slug: 'demo',
@@ -351,18 +359,20 @@ export const cases: ConformanceCase[] = [
     name: 'NoSuchApp',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const id = identity('demo', 'git@github.com:x/demo.git');
       id.appId = 'app_does_not_exist';
       await wantCode(() => p.sync({ identity: id, manifest: b.manifest }), DeployCode.NoSuchApp);
     },
   },
   {
-    name: 'PreflightRejectsOversizeWorker',
+    name: 'PreflightRejectsOversizeContext',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
-      b.manifest.worker.size = MAX_WORKER_GZIP_BYTES + 1;
+      const b = mkContext({});
+      // Declare the Dockerfile bigger than the whole context budget: raw over the
+      // limit can never fit, so preflight rejects before any state changes.
+      fileDigest(b.manifest, 'Dockerfile').size = MAX_BUILD_CONTEXT_BYTES + 1;
       await wantCode(
         () => p.sync({ identity: identity('demo', 'git@github.com:x/demo.git'), manifest: b.manifest }),
         DeployCode.PreflightRejected,
@@ -373,11 +383,11 @@ export const cases: ConformanceCase[] = [
     name: 'DigestMismatchThenRecovery',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a') });
+      const b = mkContext({ 'public/a.js': bytes('a') });
       const res = await mustSync(p, identity('demo', 'git@github.com:x/demo.git'), b.manifest);
-      const d = b.manifest.worker.digest;
+      const f = fileDigest(b.manifest, 'Dockerfile');
       await wantCode(
-        () => p.putBlob(res.app.id, d, b.manifest.worker.size, bodyOf(bytes('corrupted'))),
+        () => p.putBlob(res.app.id, f.digest, f.size, bodyOf(bytes('corrupted'))),
         DeployCode.DigestMismatch,
       );
       // Correct bytes still succeed afterwards; the deploy is not wedged.
@@ -390,7 +400,7 @@ export const cases: ConformanceCase[] = [
     name: 'InvalidBlobRejected',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const res = await mustSync(p, identity('demo', 'git@github.com:x/demo.git'), b.manifest);
       const rogue = bytes('never declared');
       await wantCode(
@@ -403,7 +413,7 @@ export const cases: ConformanceCase[] = [
     name: 'StatusUnknownDeployNotFound',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const res = await pushToLive(p, identity('demo', 'git@github.com:x/demo.git'), b);
       await wantCode(() => p.status(res.app.id, 'dep_never_existed'), DeployCode.NotFound);
     },
@@ -412,11 +422,10 @@ export const cases: ConformanceCase[] = [
     name: 'RedeployUploadsOnlyChangedBlobs',
     async run(mk) {
       const p = mk();
-      const worker = bytes('worker');
-      const v1 = mkBundle(worker, { '/a.js': bytes('a'), '/b.css': bytes('b') });
+      const v1 = mkContext({ 'public/a.js': bytes('a'), 'public/b.css': bytes('b') });
       const id = identity('demo', 'git@github.com:x/demo.git');
       const res = await pushToLive(p, id, v1);
-      const v2 = mkBundle(worker, { '/a.js': bytes('a'), '/b.css': bytes('b v2') });
+      const v2 = mkContext({ 'public/a.js': bytes('a'), 'public/b.css': bytes('b v2') });
       id.appId = res.app.id;
       const next = await mustSync(p, id, v2.manifest);
       assert(next.deployId !== res.deployId, 'changed manifest produced the same deploy id');
@@ -432,9 +441,8 @@ export const cases: ConformanceCase[] = [
     name: 'RevertRepushReactivates',
     async run(mk) {
       const p = mk();
-      const worker = bytes('worker');
-      const v1 = mkBundle(worker, { '/index.html': bytes('v1') });
-      const v2 = mkBundle(worker, { '/index.html': bytes('v2') });
+      const v1 = mkContext({ 'public/index.html': bytes('v1') });
+      const v2 = mkContext({ 'public/index.html': bytes('v2') });
       const id = identity('demo', 'git@github.com:x/demo.git');
       const first = await pushToLive(p, id, v1);
       id.appId = first.app.id;
@@ -452,7 +460,7 @@ export const cases: ConformanceCase[] = [
     name: 'DeleteDryRunChangesNothing',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a') });
+      const b = mkContext({ 'public/a.js': bytes('a') });
       const res = await pushToLive(p, identity('demo', 'git@github.com:x/demo.git'), b);
       const got = await p.delete({ appId: res.app.id, confirm: '' });
       assert(!got.deleted, 'a dry run reported the app deleted');
@@ -468,7 +476,7 @@ export const cases: ConformanceCase[] = [
     name: 'DeleteRejectsWrongName',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), null);
+      const b = mkContext({});
       const res = await pushToLive(p, identity('demo', 'git@github.com:x/demo.git'), b);
       await wantCode(
         () => p.delete({ appId: res.app.id, confirm: 'some-other-app' }),
@@ -482,7 +490,7 @@ export const cases: ConformanceCase[] = [
     name: 'DeleteDestroysTheApp',
     async run(mk) {
       const p = mk();
-      const b = mkBundle(bytes('worker'), { '/a.js': bytes('a') });
+      const b = mkContext({ 'public/a.js': bytes('a') });
       const id = identity('demo', 'git@github.com:x/demo.git');
       const res = await pushToLive(p, id, b);
       const got = await p.delete({ appId: res.app.id, confirm: res.app.slug });

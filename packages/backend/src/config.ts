@@ -28,26 +28,27 @@ export interface Env {
   TWO80_SESSION_TTL_DAYS?: string;
   TWO80_LOGIN_RATE_WINDOW_SECS?: string;
   TWO80_LOGIN_RATE_MAX?: string;
-  CF_DISPATCH_NAMESPACE?: string;
-  CF_ISR_CACHE_KV?: string;
-  CF_COMPATIBILITY_DATE?: string;
-  CF_D1_LOCATION?: string;
+  // TWO80_BUILD_HOST is the self-hosted Docker build host the container runtime
+  // ships build contexts to; the control plane runs on Workers and cannot build
+  // images itself. Empty unless TWO80_RUNTIME=memory.
+  TWO80_BUILD_HOST?: string;
 
   // Secrets (`wrangler secret put`).
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  CF_API_TOKEN?: string;
-  CF_ACCOUNT_ID?: string;
-  // The Neon origin Hyperdrive fronts. At runtime the Worker dials the pooled
-  // HYPERDRIVE binding, so the store reads connectionString off that, not this.
-  // Present for parity: the same secret the CI migrate runner reads out of band.
+  // TWO80_BUILD_TOKEN authenticates the control plane to the build host.
+  TWO80_BUILD_TOKEN?: string;
+  // DATABASE_URL is the Neon origin string Hyperdrive fronts; at runtime the
+  // Worker dials the pooled HYPERDRIVE binding, so the store reads
+  // connectionString off that, not this. Present for parity — it is the same
+  // secret the CI migrate runner reads (from process.env, out of band).
   DATABASE_URL?: string;
 }
 
 // Config is Env resolved: defaults applied, numbers parsed, secrets grouped. Built
 // once per request (and per scheduled sweep).
 export interface Config {
-  runtime: 'cloudflare' | 'memory';
+  runtime: 'container' | 'memory';
   logFormat: 'json' | 'text';
   dbSchema: string;
   // dbConnectionString is what the request's pg client dials: the Hyperdrive
@@ -64,14 +65,8 @@ export interface Config {
   sessionTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
-  cf: {
-    accountId: string;
-    apiToken: string;
-    namespace: string;
-    isrCacheKV: string;
-    compatibilityDate: string;
-    d1Location: string;
-  };
+  // build is the self-hosted Docker build host the container runtime calls.
+  build: { host: string; token: string };
 }
 
 // readConfig resolves Env into Config. Defaults mirror the deleted main.ts env()
@@ -82,7 +77,7 @@ export function readConfig(env: Env): Config {
   const num = (v: string | undefined, fallback: number): number => Number(str(v, String(fallback))) || fallback;
 
   return {
-    runtime: str(env.TWO80_RUNTIME, 'cloudflare') === 'memory' ? 'memory' : 'cloudflare',
+    runtime: str(env.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
     logFormat: str(env.TWO80_LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
     dbSchema: str(env.TWO80_DB_SCHEMA, 'platform'),
     dbConnectionString: env.HYPERDRIVE.connectionString,
@@ -100,14 +95,7 @@ export function readConfig(env: Env): Config {
       max: num(env.TWO80_LOGIN_RATE_MAX, 30),
     },
     google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
-    cf: {
-      accountId: env.CF_ACCOUNT_ID ?? '',
-      apiToken: env.CF_API_TOKEN ?? '',
-      namespace: env.CF_DISPATCH_NAMESPACE ?? '',
-      isrCacheKV: env.CF_ISR_CACHE_KV ?? '',
-      compatibilityDate: env.CF_COMPATIBILITY_DATE ?? '',
-      d1Location: env.CF_D1_LOCATION ?? '',
-    },
+    build: { host: env.TWO80_BUILD_HOST ?? '', token: env.TWO80_BUILD_TOKEN ?? '' },
   };
 }
 

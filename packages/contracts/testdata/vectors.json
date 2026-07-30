@@ -1,5 +1,5 @@
 {
-  "_note": "Golden cross-language derivation vectors (plan §4.1). Frozen fixture: the Go generator (contracts/cmd/vectors) was retired with the Go stack, so this is no longer regenerated. Do not edit by hand. blobDigest/userCode/cache inputs are UTF-8 byte encodings of the given string.",
+  "_note": "Container-era derivations; TS (packages/contracts/src) is source of truth after the WfP retirement.",
   "blobDigest": [
     {
       "input": "",
@@ -25,135 +25,159 @@
   "canonicalDigest": [
     {
       "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "aa",
-          "size": 3
+        "kind": "container",
+        "build": {
+          "builder": "static",
+          "dockerfile": "Dockerfile",
+          "port": 8080
         },
-        "assets": null
-      },
-      "digest": "dc5eb67aefee74f4e71abd3861b81c5b7f8383e58848c45613cf43f15c1d522b"
-    },
-    {
-      "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
-          "size": 100
-        },
-        "assets": [
+        "files": [
           {
-            "path": "/b.css",
-            "digest": "2222222222222222222222222222222222222222222222222222222222222222",
-            "size": 20
-          },
-          {
-            "path": "/a.js",
-            "digest": "3333333333333333333333333333333333333333333333333333333333333333",
-            "size": 10
+            "path": "Dockerfile",
+            "digest": "aa",
+            "size": 3
           }
         ]
       },
-      "digest": "b80bd3946a4cd0e7fa06cec7454b36647e60f31e0a27dd656ebecdcde8d80e0d"
+      "digest": "d5527784e9ac8d0e0db84c3dc9cc740a7bd178a952652d2107749d42a9b6e4ff"
     },
     {
       "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "4444444444444444444444444444444444444444444444444444444444444444",
-          "size": 42
+        "kind": "container",
+        "build": {
+          "builder": "next",
+          "dockerfile": "Dockerfile",
+          "port": 3000
         },
-        "assets": [
+        "files": [
           {
-            "path": "/x",
-            "digest": "5555555555555555555555555555555555555555555555555555555555555555",
-            "size": 1
-          }
-        ],
-        "cache": [
-          {
-            "path": "incremental-cache/b/z.cache",
-            "digest": "6666666666666666666666666666666666666666666666666666666666666666",
-            "size": 7
+            "path": "server.js",
+            "digest": "bb",
+            "size": 5
           },
           {
-            "path": "incremental-cache/b/a.cache",
-            "digest": "7777777777777777777777777777777777777777777777777777777777777777",
-            "size": 8
+            "path": "Dockerfile",
+            "digest": "cc",
+            "size": 9
+          },
+          {
+            "path": "app/page.tsx",
+            "digest": "dd",
+            "size": 12
           }
         ]
       },
-      "digest": "d65c9572f3b2d6c53f660270133427616faf772b17d55922af251e8b1bf10a78"
+      "digest": "2e4f4537aa1bc5fad5f2b8e2bd21f45fbd27067141f37ee74a4b1483510ccf3f"
+    },
+    {
+      "manifest": {
+        "kind": "container",
+        "build": {
+          "builder": "next",
+          "dockerfile": "Dockerfile",
+          "port": 8080
+        },
+        "files": [
+          {
+            "path": "server.js",
+            "digest": "bb",
+            "size": 5
+          },
+          {
+            "path": "Dockerfile",
+            "digest": "cc",
+            "size": 9
+          },
+          {
+            "path": "app/page.tsx",
+            "digest": "dd",
+            "size": 12
+          }
+        ]
+      },
+      "digest": "bce4c16fe37eb3f40385f0bb9065965d0c0e8541b1ce08d0bf5a42d27dad972b"
     }
   ],
   "deployId": [
     {
       "appId": "app_000000000000",
       "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "aa",
-          "size": 3
+        "kind": "container",
+        "build": {
+          "builder": "static",
+          "dockerfile": "Dockerfile",
+          "port": 8080
         },
-        "assets": null
-      },
-      "canonicalDigest": "dc5eb67aefee74f4e71abd3861b81c5b7f8383e58848c45613cf43f15c1d522b",
-      "deployId": "dep_15e2f0f981d5d6c4"
-    },
-    {
-      "appId": "app_deadbeefcafe",
-      "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
-          "size": 100
-        },
-        "assets": [
+        "files": [
           {
-            "path": "/b.css",
-            "digest": "2222222222222222222222222222222222222222222222222222222222222222",
-            "size": 20
-          },
-          {
-            "path": "/a.js",
-            "digest": "3333333333333333333333333333333333333333333333333333333333333333",
-            "size": 10
+            "path": "Dockerfile",
+            "digest": "aa",
+            "size": 3
           }
         ]
       },
-      "canonicalDigest": "b80bd3946a4cd0e7fa06cec7454b36647e60f31e0a27dd656ebecdcde8d80e0d",
-      "deployId": "dep_fe4756e6888a6fd7"
+      "canonicalDigest": "d5527784e9ac8d0e0db84c3dc9cc740a7bd178a952652d2107749d42a9b6e4ff",
+      "deployId": "dep_ada3afa508c3784e"
     },
     {
-      "appId": "app_000000000000",
+      "appId": "app_0123456789ab",
       "manifest": {
-        "kind": "bundle",
-        "worker": {
-          "digest": "4444444444444444444444444444444444444444444444444444444444444444",
-          "size": 42
+        "kind": "container",
+        "build": {
+          "builder": "next",
+          "dockerfile": "Dockerfile",
+          "port": 3000
         },
-        "assets": [
+        "files": [
           {
-            "path": "/x",
-            "digest": "5555555555555555555555555555555555555555555555555555555555555555",
-            "size": 1
-          }
-        ],
-        "cache": [
-          {
-            "path": "incremental-cache/b/z.cache",
-            "digest": "6666666666666666666666666666666666666666666666666666666666666666",
-            "size": 7
+            "path": "server.js",
+            "digest": "bb",
+            "size": 5
           },
           {
-            "path": "incremental-cache/b/a.cache",
-            "digest": "7777777777777777777777777777777777777777777777777777777777777777",
-            "size": 8
+            "path": "Dockerfile",
+            "digest": "cc",
+            "size": 9
+          },
+          {
+            "path": "app/page.tsx",
+            "digest": "dd",
+            "size": 12
           }
         ]
       },
-      "canonicalDigest": "d65c9572f3b2d6c53f660270133427616faf772b17d55922af251e8b1bf10a78",
-      "deployId": "dep_c5899411e98f03a3"
+      "canonicalDigest": "2e4f4537aa1bc5fad5f2b8e2bd21f45fbd27067141f37ee74a4b1483510ccf3f",
+      "deployId": "dep_e2007e8e31f38543"
+    },
+    {
+      "appId": "app_ffffffffffff",
+      "manifest": {
+        "kind": "container",
+        "build": {
+          "builder": "next",
+          "dockerfile": "Dockerfile",
+          "port": 8080
+        },
+        "files": [
+          {
+            "path": "server.js",
+            "digest": "bb",
+            "size": 5
+          },
+          {
+            "path": "Dockerfile",
+            "digest": "cc",
+            "size": 9
+          },
+          {
+            "path": "app/page.tsx",
+            "digest": "dd",
+            "size": 12
+          }
+        ]
+      },
+      "canonicalDigest": "bce4c16fe37eb3f40385f0bb9065965d0c0e8541b1ce08d0bf5a42d27dad972b",
+      "deployId": "dep_c59f91b78cafa23b"
     }
   ],
   "fingerprint": [
@@ -189,63 +213,6 @@
     {
       "appId": "",
       "token": "pujkpsilge"
-    }
-  ],
-  "cfHash": [
-    {
-      "salt": "00000000000000000000000000000000",
-      "digest": "aa",
-      "hash": "2b3eb868a0062342629bbc0b23183d84"
-    },
-    {
-      "salt": "deadbeef",
-      "digest": "1111111111111111111111111111111111111111111111111111111111111111",
-      "hash": "1fb0886fc7c8efe9dae21e093102a2de"
-    },
-    {
-      "salt": "",
-      "digest": "",
-      "hash": "e7ac0786668e0ff0f02b62bd04f45ff6"
-    }
-  ],
-  "cacheKey": [
-    {
-      "rel": "buildX/index.cache",
-      "key": "incremental-cache/buildX/3f750c643c261e6a46c3c1472f69cf02af572051b67c43ee4fd6309d45001c0e.cache"
-    },
-    {
-      "rel": "buildX/blog/post-1.cache",
-      "key": "incremental-cache/buildX/808b8c6a69d19a739c579badc08b2364dc8e02b6393b25404bc842adda892567.cache"
-    },
-    {
-      "rel": "__fetch/buildX/api/data",
-      "key": "incremental-cache/buildX/4a2381b0d987bd2529b51522426644cab309ff4b0e79b7ed62004005cc045873.fetch"
-    }
-  ],
-  "collapseSlashes": [
-    {
-      "in": "a/b/c",
-      "out": "a/b/c"
-    },
-    {
-      "in": "a//b",
-      "out": "a/b"
-    },
-    {
-      "in": "a///b////c",
-      "out": "a/b/c"
-    },
-    {
-      "in": "/",
-      "out": "/"
-    },
-    {
-      "in": "//",
-      "out": "/"
-    },
-    {
-      "in": "no-slash",
-      "out": "no-slash"
     }
   ],
   "slug": [

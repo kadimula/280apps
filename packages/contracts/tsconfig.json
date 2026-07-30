@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // DOM adds the standard WebCrypto globals (CryptoKey, JsonWebKey, crypto.subtle,
+    // atob/btoa) the shared identity signer/verifier uses. These are the same nominal
+    // types the gateway (workers-types) and SDK align on, so the signed-header code
+    // compiles identically on every runtime it runs in.
+    "lib": ["ES2023", "DOM"]
   },
   "include": ["src"]
 }

@@ -4,7 +4,9 @@
 // failures rejecting; conditional transitions that report a winner return boolean.
 
 import type { BlobBody } from '@280/contracts';
-import type { Manifest, Digest, BlobInfo, DeployError } from '@280/contracts';
+import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy } from '@280/contracts';
+
+export type { AppPolicy } from '@280/contracts';
 
 // Subject is empty for OpenSignup accounts.
 export interface Account {
@@ -85,6 +87,13 @@ export const EventKind = {
   DeployFailed: 'deploy.failed',
   LoginApproved: 'login.approved',
   LoginClaimed: 'login.claimed',
+  // The permission audit (design §08): who was granted or revoked, whose live
+  // deploy re-registered its policy, and who reached (or was denied) an app.
+  GrantAdded: 'grant.added',
+  GrantRevoked: 'grant.revoked',
+  PolicyRegistered: 'policy.registered',
+  AppAccessed: 'app.accessed',
+  AppAccessDenied: 'app.access_denied',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
@@ -181,12 +190,24 @@ export interface Store {
   finishLive(appId: string, deployId: string): Promise<void>;
   finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void>;
 
-  // The two-tier sharing model, flat (one row per (app, principal)): the data
-  // surface only, route gating and the share dialog come later. putGrant upserts.
+  // The two-tier sharing model, flat (one row per (app, principal)). putGrant
+  // upserts and revokeGrant deletes; both write a permission-audit event naming the
+  // actor (grantedBy / revokedBy), so every change to who-can-do-what is on record.
   putGrant(g: Grant): Promise<void>;
   grant(appId: string, principal: string): Promise<Grant | null>;
   grantsByApp(appId: string): Promise<Grant[]>;
-  revokeGrant(appId: string, principal: string): Promise<boolean>;
+  revokeGrant(appId: string, principal: string, revokedBy?: string): Promise<boolean>;
+
+  // The enforced policy of the app's live deploy — access mode, feature roles, route
+  // gates, secret names, owner tenant. Registered atomically when a deploy goes live
+  // (see finishLive), read by the gateway to gate each request. Null until the app
+  // has gone live at least once.
+  appPolicy(appId: string): Promise<AppPolicy | null>;
+
+  // Records one gateway access decision (allowed/denied) for the permission audit.
+  // Best-effort by contract: the caller swallows its error so an audit-write fault
+  // never blocks serving a request.
+  recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void>;
 }
 
 // Deploy content, addressed by digest and scoped to one app. get rejects

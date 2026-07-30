@@ -107,6 +107,8 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
     openSignup: opts.openSignup ?? false,
     verificationUri: opts.verificationUri ?? '',
     minCliVersion: opts.minCliVersion ?? '',
+    appDomain: '280apps.run',
+    viewAsOrigin: 'https://auth.280apps.run',
   };
 }
 

@@ -1,8 +1,11 @@
 {
   "name": "nextjs-sample",
-  "features": [
-    { "key": "home", "name": "Home", "routes": "/" }
+  "access": "invited",
+  "roles": ["manager", "viewer"],
+  "routes": [
+    { "path": "/admin/*", "require": { "app_role": "admin" } },
+    { "path": "/api/approve", "require": { "role": "manager" } },
+    { "path": "/*", "require": { "app_role": "viewer" } }
   ],
-  "secrets": [],
-  "crons": []
+  "secrets": []
 }

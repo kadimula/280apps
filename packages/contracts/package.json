@@ -26,6 +26,10 @@
     "./auth/http": {
       "types": "./dist/auth/http.d.ts",
       "import": "./dist/auth/http.js"
+    },
+    "./identity": {
+      "types": "./dist/identity.d.ts",
+      "import": "./dist/identity.js"
     }
   },
   "main": "./dist/index.js",

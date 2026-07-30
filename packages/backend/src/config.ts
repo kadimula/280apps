@@ -124,6 +124,10 @@ export interface RequestDeps {
   openSignup: boolean;
   verificationUri: string;
   minCliVersion: string;
+  // The zone app URLs live on, and the gateway origin the share dialog's "view as"
+  // links point at (the gateway owns view-as; the control plane only links to it).
+  appDomain: string;
+  viewAsOrigin: string;
   // Releases the request's pg client after the response, via ctx.waitUntil. Absent
   // for in-memory test wiring, whose shared store is closed once at teardown.
   close?: () => Promise<void>;

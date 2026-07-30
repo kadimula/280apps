@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // DOM provides the standard WebCrypto globals (CryptoKey, JsonWebKey,
+    // crypto.subtle) the identity verifier uses, matching the gateway and contracts.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src"]
+}

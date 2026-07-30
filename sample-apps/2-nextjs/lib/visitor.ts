@@ -1,28 +1,10 @@
 import { headers } from "next/headers";
+import { identity } from "@280/sdk";
 
-// The only identity code a 280 app ever contains. 280 injects signed headers at
-// the edge; the app never writes auth. Link visitors arrive as "anonymous".
-export type Role = "editor" | "reader";
-
+// The only identity code a 280 app ever contains. The gateway verifies the caller
+// and forwards a signed header; @280/sdk verifies it offline and returns the user,
+// a can() capability check, and a scope() resolver. The app writes no auth.
 export async function visitor() {
-  const h = await headers();
-
-  const roles: Record<string, Role> = {};
-  for (const pair of (h.get("x-280-roles") ?? "").split(";")) {
-    const [feature, role] = pair.trim().split("=");
-    if (feature && role) roles[feature] = role as Role;
-  }
-
-  const actions: Record<string, string[]> = {};
-  for (const pair of (h.get("x-280-actions") ?? "").split(";")) {
-    const [feature, list] = pair.trim().split("=");
-    if (feature && list) actions[feature] = list.split(",");
-  }
-
-  return {
-    email: h.get("x-280-user") ?? "", // "anonymous" for link visitors (GET only)
-    name: h.get("x-280-name") ?? "",
-    roles,
-    actions,
-  };
+  const { user, can, scope } = await identity(await headers());
+  return { email: user.email, name: user.name, tenant: user.tenant, can, scope };
 }

@@ -78,6 +78,34 @@ describe('buildNextContainer', () => {
     write(join(root, 'app', 'page.tsx'), 'x');
     expect(() => buildNextContainer(root)).toThrow(PreflightError);
   });
+
+  it('carries the 280.json policy into the manifest and prints the route → gate diff', () => {
+    const root = nextProject({
+      'app/admin/page.tsx': 'export default () => null;',
+      '280.json': JSON.stringify({
+        access: 'invited',
+        roles: ['manager'],
+        routes: [{ path: '/admin/*', require: { app_role: 'admin' } }],
+        secrets: ['SUPABASE_URL'],
+      }),
+    });
+    const b = buildNextContainer(root);
+    expect(b.manifest.access).toBe('invited');
+    expect(b.manifest.roles).toEqual(['manager']);
+    expect(b.manifest.routes).toEqual([{ path: '/admin/*', appRole: 'admin', role: '' }]);
+    expect(b.manifest.secrets).toEqual(['SUPABASE_URL']);
+
+    const notes = b.notes.join('\n');
+    expect(notes).toContain('route gates');
+    expect(notes).toContain('/admin  →  app admin+');
+    // The undeclared root page falls through to the fail-closed Owner-only default.
+    expect(notes).toContain('/  →  Owner-only (undeclared)');
+  });
+
+  it('rejects a malformed 280.json policy before uploading anything', () => {
+    const root = nextProject({ '280.json': JSON.stringify({ access: 'everyone' }) });
+    expect(() => buildNextContainer(root)).toThrow(PreflightError);
+  });
 });
 
 describe('buildpack CA-trust (intercepted-HTTPS validates inside the container)', () => {

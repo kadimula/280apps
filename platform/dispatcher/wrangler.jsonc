@@ -6,17 +6,15 @@
 	"workers_dev": false,
 	"observability": { "enabled": true },
 
-	// The wildcard route. Universal SSL covers *.280apps.run as one certificate,
-	// so app hostnames never appear in Certificate Transparency logs — which is
-	// what keeps unlisted-link sharing actually unlisted (plan/infra.html).
+	// Universal SSL covers *.280apps.run as one cert, so app hostnames never hit
+	// Certificate Transparency logs — which keeps unlisted-link sharing unlisted.
 	"routes": [{ "pattern": "*.280apps.run/*", "zone_name": "280apps.run" }],
 
-	// The switchboard binding into the namespace user Workers are uploaded to.
+	// Binding into the namespace user Workers are uploaded to.
 	"dispatch_namespaces": [{ "binding": "DISPATCHER", "namespace": "apps" }],
 
 	"vars": { "WEB_ORIGIN": "https://280apps.com" }
 
-	// Deliberately NO compatibility_flags. The dispatcher stays a thin pipe;
-	// nodejs_compat and global_fetch_strictly_public belong to tenant scripts,
-	// where the platform sets them at upload time.
+	// Deliberately no compatibility_flags: the dispatcher is a thin pipe; nodejs_compat
+	// and global_fetch_strictly_public belong to tenant scripts, set at upload time.
 }

@@ -1,6 +1,5 @@
-// Ports cli/internal/bundle/next_test.go plus the frozen cacheKey/collapseSlashes
-// vectors. Everything here is hermetic: no adapter, no network. The real-build
-// manifest parity lives in manifest-diff.test.ts.
+// Ports next_test.go plus the frozen cacheKey/collapseSlashes vectors. Hermetic:
+// no adapter, no network. Real-build manifest parity lives in manifest-diff.test.ts.
 
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,8 +48,8 @@ function tempDir(): string {
   return mkdtempSync(join(tmpdir(), '280-bundle-test-'));
 }
 
-// fixtureOutput is a miniature .open-next tree: the shapes the pinned adapter
-// emits, with none of its bulk and no adapter run (next_test.go fixtureOutput).
+// Miniature .open-next tree: the shapes the pinned adapter emits, with none of its
+// bulk and no adapter run.
 function fixtureOutput(): string {
   const dir = join(tempDir(), '.open-next');
   write(join(dir, 'assets', 'BUILD_ID'), 'bid');
@@ -73,7 +72,7 @@ describe('nextBundle', () => {
 
     expect(b.manifest.kind).toBe(MANIFEST_KIND_BUNDLE);
     expect(b.manifest.worker.digest).toBe(digestBytes(worker));
-    // Size is raw bytes, never compressed: that is the seam's contract.
+    // Size is raw bytes, never compressed: the seam's contract.
     expect(b.manifest.worker.size).toBe(worker.length);
     expect(b.manifest.worker.path).toBe('');
 
@@ -85,7 +84,6 @@ describe('nextBundle', () => {
     for (const c of b.manifest.cache) {
       expect(c.path.startsWith('/')).toBe(false);
     }
-    // Every blob the manifest names must have content to upload.
     for (const blob of manifestBlobs(b.manifest)) {
       expect(b.content.has(blob.digest)).toBe(true);
     }
@@ -106,8 +104,7 @@ describe('nextBundle', () => {
 });
 
 describe('cacheKey', () => {
-  // Pins the derivation against keys computed by the pinned adapter's own
-  // computeCacheKey (next_test.go TestCacheKeyGolden).
+  // Golden keys computed by the pinned adapter's own computeCacheKey.
   const buildID = 'u1NCjZBrwrXRVIqlbVvIR';
   const golden: [string, string][] = [
     [

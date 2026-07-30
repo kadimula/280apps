@@ -1,5 +1,5 @@
 // Store tests, run against real Postgres with a schema per test. Behavior spec:
-// platform/internal/store/store.go. The claims that matter here are the ones a
+// platform/internal/store/store.go. The claims that matter are the ones a
 // pure-logic port can silently break: conditional-UPDATE winner counts, the
 // partial unique indexes, ON CONFLICT reopen, and the FinishLive superseded-row
 // delete.
@@ -58,11 +58,9 @@ describe.skipIf(!hasDatabase())('store', () => {
     await cleanup();
   });
 
-  // ---- migrations ----
-
   it('re-running migrations on an already-migrated schema is a no-op', async () => {
-    // No schema version table; every migration statement is idempotent, so a
-    // second Open on the same schema must succeed rather than a version check.
+    // no schema version table; every migration statement is idempotent, so a
+    // second Open on the same schema must succeed
     const base = process.env.TEST_DATABASE_URL as string;
     const { open } = await import('../src/store/store.js');
     const schema = `t_mig_${process.pid}_${Date.now()}`;
@@ -72,8 +70,7 @@ describe.skipIf(!hasDatabase())('store', () => {
       const first = await open(base, schema);
       await first.createAccount({ id: 'acct_mig', subject: 'sub-mig' });
       await first.close();
-      // Re-open: migrations run again against a populated schema without error,
-      // and the data is still there.
+      // re-open: migrations run again against a populated schema, data intact
       const second = await open(base, schema);
       expect(await second.accountBySubject('sub-mig')).toEqual({
         id: 'acct_mig',
@@ -86,12 +83,9 @@ describe.skipIf(!hasDatabase())('store', () => {
     }
   });
 
-  // ---- accounts ----
-
   it('createAccount is idempotent on id (DO NOTHING keeps the first row)', async () => {
     await store.createAccount({ id: 'acct_1', subject: 'sub-a' });
-    // ON CONFLICT (id) DO NOTHING: the second insert is a no-op, so the original
-    // subject survives rather than being overwritten.
+    // ON CONFLICT (id) DO NOTHING: the second insert is a no-op, original survives
     await store.createAccount({ id: 'acct_1', subject: 'sub-b' });
     expect(await store.accountBySubject('sub-a')).toEqual({ id: 'acct_1', subject: 'sub-a' });
     expect(await store.accountBySubject('sub-b')).toBeNull();
@@ -115,8 +109,8 @@ describe.skipIf(!hasDatabase())('store', () => {
   it('ensureAccount creates on first sight and converges on the second', async () => {
     const first = await store.ensureAccount('sub-1', 'acct_new_1');
     expect(first).toEqual({ id: 'acct_new_1', subject: 'sub-1' });
-    // Second call with a different candidate id must return the existing row,
-    // proving the partial unique index deduped rather than inserting a twin.
+    // a different candidate id must return the existing row: the partial unique
+    // index deduped rather than inserting a twin
     const second = await store.ensureAccount('sub-1', 'acct_new_2');
     expect(second).toEqual({ id: 'acct_new_1', subject: 'sub-1' });
   });
@@ -128,8 +122,6 @@ describe.skipIf(!hasDatabase())('store', () => {
   it('accountBySubject is read-only and returns null for the unknown', async () => {
     expect(await store.accountBySubject('ghost')).toBeNull();
   });
-
-  // ---- device codes ----
 
   function deviceFixture(over: Partial<DeviceCode> = {}): DeviceCode {
     return {
@@ -160,7 +152,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     const d = await store.deviceCodeByHash('dev-hash');
     expect(d?.status).toBe(DeviceStatus.Approved);
     expect(d?.accountId).toBe('acct_1');
-    // A replayed approval on an already-approved code cannot re-open it.
+    // a replayed approval on an already-approved code cannot re-open it
     expect(await store.approveDeviceCode('ABCD-1234', 'acct_1', now())).toBe(false);
   });
 
@@ -192,8 +184,6 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.claimDeviceCode('dev-hash')).toBe(false); // still pending
   });
 
-  // ---- scheduled cleanup ----
-
   it('deleteExpired removes only lapsed sessions, device codes, and rate windows', async () => {
     const t = now();
     await store.createUser({ id: 'usr_exp', email: 'exp@example.com', name: '', image: '' });
@@ -216,11 +206,9 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.deviceCodeByHash('dc_old')).toBeNull();
     expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();
-    // A second sweep with nothing left to expire removes nothing.
+    // a second sweep with nothing left to expire removes nothing
     expect(await store.deleteExpired(t)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0 });
   });
-
-  // ---- apps ----
 
   it('createApp writes the app and an app.created event', async () => {
     await store.createAccount({ id: 'acct_test', subject: '' });
@@ -246,8 +234,8 @@ describe.skipIf(!hasDatabase())('store', () => {
     const a = appFixture({ clientRef: 'ref-1' });
     await store.createApp(a);
     const twin = appFixture({ clientRef: 'ref-1' });
-    // Partial unique index on (account_id, client_ref): losing the dedup race
-    // must stay an error, not a silent second app.
+    // partial unique index on (account_id, client_ref): losing the dedup race
+    // must stay an error, not a silent second app
     await expect(store.createApp(twin)).rejects.toThrow();
   });
 
@@ -307,7 +295,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.deleteApp('acct_test', a.id)).toBe(true);
     expect(await store.app('acct_test', a.id)).toBeNull();
     expect(await store.deploy(a.id, 'dep_1')).toBeNull();
-    // The history stays behind; deleting twice is not a failure.
+    // the history stays behind; deleting twice is not a failure
     expect(await store.deleteApp('acct_test', a.id)).toBe(false);
     const kinds = (await store.recentEvents(50)).map((e) => e.kind);
     expect(kinds).toContain(EventKind.AppDeleted);
@@ -320,8 +308,6 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.deleteApp('acct_other', a.id)).toBe(false);
     expect(await store.app('acct_test', a.id)).not.toBeNull();
   });
-
-  // ---- deploys ----
 
   it('openDeploy creates then reopens a failed deploy', async () => {
     const a = appFixture();
@@ -337,7 +323,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(opened.state).toBe(State.Uploading);
     expect(opened.manifest.worker.digest).toBe('a'.repeat(64));
 
-    // Fail it, then re-open: state returns to uploading and failure clears.
+    // fail it, then re-open: state returns to uploading and failure clears
     await store.finishFailed(a.id, 'dep_1', {
       code: 'unavailable',
       message: 'boom',
@@ -353,7 +339,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(reopened.state).toBe(State.Uploading);
     expect(reopened.failure).toBeNull();
 
-    // Re-opening a non-failed deploy leaves its state alone.
+    // re-opening a non-failed deploy leaves its state alone
     got = await store.deploy(a.id, 'dep_1');
     expect(got?.state).toBe(State.Uploading);
   });
@@ -398,14 +384,13 @@ describe.skipIf(!hasDatabase())('store', () => {
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
     expect((await store.deploy(a.id, 'dep_1'))?.state).toBe(State.Activating);
-    // A deploy not in uploading cannot be claimed.
+    // a deploy not in uploading cannot be claimed
     expect(await store.claimActivation(a.id, 'dep_1')).toBe(false);
   });
 
   it('finishLive marks live, points the app, deletes the superseded row', async () => {
     const a = appFixture();
     await store.createApp(a);
-    // v1 goes live.
     await store.openDeploy({
       appId: a.id,
       id: 'dep_v1',
@@ -418,7 +403,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect((await store.app('acct_test', a.id))?.activeDeploy).toBe('dep_v1');
     expect((await store.deploy(a.id, 'dep_v1'))?.state).toBe(State.Live);
 
-    // v2 goes live: the v1 row must be deleted so a revert to v1 re-activates.
+    // v2 goes live: the v1 row must be deleted so a revert to v1 re-activates
     await store.openDeploy({
       appId: a.id,
       id: 'dep_v2',
@@ -477,8 +462,6 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(d?.state).toBe(State.Failed);
     expect(d?.failure).toBeNull();
   });
-
-  // ---- events ----
 
   it('recentEvents returns newest first and caps the page', async () => {
     await store.createAccount({ id: 'acct_test', subject: '' });

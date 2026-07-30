@@ -1,5 +1,4 @@
-// The deploy loop against W1's real Fake — the integration the plan calls "fake
-// push". Mirrors cli/internal/push/push_test.go case for case.
+// The deploy loop against the real Fake, mirroring cli/internal/push/push_test.go.
 
 import { describe, expect, it } from 'vitest';
 import type { Port } from '@280/contracts';

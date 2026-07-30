@@ -1,9 +1,8 @@
-// In-memory Store for W5 behavior tests. It mirrors the semantics of
+// In-memory Store for W5 behavior tests, mirroring the semantics of
 // platform/internal/store/store.go that deploysvc and api depend on: conditional
 // activation claim, device-code state machine, clientRef/script uniqueness,
 // open-deploy reopen, and FinishLive superseding the prior live row. The real
-// Postgres Store (W4) implements the same seam; these tests assert control-plane
-// behavior that must hold whatever the backing store is.
+// Postgres Store (W4) implements the same seam.
 
 import { State, stateTerminal, type DeployError } from '@280/contracts';
 import {
@@ -40,8 +39,6 @@ export class MemoryStore implements Store {
     return [];
   }
 
-  // ---- accounts ----
-
   async accountByToken(tokenHash: string): Promise<Account | null> {
     const id = this.tokens.get(tokenHash);
     if (id === undefined) return null;
@@ -57,7 +54,7 @@ export class MemoryStore implements Store {
   }
 
   async createAccount(a: Account): Promise<void> {
-    // ON CONFLICT (id) DO NOTHING.
+    // ON CONFLICT (id) DO NOTHING
     if (!this.accounts.has(a.id)) this.accounts.set(a.id, { ...a });
   }
 
@@ -73,8 +70,6 @@ export class MemoryStore implements Store {
   async addToken(accountId: string, tokenHash: string): Promise<void> {
     if (!this.tokens.has(tokenHash)) this.tokens.set(tokenHash, accountId);
   }
-
-  // ---- users, oauth logins, sessions ----
 
   async userById(id: string): Promise<User | null> {
     const u = this.users.get(id);
@@ -154,10 +149,8 @@ export class MemoryStore implements Store {
     return { sessions, deviceCodes, rateLimits };
   }
 
-  // ---- device codes ----
-
   async createDeviceCode(d: DeviceCode): Promise<void> {
-    // user_code is UNIQUE; a collision is a bug worth surfacing.
+    // user_code is UNIQUE; a collision is a bug worth surfacing
     for (const e of this.deviceByHash.values()) {
       if (e.userCode === d.userCode) throw new Error('duplicate user code');
     }
@@ -189,8 +182,6 @@ export class MemoryStore implements Store {
     return false;
   }
 
-  // ---- apps ----
-
   async app(accountId: string, appId: string): Promise<App | null> {
     const a = this.apps.get(appId);
     return a && a.accountId === accountId ? cloneApp(a) : null;
@@ -218,10 +209,10 @@ export class MemoryStore implements Store {
   }
 
   async createApp(a: App): Promise<void> {
-    // script is globally UNIQUE.
+    // script is globally UNIQUE
     for (const e of this.apps.values()) {
       if (e.script === a.script) throw new Error('duplicate script');
-      // (account, clientRef) is UNIQUE where clientRef <> ''.
+      // (account, clientRef) is UNIQUE where clientRef <> ''
       if (a.clientRef !== '' && e.accountId === a.accountId && e.clientRef === a.clientRef) {
         throw new Error('duplicate client ref');
       }
@@ -255,8 +246,6 @@ export class MemoryStore implements Store {
     return null;
   }
 
-  // ---- deploys ----
-
   async deploy(appId: string, deployId: string): Promise<Deploy | null> {
     const d = this.deploys.get(key(appId, deployId));
     return d ? cloneDeploy(d) : null;
@@ -281,7 +270,7 @@ export class MemoryStore implements Store {
         createdAt: this.seq++,
       });
     } else if (ex.state === State.Failed) {
-      // Reopen a failed attempt; manifest is unchanged (same id ⇒ same content).
+      // reopen a failed attempt; manifest is unchanged (same id ⇒ same content)
       ex.state = State.Uploading;
       ex.failure = null;
     }
@@ -302,9 +291,8 @@ export class MemoryStore implements Store {
     if (!d) return;
     d.state = State.Live;
     d.failure = null;
-    // Delete the row this deploy replaces: a live row IS the app's active deploy,
-    // so a stale live row would make a re-push of once-live content skip
-    // activation (the revert-and-push bug).
+    // delete the row this deploy replaces: a live row IS the app's active deploy,
+    // so a stale one would make a re-push of once-live content skip activation
     for (const [k, other] of [...this.deploys.entries()]) {
       if (other.appId === appId && other.id !== deployId && other.state === State.Live) {
         this.deploys.delete(k);

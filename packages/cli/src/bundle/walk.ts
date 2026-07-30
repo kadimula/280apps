@@ -1,16 +1,13 @@
-// Shared bundle primitives: the preflight error the whole package raises, small
-// filesystem predicates, and walkAssets — the one asset shaping both frameworks
-// share. Spec: cli/internal/bundle/bundle.go (walkAssets, fileExists). Go is
-// normative.
+// Shared bundle primitives: the preflight error, filesystem predicates, and
+// walkAssets (the asset shaping both frameworks share). Spec: bundle.go, normative.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DeployCode, digestBytes, type BlobInfo, type Digest } from '@280/contracts';
 
-// PreflightError is every failure this package raises: a preflight rejection the
-// agent can act on verbatim. It mirrors the Go output.Fail shape (code, message,
-// fix) so the CLI's output layer (W2) renders it exactly as it renders any other
-// deploy error. All bundle failures are CodePreflightRejected (bundle.go).
+// Every failure this package raises: a preflight rejection the agent can act on
+// verbatim, mirroring the Go output.Fail shape (code, message, fix) so the CLI's
+// output layer renders it like any other deploy error.
 export class PreflightError extends Error {
   readonly code: string;
   readonly fix: string;
@@ -31,9 +28,8 @@ export class PreflightError extends Error {
   }
 }
 
-// fail raises a preflight rejection. Throwing (vs Go's returned error) lets the
-// deep call chains here propagate a failure without threading it through every
-// return.
+// Throwing (vs Go's returned error) lets deep call chains propagate a failure
+// without threading it through every return.
 export function fail(
   message: string,
   fix: string,
@@ -42,8 +38,7 @@ export function fail(
   throw new PreflightError(message, fix, code);
 }
 
-// fileExists reports whether p is an existing regular file (mirrors bundle.go
-// fileExists: a directory does not count).
+// Whether p is an existing regular file: a directory does not count.
 export function fileExists(p: string): boolean {
   try {
     return statSync(p).isFile();
@@ -52,7 +47,6 @@ export function fileExists(p: string): boolean {
   }
 }
 
-// dirExists reports whether p is an existing directory.
 export function dirExists(p: string): boolean {
   try {
     return statSync(p).isDirectory();
@@ -61,16 +55,15 @@ export function dirExists(p: string): boolean {
   }
 }
 
-// byteCompare orders two strings by their UTF-8 bytes, matching Go's string <
-// (which os.ReadDir uses to sort directory entries). WalkDir visits entries in
-// this order, so the asset list order is deterministic and matches the Go CLI.
+// Orders by UTF-8 bytes, matching Go's string < (what os.ReadDir sorts by), so the
+// asset list order is deterministic and matches the Go CLI.
 function byteCompare(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }
 
-// walkFiles yields every file under dir, pre-order and lexically sorted by
-// basename within each directory, exactly as Go's filepath.WalkDir does. Each
-// yield carries the absolute path and the "/"-joined path relative to dir.
+// Yields every file under dir, pre-order and lexically sorted by basename within
+// each directory, exactly as Go's filepath.WalkDir does. Each yield carries the
+// absolute path and the "/"-joined path relative to dir.
 export function* walkFiles(
   dir: string,
 ): Generator<{ abs: string; rel: string }> {
@@ -95,11 +88,9 @@ function* walkFrom(
   }
 }
 
-// walkAssets content-addresses every file under dir into content, returning one
-// BlobInfo per file keyed by its serving URL path (bundle.go walkAssets). Both
-// frameworks shape asset paths the same way — a static build dir and
-// .open-next/assets are both "this tree is the site root" — so it lives here
-// once. The path is "/" + the cleaned slash-joined relative path.
+// Content-addresses every file under dir into content, returning one BlobInfo per
+// file keyed by its serving URL path ("/" + relative path). Shared because both
+// frameworks treat their tree as the site root.
 export function walkAssets(
   dir: string,
   content: Map<Digest, Uint8Array>,

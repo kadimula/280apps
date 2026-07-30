@@ -1,8 +1,6 @@
-// Compares 280 CLI release versions. Both ends need this and must never
-// disagree. Spec: contracts/version/version.go. Go is normative.
-//
-// A version is a release tag with an optional leading v: 1.2.3, v1.2.3, or
-// v1.2.3-rc1. Anything else is not a version at all, and valid() reports so.
+// Compares 280 CLI release versions; both ends need this and must never disagree.
+// A version is a release tag with optional leading v (1.2.3, v1.2.3, v1.2.3-rc1);
+// anything else is not a version. Spec: contracts/version/version.go (normative).
 
 type Parts = {
   major: number;
@@ -11,14 +9,12 @@ type Parts = {
   pre: string; // prerelease, "" when none
 };
 
-// valid reports whether s is a version this package can order.
 export function valid(s: string): boolean {
   return parse(s) !== null;
 }
 
-// compare orders two versions: -1 if a is older, 0 if equal, 1 if a is newer.
-// An invalid version is older than every valid one, and equal to another
-// invalid one (version.go:33).
+// -1 if a is older, 0 if equal, 1 if a is newer. An invalid version is older than
+// every valid one, and equal to another invalid one.
 export function compare(a: string, b: string): number {
   const pa = parse(a);
   const pb = parse(b);
@@ -36,7 +32,6 @@ export function compare(a: string, b: string): number {
   return sign(byteCompareStr(pa.pre, pb.pre));
 }
 
-// less reports whether a is older than b.
 export function less(a: string, b: string): boolean {
   return compare(a, b) < 0;
 }
@@ -65,9 +60,8 @@ function parse(s: string): Parts | null {
   return out;
 }
 
-// atoi mirrors strconv.Atoi: a base-10 integer, optional leading sign, and
-// nothing else. Returns null when the string is not a plain integer, so "1.2.x"
-// and "1.2.-1" (negative, rejected upstream) are not versions.
+// A base-10 integer with optional leading sign and nothing else, else null: so
+// "1.2.x" and "1.2.-1" (negative, rejected upstream) are not versions.
 function atoi(s: string): number | null {
   if (!/^[+-]?[0-9]+$/.test(s)) return null;
   const n = Number(s);

@@ -1,15 +1,9 @@
-// The platform's control-plane database: accounts, apps, deploys, and the
-// events they produce. Blob bytes are not here — they live in blobstore, which
-// is also the authority on which blobs an app has, so there is no index to
-// drift out of sync with the bytes.
-//
-// Spec: platform/internal/store/store.go. Go is normative. Postgres via the
-// `pg` driver. Deploys are a state machine that must survive process death, so
-// the database is the only place that state lives. Nothing here relies on being
-// the sole writer: every transition two callers could reach at once is a
-// conditional UPDATE whose row count names the winner (claimActivation,
-// claimDeviceCode, approveDeviceCode), and every uniqueness rule is an index
-// rather than a read-then-write.
+// The platform's control-plane database: accounts, apps, deploys, and the events
+// they produce. Blob bytes live in blobstore (also the authority on which blobs an
+// app has), so no index here drifts out of sync with the bytes. Go (store.go) is
+// normative. Deploys are a state machine that must survive process death, so
+// nothing relies on being the sole writer: every racy transition is a conditional
+// UPDATE whose row count names the winner, and every uniqueness rule is an index.
 
 import type { Manifest, DeployError } from '@280/contracts';
 import { manifestSchema, errorSchema, State } from '@280/contracts';
@@ -34,26 +28,18 @@ import { migrations, qualify, type Qualifier } from './migrations.js';
 
 const { Pool, Client } = pg;
 
-// Queryable is the query surface one statement runs against, satisfied by both
-// a pooled client and a single Client.
 interface Queryable {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
 }
 
-// Backend is how PgStore reaches Postgres: a plain statement, or a function run
-// against one connection inside BEGIN/COMMIT. Two shapes back it — a Pool (boot
-// and tests, where a query checks a connection out and returns it) and a single
-// lazily-connected Client (the Worker, where one connection serves one request
-// and is ended after the response). Everything the store does routes through
-// here, so the store body is identical whichever backs it.
+// How PgStore reaches Postgres. Two shapes back it: a Pool (boot and tests) and a
+// single lazily-connected Client (the Worker). The store body is identical either way.
 interface Backend {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
   transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
 
-// PoolBackend backs the store with a connection pool: the boot path and the
-// tests. A transaction checks one client out of the pool and returns it.
 class PoolBackend implements Backend {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -85,12 +71,9 @@ class PoolBackend implements Backend {
   }
 }
 
-// ClientBackend backs the store with one lazily-connected client: the Worker's
-// per-request path. The client connects on the first statement (so a request
-// that never touches the database opens no connection) and is ended once, after
-// the response, by close(). A single client cannot run statements concurrently,
-// which is exactly right: one request drives the store sequentially, and a
-// transaction is BEGIN/COMMIT on that same client rather than a checkout.
+// One lazily-connected client for the Worker's per-request path: it connects on
+// the first statement (a request that never touches the database opens no
+// connection) and is ended once, after the response, by close().
 class ClientBackend implements Backend {
   private client: pg.Client | null = null;
   private connecting: Promise<pg.Client> | null = null;
@@ -153,38 +136,28 @@ class ClientBackend implements Backend {
   }
 }
 
-// connectTimeout bounds the wait for a database to become reachable at boot, in
-// milliseconds. A container host's private network can take a moment to resolve
-// after the process starts; exiting into a restart loop over a DNS lookup that
-// would have succeeded a second later is a slower, noisier version of waiting.
+// A container host's private network can take a moment to resolve after the
+// process starts; restart-looping over a DNS lookup that would have succeeded a
+// second later is a slower, noisier version of just waiting for it.
 const connectTimeoutMs = 30_000;
 
-// maxEventPage caps one read. An unbounded query against an append-only table
-// is a slow way to run out of memory two years from now.
+// Caps one read; an unbounded query against an append-only table is a slow way to
+// run out of memory.
 const maxEventPage = 200;
 
-// open connects to (and migrates) the Postgres database at dsn, which is the
-// DATABASE_URL the host hands the process.
-//
+// Connects to and migrates the Postgres database at dsn (the host's DATABASE_URL).
 // A non-empty schema confines every table to it, so the platform can share a
-// database with another service without sharing a namespace. The schema is
-// created if missing: the platform owns its own tables, and needing a DBA to
-// run one DDL statement before the first boot is a step that gets forgotten.
-//
-// Boot still migrates. The statements are idempotent, so a database CI already
-// migrated is a no-op here; keeping the boot path means the container and
-// rollback paths do not depend on a separate runner having gone first.
+// database without sharing a namespace, and is created if missing. Boot migrates
+// with idempotent statements, so the container and rollback paths do not depend on
+// a separate CI runner having gone first.
 export async function open(dsn: string, schema: string): Promise<Store> {
   if (dsn === '') {
     throw new Error('store: empty DATABASE_URL');
   }
-  // migrations() validates the schema identifier and throws on a bad one, so
-  // build the statement list before opening the pool.
+  // Validates the schema identifier and throws on a bad one, before opening the pool.
   const stmts = migrations(schema);
 
-  // A deploy control plane's write rate does not need a large pool, and a
-  // bounded one keeps a restart loop from exhausting the server's connection
-  // slots faster than it exhausts our patience.
+  // A bounded pool keeps a restart loop from exhausting the server's connection slots.
   const pool = new Pool({
     connectionString: dsn,
     max: 10,
@@ -192,12 +165,9 @@ export async function open(dsn: string, schema: string): Promise<Store> {
     maxLifetimeSeconds: 3600,
   });
 
-  // Fail here rather than on the first push. A platform that boots without a
-  // database and only says so under load is the worst version of this error.
+  // Fail at boot rather than on the first push, when it would surface under load.
   try {
     await waitForDB(pool);
-    // Every statement is schema-qualified, so this no longer depends on a
-    // session search_path; the first statement creates the schema.
     for (const stmt of stmts) {
       await pool.query(stmt);
     }
@@ -208,16 +178,13 @@ export async function open(dsn: string, schema: string): Promise<Store> {
   return new PgStore(new PoolBackend(pool), schema);
 }
 
-// newPgStore builds a store over one lazily-connected client, for the Worker's
-// request scope: the client connects on the first statement, against the
-// (Hyperdrive) connection string, and is ended after the response. It does NOT
-// migrate — DDL runs only through the standalone CI runner (migrate.ts), never
-// at runtime — and holds no pool, so no I/O object is carried across requests.
+// A store over one lazily-connected client, for the Worker's request scope. It
+// does NOT migrate: DDL runs only through the standalone CI runner (migrate.ts),
+// never at runtime, and it holds no pool, so no I/O object crosses requests.
 export function newPgStore(connectionString: string, schema: string): Store {
   return new PgStore(new ClientBackend(connectionString), schema);
 }
 
-// waitForDB pings until the database answers or connectTimeout elapses.
 async function waitForDB(pool: pg.Pool): Promise<void> {
   const deadline = Date.now() + connectTimeoutMs;
   let lastErr: unknown;
@@ -239,9 +206,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// bigint columns arrive as strings from `pg` (int8 is out of JS's safe integer
-// range in general); these columns hold second-resolution timestamps and serial
-// ids that fit, so Number() reproduces the Go int64 read.
+// bigint columns arrive as strings from `pg`; these hold second-resolution
+// timestamps and serial ids that fit in a JS number, so Number() is safe here.
 function toNum(v: unknown): number {
   return typeof v === 'number' ? v : Number(v);
 }
@@ -291,8 +257,8 @@ function decodeFailure(raw: string): DeployError | null {
   }
 }
 
-// Row is one pg result row. pg hands columns back untyped; the rowTo* helpers
-// below are the single boundary where they are read by name into typed shapes.
+// pg hands columns back untyped; the rowTo* helpers are the one boundary where
+// they are read by name into typed shapes.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 
@@ -373,7 +339,6 @@ function rowToGrant(r: Row): Grant {
   };
 }
 
-// eventDetail encodes the handful of strings an event carries.
 function eventDetail(kv: Record<string, string>): string {
   if (Object.keys(kv).length === 0) {
     return '';
@@ -385,11 +350,9 @@ function eventDetail(kv: Record<string, string>): string {
   }
 }
 
-// PgStore is the database handle.
 class PgStore implements Store {
-  // t addresses a table by its configured schema. Every statement below routes
-  // its table names through it, so nothing depends on a session search_path —
-  // the one requirement for surviving transaction-mode connection pooling.
+  // Addresses a table by its configured schema; routing every statement's table
+  // names through it is what lets the store survive transaction-mode pooling.
   private readonly t: Qualifier;
 
   constructor(
@@ -403,15 +366,12 @@ class PgStore implements Store {
     await this.db.close();
   }
 
-  // inTx runs fn in a transaction. Every event is written by the same
-  // transaction as the change it describes, so a deploy that went live without
-  // its event, or an event for a transition that rolled back, are both states
-  // the database will not produce.
+  // Every event is written by the same transaction as the change it describes, so
+  // a live deploy without its event, or an event for a rolled-back transition,
+  // are states the database will not produce.
   private inTx<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
     return this.db.transaction(fn);
   }
-
-  // ---- events ----
 
   async recentEvents(limit: number): Promise<Event[]> {
     if (limit <= 0 || limit > maxEventPage) {
@@ -424,8 +384,6 @@ class PgStore implements Store {
     );
     return res.rows.map(rowToEvent);
   }
-
-  // ---- accounts ----
 
   async accountByToken(tokenHash: string): Promise<Account | null> {
     const res = await this.db.query(
@@ -452,16 +410,14 @@ class PgStore implements Store {
     );
   }
 
-  // ensureAccount returns the account for an external identity, creating it on
-  // first sight. The insert-then-read shape means two machines approving at
-  // once converge on one account rather than racing to create two.
+  // The insert-then-read shape means two machines approving at once converge on
+  // one account rather than racing to create two.
   async ensureAccount(subject: string, newId: string): Promise<Account> {
     if (subject === '') {
       throw new Error('ensure account: empty subject');
     }
-    // The conflict target repeats the index's WHERE clause because
-    // accounts_by_subject is partial, and the upsert target is matched to a
-    // partial index only when the predicate is restated.
+    // The conflict target restates accounts_by_subject's WHERE clause: an upsert
+    // matches a partial index only when its predicate is repeated.
     await this.db.query(
       `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2)
        ON CONFLICT (subject) WHERE subject <> '' DO NOTHING`,
@@ -483,8 +439,6 @@ class PgStore implements Store {
       [tokenHash, accountId],
     );
   }
-
-  // ---- users, oauth logins, sessions ----
 
   async userById(id: string): Promise<User | null> {
     const res = await this.db.query(
@@ -545,12 +499,11 @@ class PgStore implements Store {
     await this.db.query(`DELETE FROM ${this.t('sessions')} WHERE token_hash = $1`, [tokenHash]);
   }
 
-  // touchLoginRate is a single upsert that resets the window when it has passed
-  // and increments it otherwise, then reports whether the new count is within
-  // the limit. One statement, so two replicas cannot both read a stale count.
+  // A single upsert that resets the window when it has passed and increments it
+  // otherwise: one statement, so two replicas cannot both read a stale count.
   async touchLoginRate(key: string, now: number, windowSecs: number, limit: number): Promise<boolean> {
-    // The arithmetic parameters are cast explicitly: an untyped $n inside `+`
-    // defaults to text, and text + text is not an operator Postgres has.
+    // Cast the arithmetic params explicitly: an untyped $n inside `+` defaults to
+    // text, and text + text is not an operator Postgres has.
     const res = await this.db.query(
       `INSERT INTO ${this.t('login_rate_limits')} AS lrl (key, count, expires_at)
        VALUES ($1, 1, $2::bigint + $3::bigint)
@@ -565,9 +518,7 @@ class PgStore implements Store {
     return toNum(res.rows[0].count) <= limit;
   }
 
-  // deleteExpired sweeps the three time-boxed tables in one transaction: expired
-  // browser sessions and device codes, and lapsed login-rate windows. Run by the
-  // scheduled cleanup; the counts are for its log line. Everything else in the
+  // Sweeps the three time-boxed tables in one transaction; everything else in the
   // schema (accounts, apps, deploys, events) is retained by design.
   async deleteExpired(now: number): Promise<ExpiryCounts> {
     return this.inTx(async (tx) => {
@@ -591,8 +542,6 @@ class PgStore implements Store {
     });
   }
 
-  // ---- device codes ----
-
   async createDeviceCode(d: DeviceCode): Promise<void> {
     await this.db.query(
       `INSERT INTO ${this.t('device_codes')} (device_hash, user_code, status, expires_at) VALUES ($1,$2,$3,$4)`,
@@ -608,9 +557,8 @@ class PgStore implements Store {
     return res.rows.length ? rowToDeviceCode(res.rows[0]) : null;
   }
 
-  // approveDeviceCode binds a pending code to an account. It reports false if
-  // the code is unknown, expired, or already past pending, so a replayed
-  // approval cannot re-open a claimed login.
+  // Reports false if the code is unknown, expired, or already past pending, so a
+  // replayed approval cannot re-open a claimed login.
   async approveDeviceCode(userCode: string, accountId: string, now: number): Promise<boolean> {
     return this.inTx(async (tx) => {
       const res = await tx.query(
@@ -626,12 +574,11 @@ class PgStore implements Store {
     });
   }
 
-  // claimDeviceCode moves an approved code to claimed and reports whether this
-  // caller won. Exactly one poll may mint a token for a given code.
+  // Exactly one poll may mint a token for a given code.
   async claimDeviceCode(deviceHash: string): Promise<boolean> {
     return this.inTx(async (tx) => {
-      // RETURNING rather than a row count: the winner needs the account the
-      // code was approved for, and the caller does not have it.
+      // RETURNING rather than a row count: the winner needs the account the code
+      // was approved for, which the caller does not have.
       const res = await tx.query(
         `UPDATE ${this.t('device_codes')} SET status = $1 WHERE device_hash = $2 AND status = $3
          RETURNING account_id`,
@@ -648,8 +595,6 @@ class PgStore implements Store {
     });
   }
 
-  // ---- apps ----
-
   async app(accountId: string, appId: string): Promise<App | null> {
     const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2`,
@@ -658,8 +603,7 @@ class PgStore implements Store {
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 
-  // appsByFingerprint returns every app matching a project fingerprint, oldest
-  // first. More than one is the ambiguous_identity case.
+  // More than one match is the ambiguous_identity case.
   async appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]> {
     const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
@@ -668,7 +612,6 @@ class PgStore implements Store {
     return res.rows.map(rowToApp);
   }
 
-  // appsByAccount returns everything an account owns, newest first.
   async appsByAccount(accountId: string): Promise<App[]> {
     const res = await this.db.query(
       `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 ORDER BY created_at DESC, id`,
@@ -687,9 +630,8 @@ class PgStore implements Store {
 
   async createApp(a: App): Promise<void> {
     await this.inTx(async (tx) => {
-      // No ON CONFLICT: the create-dedup guard is the unique index on
-      // (account, clientRef), and losing that race must stay an error the
-      // caller can recognize and resolve to the existing app.
+      // No ON CONFLICT: the create-dedup guard is the unique index on (account,
+      // clientRef), and losing that race must stay an error the caller resolves.
       await tx.query(
         `INSERT INTO ${this.t('apps')} (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
@@ -715,10 +657,8 @@ class PgStore implements Store {
     });
   }
 
-  // deleteApp removes an app and its deploys, and reports whether a row was
-  // there to remove. Scoped by account like every other app read, so one tenant
-  // cannot delete another's app by guessing an id. The events the app produced
-  // stay behind.
+  // Scoped by account like every other app read, so one tenant cannot delete
+  // another's app by guessing an id. The events the app produced stay behind.
   async deleteApp(accountId: string, appId: string): Promise<boolean> {
     return this.inTx(async (tx) => {
       const del = await tx.query(
@@ -729,11 +669,11 @@ class PgStore implements Store {
         return false; // already gone; deleting twice is not a failure
       }
       await tx.query(`DELETE FROM ${this.t('deploys')} WHERE app_id = $1`, [appId]);
-      // Grants are app-scoped rows with no owning app anymore; drop them so a
-      // re-created app id (ids can recur) never inherits another life's access.
+      // Drop the app's grants so a re-created app id (ids can recur) never
+      // inherits another life's access.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
-      // insertEvent, not insertAppEvent: the app row this statement would read
-      // the account from no longer exists.
+      // insertEvent, not insertAppEvent: the app row it would read the account
+      // from no longer exists.
       await this.insertEvent(tx, {
         accountId,
         appId,
@@ -748,13 +688,11 @@ class PgStore implements Store {
     await this.db.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
   }
 
-  // appByScript resolves a hostname label to an app, for the serving edge.
+  // Resolves a hostname label to an app, for the serving edge.
   async appByScript(script: string): Promise<App | null> {
     const res = await this.db.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
-
-  // ---- deploys ----
 
   async deploy(appId: string, deployId: string): Promise<Deploy | null> {
     const res = await this.db.query(
@@ -764,8 +702,7 @@ class PgStore implements Store {
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
   }
 
-  // openDeploys returns the app's non-terminal deploys. These define which blob
-  // digests the app will accept.
+  // The app's non-terminal deploys, which define the blob digests it will accept.
   async openDeploys(appId: string): Promise<Deploy[]> {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
@@ -775,9 +712,8 @@ class PgStore implements Store {
     return res.rows.map(rowToDeploy);
   }
 
-  // openDeploy creates the deploy, or reopens it if a previous attempt failed —
-  // failure is attempt-scoped, so re-running push resumes rather than wedges. It
-  // returns the deploy as it now stands.
+  // Creates the deploy, or reopens it if a previous attempt failed: failure is
+  // attempt-scoped, so re-running push resumes rather than wedges.
   async openDeploy(d: Deploy): Promise<Deploy> {
     const manifest = JSON.stringify(d.manifest);
     await this.db.query(
@@ -794,9 +730,8 @@ class PgStore implements Store {
     return got;
   }
 
-  // claimActivation moves a deploy from uploading to activating and reports
-  // whether this caller won. Parallel blob uploads can each observe the same
-  // last-blob-landed moment; exactly one may act on it.
+  // Parallel blob uploads can each observe the same last-blob-landed moment;
+  // exactly one may act on it, so this reports whether this caller won.
   async claimActivation(appId: string, deployId: string): Promise<boolean> {
     const res = await this.db.query(
       `UPDATE ${this.t('deploys')} SET state = $1 WHERE app_id = $2 AND id = $3 AND state = $4`,
@@ -805,15 +740,11 @@ class PgStore implements Store {
     return res.rowCount === 1;
   }
 
-  // finishLive marks a deploy live and flips the app's serving pointer. The two
-  // happen in one transaction because a live deploy that is not being served,
-  // or a served deploy that is not live, are both states nothing can recover
-  // from.
-  //
-  // It also deletes the row this deploy replaces: a row that says live IS the
-  // app's active deploy. Deploy ids are derived from content, so re-pushing
-  // content that was live once resolves to its old id; if that row survived as
-  // a stale "live", Sync would see a terminal deploy and never re-activate it
+  // Marks a deploy live and flips the app's serving pointer in one transaction
+  // (a live-but-unserved or served-but-not-live deploy are unrecoverable states).
+  // It also deletes the row this deploy replaces: ids derive from content, so
+  // re-pushing once-live content resolves to its old id, and a surviving stale
+  // "live" row would make Sync see a terminal deploy and never re-activate it
   // (the revert-and-push bug). With the row gone, the re-push opens fresh.
   async finishLive(appId: string, deployId: string): Promise<void> {
     await this.inTx(async (tx) => {
@@ -830,30 +761,23 @@ class PgStore implements Store {
     });
   }
 
-  // finishFailed marks a deploy failed, leaving the previously live deploy
-  // served.
+  // Marks a deploy failed, leaving the previously live deploy served.
   async finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void> {
     await this.inTx(async (tx) => {
       await tx.query(
         `UPDATE ${this.t('deploys')} SET state = $1, failure = $2 WHERE app_id = $3 AND id = $4`,
         [State.Failed, encodeFailure(failure), appId, deployId],
       );
-      // The code, not the message: a message carries a path or an upstream
-      // error string, and the useful question of this table is which kinds of
-      // failure happen, not what one of them said.
+      // The code, not the message: the useful question of this table is which
+      // kinds of failure happen, not what one instance's path or upstream said.
       const code = failure !== null ? failure.code : '';
       await this.insertAppEvent(tx, appId, deployId, EventKind.DeployFailed, eventDetail({ code }));
     });
   }
 
-  // ---- grants ----
-
-  // putGrant creates or updates a principal's grant on an app. The upsert targets
-  // the (app_id, principal) primary key: re-sharing to someone already on the
-  // list changes their role in place rather than failing, which is what the share
-  // dialog does when an owner picks a new role. granted_at is supplied by the
-  // caller (like session/device-code expiries) rather than read from the clock
-  // here, so an update also refreshes it to the moment of the change.
+  // Upsert on the (app_id, principal) primary key, so re-sharing to someone
+  // already listed changes their role in place. granted_at comes from the caller,
+  // so an update also refreshes it to the moment of the change.
   async putGrant(g: Grant): Promise<void> {
     await this.db.query(
       `INSERT INTO ${this.t('grants')} (${grantCols})
@@ -868,7 +792,6 @@ class PgStore implements Store {
     );
   }
 
-  // grant returns a principal's grant on an app, or null if they hold none.
   async grant(appId: string, principal: string): Promise<Grant | null> {
     const res = await this.db.query(
       `SELECT ${grantCols} FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
@@ -877,9 +800,8 @@ class PgStore implements Store {
     return res.rows.length ? rowToGrant(res.rows[0]) : null;
   }
 
-  // grantsByApp lists every grant on an app, oldest share first — the order the
-  // share dialog presents the access list in. The (app_id, principal) primary key
-  // is the scan for the app_id filter, so no separate index backs this read.
+  // Oldest share first, the order the share dialog presents the access list in.
+  // The (app_id, principal) primary key backs the filter, so no separate index.
   async grantsByApp(appId: string): Promise<Grant[]> {
     const res = await this.db.query(
       `SELECT ${grantCols} FROM ${this.t('grants')} WHERE app_id = $1 ORDER BY granted_at, principal`,
@@ -888,8 +810,7 @@ class PgStore implements Store {
     return res.rows.map(rowToGrant);
   }
 
-  // revokeGrant removes a principal's grant and reports whether a row was there
-  // to remove, so revoking access twice is not a failure.
+  // Reports whether a row was there to remove, so revoking twice is not a failure.
   async revokeGrant(appId: string, principal: string): Promise<boolean> {
     const res = await this.db.query(
       `DELETE FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
@@ -898,7 +819,6 @@ class PgStore implements Store {
     return res.rowCount === 1;
   }
 
-  // insertEvent appends one event through the pool or a transaction.
   private async insertEvent(
     x: Queryable,
     e: { accountId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
@@ -909,10 +829,8 @@ class PgStore implements Store {
     );
   }
 
-  // insertAppEvent appends an app-scoped event, taking the account from the app
-  // row. Deploy transitions know an app id and nothing else, and threading an
-  // account through them only to denormalize it here would be a parameter that
-  // exists to be forgotten.
+  // Takes the account from the app row, so deploy transitions that know only an
+  // app id need not thread an account through only to denormalize it here.
   private async insertAppEvent(
     x: Queryable,
     appId: string,

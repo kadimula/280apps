@@ -1,7 +1,5 @@
-// Shared test scaffolding: an in-memory Streams capture, a minimal bundle, an
-// AuthClient double, and a runCli harness that drives the real command surface
-// (app.run) with injected deps so no test touches stdio, the network, or a
-// subprocess. Integration tests pass W1's real Fake as the port.
+// Shared test scaffolding: in-memory Streams capture, a minimal bundle, an
+// AuthClient double, and a runCli harness that drives app.run with injected deps.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,8 +26,6 @@ export function capture(): Capture {
   };
 }
 
-// tmpProject makes a throwaway static project (an index.html) and returns its
-// root. Registered for cleanup by the caller via rmProject.
 export function tmpProject(files: Record<string, string> = { 'index.html': '<h1>hi</h1>' }): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), '280-test-'));
   for (const [name, body] of Object.entries(files)) {
@@ -44,9 +40,8 @@ export function tmpHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), '280-home-'));
 }
 
-// testBundle is a minimal, self-consistent bundle: one worker blob and one
-// asset, digests derived the same way the real bundler and the platform do, so
-// W1's Fake accepts it and reports the right missing set.
+// A minimal self-consistent bundle: worker + asset with digests derived the way
+// the real bundler and platform do, so the Fake accepts it and reports missing right.
 export function testBundle(): Bundle {
   const worker = new TextEncoder().encode('export default { fetch() { return new Response("hi"); } };');
   const wd = digestBytes(worker);
@@ -74,9 +69,8 @@ export interface StubAuthOptions {
   onRedeem?: () => void;
 }
 
-// stubAuth is an AuthClient double. redeem returns a token when configured, else
-// throws the flow's authorization_pending answer (what an unconfirmed login
-// returns).
+// AuthClient double: redeem returns a token when configured, else throws the
+// authorization_pending answer an unconfirmed login returns.
 export function stubAuth(opts: StubAuthOptions): AuthClient {
   return {
     async start() {
@@ -140,9 +134,8 @@ export async function runCli(args: string[], o: RunOptions): Promise<RunResult> 
 function unusedPort(): Port {
   throw new Error('test did not provide a port but the command needed one');
 }
-// Constructing an auth client is always harmless (commands do it eagerly even
-// when already logged in); only start/redeem need a real one, so the stub throws
-// there rather than on construction.
+// Constructing an auth client is harmless (commands do it eagerly even when
+// logged in); only start/redeem need a real one, so the stub throws there.
 function unusedAuth(): AuthClient {
   const boom = async (): Promise<never> => {
     throw new Error('test did not provide an auth client but the command needed one');
@@ -150,9 +143,8 @@ function unusedAuth(): AuthClient {
   return { start: boom, redeem: boom };
 }
 
-// parseToon is a tiny TOON reader for assertions: it maps top-level `key: value`
-// lines to strings. Enough to assert error `{code, fix}` and result fields
-// without pulling the decoder's full surface into every test.
+// Tiny TOON reader for assertions: maps top-level `key: value` lines to strings,
+// enough for error `{code, fix}` and result fields without the full decoder.
 export function parseToon(s: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of s.trim().split('\n')) {

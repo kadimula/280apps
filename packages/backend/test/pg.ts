@@ -1,12 +1,10 @@
 // Test support for the store suite: a fresh, empty Postgres schema per test.
 //
-// Isolation is a Postgres schema per call rather than a database per call: same
-// dialect and same migrations as production, which is the entire reason the
-// suite is not run against SQLite. Mirrors platform/conformance_test.go newStore.
+// Isolation is a schema per call, not a database per call: same dialect and
+// migrations as production, which is why the suite is not run against SQLite.
 //
-// Without TEST_DATABASE_URL the store tests skip, which is a local convenience.
-// Skipping in CI would turn the suite into a green check that asserts nothing,
-// so there it is fatal instead.
+// Without TEST_DATABASE_URL the store tests skip (a local convenience). In CI
+// that would be a green check asserting nothing, so there it is fatal instead.
 
 import pg from 'pg';
 import { open } from '../src/store/store.js';
@@ -32,10 +30,9 @@ export function requireDatabaseURL(): string {
 
 let schemaSeq = 0;
 
-// newStore returns an empty database confined to its own schema, and registers
-// its teardown (drop schema, close pool) on the returned handle. Open creates
-// the schema, which is the same path production takes on its first boot;
-// dropping it is the test's job.
+// returns an empty database confined to its own schema, plus its teardown (drop
+// schema, close pool). open() creates the schema, the same path production takes
+// on first boot; dropping it is the test's job.
 export async function newStore(): Promise<{ store: Store; cleanup: () => Promise<void> }> {
   const base = requireDatabaseURL();
   if (base === '') {

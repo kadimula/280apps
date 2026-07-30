@@ -1,7 +1,7 @@
 // Ported from platform/conformance_test.go: the tenancy, activation-recovery,
-// revert, and blob-scoping claims the shared conformance suite (W1) cannot make
-// because it only ever exercises one already-authenticated account. These run
-// against the deploy Service (in-process) and the HTTP router.
+// revert, and blob-scoping claims the shared conformance suite (W1) cannot make,
+// since it only exercises one already-authenticated account. Run against the
+// deploy Service (in-process) and the HTTP router.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { DeployCode, DeployErr, MANIFEST_KIND_BUNDLE, State, digestBytes, type SyncResult } from '@280/contracts';
@@ -41,22 +41,20 @@ describe('AccountsAreIsolated', () => {
     const alice = new HttpClient(app, 'alice-token');
     const res = await alice.sync({ identity: id as never, manifest });
 
-    // Same identity, different token: Bob must not autolink onto Alice's app.
+    // same identity, different token: Bob must not autolink onto Alice's app
     const bob = new HttpClient(app, 'bob-token');
     const bobRes = await bob.sync({ identity: id as never, manifest });
     expect(bobRes.app.id).not.toBe(res.app.id);
     expect(bobRes.resolution).toBe('created');
 
-    // Alice's app id is not addressable with Bob's token.
     await expectCode(
       () => bob.sync({ identity: { ...id, appId: res.app.id } as never, manifest }),
       DeployCode.NoSuchApp,
     );
 
-    // Bob knows Alice's id and slug, which is everything delete asks for.
+    // Bob knows Alice's id and slug, everything delete asks for, yet is refused
     await expectCode(() => bob.delete(res.app.id, res.app.slug), DeployCode.NoSuchApp);
 
-    // Alice's app survived.
     const st = await alice.status(res.app.id, res.deployId);
     expect(st.state).toBeDefined();
   });
@@ -88,7 +86,7 @@ describe('ActivationFailureReopens', () => {
     expect(st.failure).toBeDefined();
     expect(h.runtime.activeDeploy(res.app.id)).toBe('');
 
-    // Push again: same call, same manifest, no client-side recovery.
+    // push again: same call, same manifest, no client-side recovery
     const again = await port.sync(req);
     expect(again.deployId).toBe(res.deployId);
     expect(again.state).toBe(State.Live);

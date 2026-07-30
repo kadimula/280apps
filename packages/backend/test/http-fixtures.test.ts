@@ -1,16 +1,12 @@
 // HTTP fixture replay (plan §4.2). The Go side records real request/response
-// pairs from its conformance-over-HTTP run (platform/httpfixtures_test.go) into
-// testdata/http-fixtures.json. This replays every recorded request against the
-// TS server and byte-compares the JSON after key sort. Where cross-conformance
-// proves behavior, this proves the wire bytes are identical: field names,
-// omitempty, error {code, message, fix} shapes.
+// pairs from its conformance-over-HTTP run into testdata/http-fixtures.json; this
+// replays each against the TS server and byte-compares the JSON after key sort,
+// proving the wire bytes are identical (field names, omitempty, error shapes).
 //
-// The one thing that legitimately differs between the two servers is a freshly
-// minted id: app ids embed 6 random bytes, and deploy ids and url tokens derive
-// from them. So the replay (a) threads the TS server's real ids into the paths
-// and bodies of later requests in the same case, and (b) normalizes those ids to
-// placeholders before comparing. Everything else — digests, slugs, states, error
-// strings — must match to the byte.
+// The one thing that legitimately differs between the servers is a freshly minted
+// id: app ids embed random bytes, and deploy ids and url tokens derive from them.
+// So the replay (a) threads the TS server's real ids into later requests in the
+// same case, and (b) normalizes those ids to placeholders before comparing.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +31,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fixturePath = join(here, '..', 'testdata', 'http-fixtures.json');
 const exchanges: Exchange[] = JSON.parse(readFileSync(fixturePath, 'utf8'));
 
-// Group exchanges into their cases, preserving recording order within each.
+// groups exchanges into cases, preserving recording order within each.
 function byCase(all: Exchange[]): Map<string, Exchange[]> {
   const m = new Map<string, Exchange[]>();
   for (const ex of all) {
@@ -46,11 +42,10 @@ function byCase(all: Exchange[]): Map<string, Exchange[]> {
   return m;
 }
 
-// canonical stringifies with keys sorted at every level (the "key sort" the plan
-// calls for) and arrays sorted too. The Go recorder canonicalizes the same way,
-// because the conformance suite's map-built manifests put assets/missing in a
-// non-deterministic order that carries no contract; sorting both sides compares
-// the part that is actually specified.
+// stringifies with keys and arrays sorted at every level. The Go recorder does
+// the same, because map-built manifests put assets/missing in a non-deterministic
+// order that carries no contract; sorting both sides compares only the specified
+// part.
 function canonical(v: unknown): string {
   return JSON.stringify(sortValue(v));
 }
@@ -78,16 +73,16 @@ const APP_ID = /app_[0-9a-f]{12}/g;
 const DEPLOY_ID = /dep_[0-9a-f]{16}/g;
 const URL_TOKEN = /-[0-9a-z]{10}\.280apps\.run/g;
 
-// normalize masks the values that are allowed to differ between servers because
-// they carry per-app randomness. Everything else survives to be compared.
+// masks the values allowed to differ between servers (per-app randomness);
+// everything else survives to be compared.
 function normalize(s: string): string {
   return s.replace(APP_ID, 'app_XXX').replace(DEPLOY_ID, 'dep_XXX').replace(URL_TOKEN, '-XXX.280apps.run');
 }
 
-// collectIds walks a parsed body and returns the app/dep ids it contains, in a
-// stable traversal order. Two structurally identical bodies yield ids in the
-// same order, which is what lets the replay learn Go-id → TS-id pairs positionally
-// without hard-coding which field each id lives in.
+// walks a parsed body and returns its app/dep ids in a stable traversal order.
+// Two structurally identical bodies yield ids in the same order, which lets the
+// replay learn Go-id → TS-id pairs positionally without knowing which field each
+// id lives in.
 function collectIds(v: unknown, out: string[] = []): string[] {
   if (typeof v === 'string') {
     if (/^app_[0-9a-f]{12}$/.test(v) || /^dep_[0-9a-f]{16}$/.test(v)) out.push(v);
@@ -101,9 +96,8 @@ function collectIds(v: unknown, out: string[] = []): string[] {
   return out;
 }
 
-// applySubst rewrites every recorded (Go) id to the id the TS server actually
-// minted, so a path or body that refers back to an earlier app/deploy addresses
-// the right one.
+// rewrites every recorded (Go) id to the id the TS server actually minted, so a
+// path or body referring back to an earlier app/deploy addresses the right one.
 function applySubst(s: string, subst: Map<string, string>): string {
   let out = s;
   for (const [from, to] of subst) out = out.split(from).join(to);
@@ -125,8 +119,8 @@ afterAll(async () => {
 describe('http fixture replay (Go recording → TS server)', () => {
   for (const [caseName, list] of byCase(exchanges)) {
     it(caseName, async () => {
-      // A token nothing else uses, so each case gets its own account and cannot
-      // collide with another case's apps on the shared server.
+      // a token nothing else uses, so each case gets its own account and cannot
+      // collide with another case's apps on the shared server
       const auth = { Authorization: `Bearer fixture-${caseName}` };
       const subst = new Map<string, string>();
 
@@ -153,8 +147,8 @@ describe('http fixture replay (Go recording → TS server)', () => {
           continue;
         }
 
-        // Learn the id mapping from the raw (un-normalized) bodies before masking,
-        // so later requests in this case can address the TS server's ids.
+        // learn the id mapping from the raw (un-normalized) bodies before masking,
+        // so later requests in this case can address the TS server's ids
         const recordedObj = JSON.parse(recorded);
         const actualObj = JSON.parse(actualText);
         const recIds = collectIds(recordedObj);
@@ -163,7 +157,6 @@ describe('http fixture replay (Go recording → TS server)', () => {
           if (recIds[i] !== actIds[i]) subst.set(recIds[i], actIds[i]);
         }
 
-        // Byte-compare after key sort and id masking.
         const want = canonical(JSON.parse(normalize(recorded)));
         const got = canonical(JSON.parse(normalize(actualText)));
         expect(got, `${caseName} ${ex.method} ${ex.path} body`).toBe(want);

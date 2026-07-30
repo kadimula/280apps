@@ -1,6 +1,6 @@
-// The browser-login flow the backend now owns: the OIDC handshake against a
-// fake provider, session creation, /auth/me, logout, the open-redirect guard,
-// account linking across a re-login, and the login rate limit.
+// The browser-login flow the backend owns: OIDC handshake against a fake
+// provider, sessions, /auth/me, logout, the open-redirect guard, account
+// linking across re-login, and the login rate limit.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Hono } from 'hono';
@@ -35,7 +35,6 @@ describe('browser login', () => {
     expect(res.status).toBe(302);
     const loc = new URL(res.headers.get('location') ?? '');
     expect(loc.searchParams.get('state')).not.toBe('');
-    // The callback URL handed to the provider is this backend's own.
     expect(loc.searchParams.get('redirect_uri')).toBe('https://api.test/auth/google/callback');
     expect(cookiePair(res, STATE_COOKIE)).not.toBeNull();
   });
@@ -45,7 +44,7 @@ describe('browser login', () => {
     const session = await signIn(app, 'Alice@Test');
     const user = await me(app, session);
     expect(user).not.toBeNull();
-    // Email is normalized to lowercase.
+    // email is normalized to lowercase
     expect(user!.email).toBe('alice@test');
     expect(user!.id).not.toBe('');
   });
@@ -62,10 +61,8 @@ describe('browser login', () => {
 
     const out = await app.request('/auth/logout', { method: 'POST', headers: { Cookie: session } });
     expect(out.status).toBe(303);
-    // The cleared cookie is sent back expired.
     const cleared = cookiePair(out, SESSION_COOKIE);
     expect(cleared).toBe(`${SESSION_COOKIE}=`);
-    // And the original token no longer resolves.
     expect(await me(app, session)).toBeNull();
   });
 
@@ -80,7 +77,6 @@ describe('browser login', () => {
     const { app } = await server();
     const start = await app.request('/auth/google/start?redirect=/dashboard');
     const stateCookie = cookiePair(start, STATE_COOKIE)!;
-    // Wrong state query against the real cookie.
     const cb = await app.request('/auth/google/callback?code=alice@test&state=forged', {
       headers: { Cookie: stateCookie },
     });
@@ -103,7 +99,6 @@ describe('browser login', () => {
 
   it('an off-origin redirect is confined to the frontend', async () => {
     const { app } = await server();
-    // Drive start with an evil redirect; the callback must not honor it.
     const start = await app.request(`/auth/google/start?redirect=${encodeURIComponent('https://evil.test/steal')}`);
     const state = new URL(start.headers.get('location') ?? '').searchParams.get('state') ?? '';
     const stateCookie = cookiePair(start, STATE_COOKIE)!;

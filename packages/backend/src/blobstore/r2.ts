@@ -1,24 +1,17 @@
 // The per-app content-addressed blob store on Cloudflare R2: the production
-// BlobStore, the counterpart to the filesystem store the tests run against.
-//
-// Key layout is `${appId}/${digest}`, so every method is a prefix operation on
-// one app and the cross-tenant dedupe leak is impossible by construction, the
-// same guarantee the filesystem store gives by scoping to a directory
-// (blobstore.ts). R2 is content-addressed globally, but the app id in the key
-// keeps two tenants that uploaded identical bytes on separate objects.
-//
-// The body is never buffered: put frames the incoming stream in a
-// FixedLengthStream and hands R2 the readable end, so the bytes flow straight
-// through to storage while R2 verifies the sha256 as it writes.
+// BlobStore, counterpart to the filesystem store the tests use. Keys are
+// `${appId}/${digest}`, so every method is a prefix operation on one app and the
+// cross-tenant dedupe leak is impossible by construction even though R2 is
+// content-addressed globally. The body is never buffered: put frames the stream
+// in a FixedLengthStream so bytes flow straight through while R2 verifies sha256.
 
 import { DeployCode, type BlobBody, type BlobInfo, type Digest } from '@280/contracts';
 import type { BlobStore } from '../seams.js';
 import { DeployErr, ErrNotFound } from './blobstore.js';
 
-// R2 deletes up to 1000 keys per call. deleteApp batches at this bound.
+// R2 deletes up to 1000 keys per call.
 const DELETE_BATCH = 1000;
 
-// R2BlobStore implements the BlobStore seam against one R2 bucket binding.
 export class R2BlobStore implements BlobStore {
   constructor(private readonly bucket: R2Bucket) {}
 
@@ -30,16 +23,10 @@ export class R2BlobStore implements BlobStore {
     return (await this.bucket.head(this.key(appId, digest))) !== null;
   }
 
-  // put streams body into R2 under the key, framed to size and verified against
-  // digest as R2 writes it.
-  //
-  // FixedLengthStream(size) errors the stream if the body ends short or long,
-  // and R2's sha256 option rejects a body that does not hash to digest without
-  // storing anything. Both faults mean the uploaded bytes are not what the
-  // manifest declared, so both surface as digest_mismatch, byte-for-byte the
-  // same typed error FsBlobStore.put throws. (A genuine R2 outage would also
-  // land here; its fix — "run 280 push again" — is the right recovery anyway,
-  // since a re-push re-uploads from scratch.)
+  // FixedLengthStream(size) errors a body that ends short or long, and R2's sha256
+  // option rejects one that does not hash to digest without storing anything. Both
+  // mean the bytes are not what the manifest declared, so both (and a genuine R2
+  // outage, whose "run 280 push again" fix is right anyway) surface as digest_mismatch.
   async put(appId: string, digest: Digest, size: number, body: BlobBody): Promise<void> {
     const framed = toReadable(body).pipeThrough(new FixedLengthStream(size));
     try {
@@ -60,10 +47,8 @@ export class R2BlobStore implements BlobStore {
     return new Uint8Array(await obj.arrayBuffer());
   }
 
-  // deleteApp removes every object under the app's prefix, in batches, walking
-  // the cursor. Idempotent: an app that stored nothing, or whose content is
-  // already gone, is a successful no-op, which is what lets an interrupted
-  // delete be finished by running it again.
+  // Removes every object under the app's prefix, in batches, walking the cursor.
+  // Idempotent, so an interrupted delete can be finished by running it again.
   async deleteApp(appId: string): Promise<void> {
     const prefix = appId + '/';
     let cursor: string | undefined;
@@ -78,9 +63,8 @@ export class R2BlobStore implements BlobStore {
     }
   }
 
-  // missing returns, in stable order, the digests from want the app lacks,
-  // deduplicated. It lists the app's prefix once (walking cursor pages into a
-  // set) and diffs against it, rather than a head() per digest.
+  // The digests from want the app lacks, deduplicated in stable order. Lists the
+  // app's prefix once into a set and diffs against it, rather than a head() each.
   async missing(appId: string, want: BlobInfo[]): Promise<Digest[]> {
     const prefix = appId + '/';
     const stored = new Set<string>();
@@ -103,11 +87,9 @@ export class R2BlobStore implements BlobStore {
   }
 }
 
-// toReadable adapts a BlobBody to the web ReadableStream R2 consumes. The web
-// stream form (the R2 adapter's own request body) passes straight through; an
-// async iterable (the capped request stream, or a test's chunk generator) is
-// wrapped without buffering, and a source error — the byte cap tripping — errors
-// the stream rather than being swallowed.
+// Adapts a BlobBody to the web ReadableStream R2 consumes. A web stream passes
+// straight through; an async iterable is wrapped without buffering, and a source
+// error (the byte cap tripping) errors the stream rather than being swallowed.
 function toReadable(body: BlobBody): ReadableStream<Uint8Array> {
   if (body instanceof ReadableStream) return body as ReadableStream<Uint8Array>;
   const iter = (body as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]();

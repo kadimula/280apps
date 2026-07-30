@@ -1,32 +1,26 @@
-// output is the CLI's single AXI layer. Every command result and every error is
-// rendered here, so the agent-facing contract lives in one place: TOON on
-// stdout, structured errors on stdout (never stderr), stable exit codes, and
-// unknown-flag rejection that lists the command's own flags inline.
-//
-// Spec: cli/internal/output/output.go for exit-code meanings and the error
-// shape; plan §3a for the AXI stdout rules that replace Go's stdout bytes.
-// The internal logic stays JSON-shaped; TOON is applied only at this boundary
-// via the reference encoder (@toon-format/toon), the one extra runtime dep.
+// output is the CLI's single AXI layer: every command result and error is rendered
+// here, so the agent-facing contract lives in one place: TOON on stdout, structured
+// errors on stdout (never stderr), stable exit codes, unknown-flag rejection listing
+// the command's own flags inline.
+// Spec: cli/internal/output/output.go; plan §3a for the AXI stdout rules. TOON is
+// applied only at this boundary via @toon-format/toon.
 
 import { encode } from '@toon-format/toon';
 import { DeployCode } from '@280/contracts';
 
-// Exit codes are part of the agent contract: an agent branches on them without
-// parsing text. 0 success (including no-ops), 1 a structured actionable
-// failure, 2 misuse (bad flags/args). Everything actionable is code 1 with a fix.
+// Exit codes are part of the agent contract: 0 success (incl. no-ops), 1 a
+// structured actionable failure, 2 misuse (bad flags/args).
 export const ExitOK = 0;
 export const ExitError = 1;
 export const ExitUsage = 2;
 
-// Streams is the pair of sinks a command writes through. Injected so tests
-// capture output with no real stdio. stdout carries data and errors the agent
-// consumes; stderr carries progress only.
+// Streams is the pair of sinks a command writes through, injected so tests capture
+// output with no real stdio. stdout carries data and errors; stderr, progress only.
 export interface Streams {
   out(s: string): void;
   err(s: string): void;
 }
 
-// processStreams is the production binding to the real process streams.
 export const processStreams: Streams = {
   out: (s) => process.stdout.write(s),
   err: (s) => process.stderr.write(s),
@@ -41,9 +35,9 @@ export interface AgentError {
   candidates: string[];
 }
 
-// CliError is the throwable the CLI raises for its own failures. The deploy
-// seam (and W1's HTTP adapter) throw the same {code,message,fix,retryable}
-// shape; asError normalizes both, so callers never care which produced it.
+// CliError is the throwable the CLI raises for its own failures. The deploy seam
+// and HTTP adapter throw the same {code,message,fix,retryable} shape; asError
+// normalizes both.
 export class CliError extends Error {
   readonly code: string;
   readonly fix: string;
@@ -64,12 +58,10 @@ export function fail(code: string, message: string, fix = ''): CliError {
   return new CliError(code, message, fix);
 }
 
-// asError duck-types any thrown value into the agent-facing shape. A typed
-// deploy/CLI error (anything carrying a string `code`) surfaces unchanged; any
-// other error is coerced to an unknown-code failure so nothing escapes the
-// contract. The coerced message is clamped to its first line: a raw dependency
-// throw (fs, fetch, a bug) can carry a stack or a multi-line dump, and AXI §6
-// forbids leaking that noise to the agent. Mirrors Go's deploy.AsError.
+// asError duck-types any thrown value into the agent-facing shape. A typed error
+// (anything carrying a string `code`) surfaces unchanged; anything else is coerced
+// to an unknown-code failure, message clamped to its first line so a raw dependency
+// throw cannot leak a stack or multi-line dump to the agent (AXI §6).
 export function asError(e: unknown): AgentError {
   if (e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string') {
     const a = e as Record<string, unknown>;
@@ -96,14 +88,12 @@ function firstLine(s: string): string {
   return (nl >= 0 ? s.slice(0, nl) : s).trim();
 }
 
-// CLI_TOO_OLD_FIX is the one fix the CLI rewrites regardless of what the server
-// sent: with self-update dropped, the only recovery from a version floor is a
-// fresh npx run (plan §6 W2, npm package renamed to two80).
+// CLI_TOO_OLD_FIX is rewritten regardless of what the server sent: with self-update
+// dropped, the only recovery from a version floor is a fresh npx run.
 const CLI_TOO_OLD_FIX = 'run npx two80@latest push';
 
-// UNKNOWN_FIX is the fallback fix for an uncoded failure. An unknown error must
-// still carry an actionable next step (AXI §6); this mirrors the HTTP adapter's
-// default-status fix.
+// UNKNOWN_FIX is the fallback for an uncoded failure, which must still carry an
+// actionable next step (AXI §6).
 const UNKNOWN_FIX = 'run the command again; if it persists, check https://280apps.com/status';
 
 // result renders a success payload to stdout as TOON, one document per call.
@@ -112,15 +102,15 @@ export function result(s: Streams, obj: Record<string, unknown>): number {
   return ExitOK;
 }
 
-// progress writes one human-facing progress line to stderr. Never data, never
-// an error: an agent reads only stdout, so progress must not land there.
+// progress writes one human-facing progress line to stderr, never stdout: an agent
+// reads only stdout.
 export function progress(s: Streams, line: string): void {
   s.err('280: ' + line + '\n');
 }
 
 // error renders a structured failure to stdout as TOON and returns exit 1. The
-// shape {error, message, fix, retryable} is the agent's real contract; a
-// cli_too_old code always carries the npx fix.
+// {error, message, fix, retryable} shape is the agent's contract; cli_too_old
+// always carries the npx fix.
 export function error(s: Streams, e: unknown): number {
   const a = asError(e);
   let fix = a.code === DeployCode.CLITooOld ? CLI_TOO_OLD_FIX : a.fix;
@@ -129,9 +119,9 @@ export function error(s: Streams, e: unknown): number {
   return ExitError;
 }
 
-// Usage errors share one shape with runtime errors: `error` is always a machine
-// code, never prose, so an agent branching on it never has to guess which kind
-// of document it is reading. `help` carries the inline self-correction (AXI §6).
+// usage errors share one shape with runtime errors: `error` is always a machine
+// code, never prose, so an agent never has to guess which document it reads. `help`
+// carries the inline self-correction (AXI §6).
 function usage(s: Streams, code: string, message: string, help: string): number {
   s.out(encode({ error: code, message, help }) + '\n');
   return ExitUsage;
@@ -143,16 +133,14 @@ function flagList(cmd: string, validFlags: string[]): string {
     : `\`${cmd}\` takes no flags (--help always allowed)`;
 }
 
-// REMOVED_FLAGS maps flags that once existed (in the Go CLI) to a targeted hint,
-// so an agent that learned the old surface self-corrects in one step instead of
-// getting the generic valid-flag list (AXI §6).
+// REMOVED_FLAGS maps flags that once existed to a targeted hint, so an agent that
+// learned the old surface self-corrects in one step (AXI §6).
 const REMOVED_FLAGS: Record<string, string> = {
   json: '--json was removed; stdout is always TOON now, just drop the flag',
 };
 
-// usageError rejects an unknown flag by name and lists the command's valid
-// flags inline, so the agent self-corrects in one turn without a follow-up
-// --help call (AXI §6). A removed flag gets its targeted hint instead. Exit 2.
+// usageError rejects an unknown flag by name and lists the command's valid flags
+// inline (AXI §6); a removed flag gets its targeted hint. Exit 2.
 export function usageError(s: Streams, cmd: string, badFlag: string, validFlags: string[]): number {
   const removed = REMOVED_FLAGS[badFlag.replace(/^--/, '')];
   if (removed !== undefined) {
@@ -172,13 +160,13 @@ export function argError(s: Streams, cmd: string, badArg: string, validFlags: st
 }
 
 // valueError rejects a string flag given without a value, same exit code as an
-// unknown flag: the invocation cannot be acted on as written.
+// unknown flag.
 export function valueError(s: Streams, cmd: string, flag: string, validFlags: string[]): number {
   return usage(s, 'missing_value', `flag ${flag} needs a value`, flagList(cmd, validFlags));
 }
 
-// text writes a raw reference block (help output) to stdout verbatim. Help is
-// the one documentation surface that is prose, not data (AXI §10).
+// text writes a raw reference block (help output) to stdout verbatim: help is the
+// one documentation surface that is prose, not data (AXI §10).
 export function text(s: Streams, body: string): void {
   s.out(body.endsWith('\n') ? body : body + '\n');
 }
@@ -189,19 +177,18 @@ export interface FlagSpec {
   type: 'string' | 'bool';
 }
 
-// ParseResult is the outcome of parseFlags. Exactly one of these matters to the
-// caller: usage set (a usage error was already rendered; return it), help true
-// (print the command's --help and exit 0), or neither (use values).
+// ParseResult is the outcome of parseFlags. Exactly one matters: usage set (error
+// already rendered, return it), help true (print --help, exit 0), or neither (use
+// values).
 export interface ParseResult {
   help: boolean;
   values: Record<string, string | boolean>;
   usage?: number;
 }
 
-// parseFlags parses args against a command's declared flags and enforces the
-// AXI guarantee that an unknown flag or unexpected argument is rejected by name
-// with the valid flags listed inline (never silently dropped). `--help`/`-h` is
-// always allowed. Supports `--flag value`, `--flag=value`, and bare bool flags.
+// parseFlags parses args against a command's declared flags, rejecting an unknown
+// flag or unexpected argument by name with the valid flags inline (AXI §6).
+// `--help`/`-h` is always allowed. Supports `--flag value`, `--flag=value`, bools.
 export function parseFlags(s: Streams, cmd: string, args: string[], specs: FlagSpec[]): ParseResult {
   const validNames = specs.map((x) => '--' + x.name);
   const byName = new Map(specs.map((x) => [x.name, x]));

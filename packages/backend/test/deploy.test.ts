@@ -1,8 +1,5 @@
-// In-process behavior of the deploy Service: the essential cases the shared
-// conformance suite (W1) covers, asserted here against the real deploysvc so
-// W5's core seam behavior stands on its own before W1 lands. Create/resolve,
-// upload-then-live, idempotency, delta redeploy, preflight, digest mismatch,
-// invalid blob, status, and delete.
+// In-process behavior of the deploy Service, asserted against the real deploysvc
+// so W5's core seam behavior stands on its own before W1 lands.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -131,7 +128,7 @@ describe('sync + activation', () => {
 
     const second = mkBundle('worker', { '/shared.txt': 'S', '/b.txt': 'B' });
     const r2 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest: second.manifest });
-    // shared.txt and the (unchanged) worker are already present; only b.txt is new.
+    // shared.txt and the unchanged worker are already present; only b.txt is new
     expect(r2.missing).toEqual([second.manifest.assets[1]!.digest]);
   });
 });
@@ -198,7 +195,7 @@ describe('preflight + blobs', () => {
       () => port.putBlob(res.app.id, digest, 5, bodyOf(bytesOf('wrong'))),
       DeployCode.DigestMismatch,
     );
-    // The correct bytes still activate.
+    // the correct bytes still activate
     await port.putBlob(res.app.id, digest, content.get(digest)!.byteLength, bodyOf(content.get(digest)!));
     expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
   });
@@ -234,7 +231,6 @@ describe('delete', () => {
     const dry = await port.delete({ appId: res.app.id, confirm: '' });
     expect(dry.deleted).toBe(false);
     expect(dry.app.slug).toBe(res.app.slug);
-    // Still there.
     expect((await port.status(res.app.id, res.deployId)).state).toBeDefined();
   });
 

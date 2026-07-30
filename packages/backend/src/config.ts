@@ -1,19 +1,12 @@
-// Config and secrets for the Worker: the typed shape of the Cloudflare Env the
-// runtime hands each request, and readConfig(), the one place raw bindings and
-// vars turn into typed values.
-//
-// Every process.env read the deleted Node bootstrap did now reads from Env
-// instead — the TWO80_* tunables and CF_ISR_CACHE_KV/CF_DISPATCH_NAMESPACE come
-// from wrangler `vars`, the secrets (Google, the CF API credentials) from
-// Workers Secrets, and the bindings (R2, Hyperdrive, the activator DO) are live
-// objects. Nothing here reaches for process.env.
+// Config and secrets for the Worker: the typed shape of the Cloudflare Env, and
+// readConfig(), the one place raw bindings and vars turn into typed values. Nothing
+// here reaches for process.env; every value comes off Env.
 
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
 
-// Env is a Cloudflare Worker's second argument: the declared bindings, the
-// wrangler `vars`, and the Workers Secrets, all on one object. Bindings are
-// objects; vars and secrets are strings (absent ⇒ undefined).
+// Env is a Worker's second argument: bindings (objects), wrangler `vars`, and
+// Workers Secrets (both strings, absent ⇒ undefined), all on one object.
 export interface Env {
   // Bindings (wrangler.jsonc).
   BLOBS: R2Bucket;
@@ -45,16 +38,14 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   CF_API_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
-  // DATABASE_URL is the Neon origin string Hyperdrive fronts; at runtime the
-  // Worker dials the pooled HYPERDRIVE binding, so the store reads
-  // connectionString off that, not this. Present for parity — it is the same
-  // secret the CI migrate runner reads (from process.env, out of band).
+  // The Neon origin Hyperdrive fronts. At runtime the Worker dials the pooled
+  // HYPERDRIVE binding, so the store reads connectionString off that, not this.
+  // Present for parity: the same secret the CI migrate runner reads out of band.
   DATABASE_URL?: string;
 }
 
-// Config is Env resolved: defaults applied, numbers parsed, secrets grouped. One
-// readConfig call per request (and per scheduled sweep) turns the raw bindings
-// into this.
+// Config is Env resolved: defaults applied, numbers parsed, secrets grouped. Built
+// once per request (and per scheduled sweep).
 export interface Config {
   runtime: 'cloudflare' | 'memory';
   logFormat: 'json' | 'text';
@@ -120,21 +111,18 @@ export function readConfig(env: Env): Config {
   };
 }
 
-// RequestDeps is the per-request I/O container the deps middleware builds from
-// Env and puts on the Hono context. Everything that touches the network lives
-// here and is built fresh per request: the Platform (over a lazily-connected pg
-// client and the R2 blob store), the auth service, and the request-scoped config
-// the handlers read. No object here is ever carried across requests.
+// RequestDeps is the per-request I/O container the deps middleware builds from Env
+// and puts on the context. Everything network-touching is built fresh here per
+// request and never carried across requests.
 export interface RequestDeps {
   platform: Platform;
-  // auth is unset when no login provider is configured (a memory-runtime dev
-  // loop): the web surface fails closed, the deploy API still serves.
+  // Unset when no login provider is configured (a memory-runtime dev loop): the web
+  // surface fails closed, the deploy API still serves.
   auth?: Auth;
   openSignup: boolean;
   verificationUri: string;
   minCliVersion: string;
-  // close releases the request's pg client after the response, scheduled via
-  // ctx.waitUntil. Absent for the in-memory test wiring, whose store is shared
-  // across requests and closed once at teardown.
+  // Releases the request's pg client after the response, via ctx.waitUntil. Absent
+  // for in-memory test wiring, whose shared store is closed once at teardown.
   close?: () => Promise<void>;
 }

@@ -1,17 +1,13 @@
-// credentials manages ~/.280/credentials, the account token the CLI sends with
-// every API call. It is machine-global (not per-project) and lives outside any
-// repo so it is never committed. The token can delete, so the guard on
-// destruction is the confirmation `280 delete` demands (the app's own name)
-// rather than a scope this file withholds.
-// Spec: cli/internal/credentials/credentials.go. Go is normative.
+// credentials manages ~/.280/credentials, the account token sent with every API
+// call. It is machine-global and lives outside any repo so it is never committed.
+// Spec: cli/internal/credentials/credentials.go; Go is normative.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import * as home from './home.js';
 
-// Pending is an in-flight device login: started but not yet approved. Persisted
-// because the flow deliberately does not block: the command that starts a login
-// exits, and a later command finishes it.
+// Pending is an in-flight device login. Persisted because the flow does not block:
+// the command that starts a login exits, and a later command finishes it.
 export interface Pending {
   deviceCode: string; // the CLI's secret, redeemed for a token
   userCode: string; // what the human confirms in the browser
@@ -43,8 +39,8 @@ export interface LoadedCreds {
   loggedIn: boolean;
 }
 
-// load reads the token. loggedIn is false (no error) when the user is not
-// logged in, the cheap "am I authed" check behind 280 whoami.
+// load reads the token. loggedIn is false (no error) when the user is not logged
+// in.
 export function load(): LoadedCreds {
   let raw: string;
   try {

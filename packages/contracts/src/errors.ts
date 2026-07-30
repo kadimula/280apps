@@ -1,14 +1,10 @@
-// The seam's single error shape and its stable code taxonomy.
-// Spec: contracts/deploy/deploy.go (Error, Code* consts, statusFor),
-// contracts/auth/auth.go (device-flow codes). Go is normative.
-//
-// The error taxonomy, not the state machine, is the real contract with the
-// agent: an error is either Retryable (transient; re-run the loop) or carries a
-// non-empty Fix an agent can act on verbatim.
+// The seam's single error shape and its stable code taxonomy: the real contract
+// with the agent. An error is either Retryable (transient; re-run the loop) or
+// carries a non-empty Fix. Spec: contracts/deploy/deploy.go, contracts/auth/auth.go (normative).
 
 import { z } from 'zod';
 
-// Deploy error codes (deploy.go:200-214).
+// Deploy error codes.
 export const DeployCode = {
   Unauthorized: 'unauthorized',
   AmbiguousIdentity: 'ambiguous_identity',
@@ -23,9 +19,8 @@ export const DeployCode = {
 } as const;
 export type DeployCode = (typeof DeployCode)[keyof typeof DeployCode];
 
-// Device-flow codes (auth.go:19-23). Errors reuse the deploy Error shape so the
-// CLI has exactly one error shape to render. AuthorizationPending is the
-// expected answer for most of the flow's life, not a failure.
+// Device-flow codes, reusing the deploy Error shape so the CLI renders one shape.
+// AuthorizationPending is the expected answer for most of the flow's life, not a failure.
 export const AuthCode = {
   AuthorizationPending: 'authorization_pending',
   ExpiredToken: 'expired_token',
@@ -33,12 +28,8 @@ export const AuthCode = {
 } as const;
 export type AuthCode = (typeof AuthCode)[keyof typeof AuthCode];
 
-// Error is the seam's single error shape (deploy.go:220-226).
-//
-// Loose by construction (unknown fields preserved, absent optionals defaulted)
-// to mirror Go encoding/json: a strict schema that rejects extra fields breaks
-// old clients. Go omitempty semantics: absent fix => "", absent retryable =>
-// false, absent candidates => [] (Go marshals a nil slice as absent/null).
+// Loose by construction to mirror Go encoding/json (a strict schema rejecting extra
+// fields breaks old clients): absent fix => "", retryable => false, candidates => [].
 export const errorSchema = z
   .object({
     code: z.string(),
@@ -60,8 +51,7 @@ export type DeployError = {
   candidates: string[];
 };
 
-// HTTP status mapping (api.go:600-618). Frozen with the codes it maps. Any code
-// not listed is a 400 (Go's default arm), which includes the device-flow codes.
+// Any code not listed maps to 400 (the default arm), which includes the device-flow codes.
 export const HTTP_STATUS: Readonly<Record<string, number>> = {
   [DeployCode.Unauthorized]: 401,
   [DeployCode.NoSuchApp]: 404,
@@ -77,7 +67,6 @@ export const HTTP_STATUS: Readonly<Record<string, number>> = {
 
 export const DEFAULT_STATUS = 400;
 
-// statusForCode mirrors api.go statusFor.
 export function statusForCode(code: string): number {
   return HTTP_STATUS[code] ?? DEFAULT_STATUS;
 }

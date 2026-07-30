@@ -1,7 +1,6 @@
-// Cloudflare runtime tests. Ported from
-// platform/internal/runtime/cloudflare/cloudflare_test.go, extended to assert the
-// exact request shapes the runtime sends (plan W6 Done). No real Cloudflare: a
-// mock fetch stands in and records every call.
+// Cloudflare runtime tests. Ported from cloudflare_test.go, extended to assert
+// the exact request shapes the runtime sends. No real Cloudflare: a mock fetch
+// stands in and records every call.
 
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -13,8 +12,6 @@ import {
 } from '@280/contracts';
 import type { Activation, RuntimeApp } from '../../src/seams.js';
 import { Runtime, cfHash, contentType, type Config } from '../../src/runtime/cloudflare/index.js';
-
-// ---- the fake Cloudflare ----
 
 interface RecordedCall {
   method: string;
@@ -30,8 +27,8 @@ interface KVPair {
   base64: boolean;
 }
 
-// envelope mirrors the Go fake's response shape: success tracks the 2xx status,
-// errors is always present, result is the payload.
+// mirrors the Go fake's response shape: success tracks the 2xx status, errors is
+// always present, result is the payload.
 function envelope(status: number, result: unknown): Response {
   const ok = Math.floor(status / 100) === 2;
   const body = JSON.stringify({
@@ -58,13 +55,13 @@ class CFFake {
   writes: KVPair[][] = [];
   bulkStatus = 0;
 
-  // asset upload session behavior: the buckets Cloudflare claims to still need.
+  // the buckets Cloudflare claims to still need.
   buckets: string[][] = [];
   // completion token returned by the assets upload endpoint.
   uploadToken = 'completion-jwt';
 
-  // createStore: 'ok' returns a fresh uuid; 'conflict' fails the create so the
-  // runtime falls back to adopting the store findStore returns.
+  // 'conflict' fails the create so the runtime falls back to adopting the store
+  // findStore returns.
   createStoreMode: 'ok' | 'conflict' = 'ok';
   newStoreId = 'store-new';
   adoptStoreId = ''; // findStore returns this (name-matched) when set
@@ -101,7 +98,7 @@ class CFFake {
       const list = this.adoptStoreId ? [{ uuid: this.adoptStoreId, name }] : [];
       return envelope(200, list);
     }
-    // script PUT / DELETE, store DELETE, and anything else.
+    // script PUT / DELETE, store DELETE, and anything else
     return envelope(200, null);
   };
 
@@ -109,8 +106,7 @@ class CFFake {
     return new Runtime({ ...cfg, fetch: this.fetch });
   }
 
-  // index is the position of the first call with this method whose path ends in
-  // suffix, or -1. Mirrors the Go fake's index helper.
+  // position of the first call with this method whose path ends in suffix, or -1.
   index(method: string, suffix: string): number {
     return this.calls.findIndex((c) => c.method === method && c.path.endsWith(suffix));
   }
@@ -142,8 +138,8 @@ interface AssetEntry {
   body: string;
 }
 
-// activation builds a next.js deploy, with a store already provisioned so
-// activation starts at the asset session. Cache seed and assets are optional.
+// builds a next.js deploy with a store already provisioned, so activation starts
+// at the asset session. Cache seed and assets are optional.
 function activation(opts: {
   seed?: SeedEntry[];
   assets?: AssetEntry[];
@@ -195,8 +191,6 @@ function activation(opts: {
   };
 }
 
-// ---- content type ----
-
 describe('contentType', () => {
   it('maps the web types a deployed site is made of', () => {
     const cases: [string, string][] = [
@@ -222,11 +216,9 @@ describe('contentType', () => {
   });
 });
 
-// ---- cfHash: the frozen derivation ----
-
 describe('cfHash', () => {
   it('is 32 hex chars of salted sha256 (matches the frozen vectors)', () => {
-    // Vectors from packages/contracts/testdata/vectors.json.
+    // vectors from packages/contracts/testdata/vectors.json
     expect(cfHash('', '')).toBe('e7ac0786668e0ff0f02b62bd04f45ff6');
     expect(cfHash('00000000000000000000000000000000', 'aa')).toBe(
       '2b3eb868a0062342629bbc0b23183d84',
@@ -235,8 +227,6 @@ describe('cfHash', () => {
     expect(cfHash('salt', 'ff')).toHaveLength(32);
   });
 });
-
-// ---- the ISR cache seed ----
 
 describe('seedCache', () => {
   it('writes keys verbatim, base64-flagged, to the configured namespace', async () => {
@@ -317,8 +307,6 @@ describe('seedCache', () => {
   });
 });
 
-// ---- bindings ----
-
 describe('bindings', () => {
   it('includes the IMAGES binding', () => {
     const rt = new Runtime(baseCfg);
@@ -347,8 +335,7 @@ describe('bindings', () => {
   });
 });
 
-// ---- the script PUT: the atomic flip ----
-
+// the script PUT is the atomic flip.
 describe('putScript', () => {
   async function metadataOf(fake: CFFake): Promise<Record<string, unknown>> {
     const call = fake.callFor('PUT', '/scripts/demo-abc');
@@ -398,8 +385,6 @@ describe('putScript', () => {
     expect(await mod.text()).toContain('env.ASSETS.fetch(request)');
   });
 });
-
-// ---- assets: salted manifest and base64 bucket upload ----
 
 describe('uploadAssets', () => {
   it('opens the session with a salted path->hash manifest', async () => {
@@ -454,8 +439,6 @@ describe('uploadAssets', () => {
     expect((metaObj['assets'] as Record<string, unknown>)['jwt']).toBe('completion-jwt');
   });
 });
-
-// ---- store create / adopt ----
 
 describe('createStore', () => {
   it('creates a D1 store when the app has none and reports the id', async () => {
@@ -512,8 +495,6 @@ describe('createStore', () => {
   });
 });
 
-// ---- delete: script then store, 404 as success ----
-
 describe('delete', () => {
   function app(storeId: string): RuntimeApp {
     return { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 'salt', storeId };
@@ -567,8 +548,6 @@ describe('delete', () => {
   });
 });
 
-// ---- transport: envelope unwrap and unreachable ----
-
 describe('transport', () => {
   it('surfaces an unreachable Cloudflare as a retryable unavailable error', async () => {
     const rt = new Runtime({
@@ -607,7 +586,7 @@ describe('transport', () => {
   });
 });
 
-// cfHash width sanity against a plain unsalted sha256 (documentation of intent).
+// cfHash is the salted 16-byte prefix of sha256(salt:digest), not the full digest.
 it('cfHash is the salted 16-byte prefix, not the full digest', () => {
   const digest = digestBytes(new TextEncoder().encode('x'));
   const full = createHash('sha256').update('salt:' + digest).digest('hex');

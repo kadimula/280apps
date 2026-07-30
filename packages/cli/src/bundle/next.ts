@@ -1,15 +1,6 @@
-// The Next.js path. Cloudflare cannot run Next.js directly, so a push runs two
-// pinned tools in the project and reads their output:
-//
-//  1. the OpenNext Cloudflare adapter, which turns .next/ into .open-next/ —
-//     a worker entry, a static asset tree, and a prerendered cache seed;
-//  2. wrangler's `deploy --dry-run`, which resolves .open-next/worker.js and
-//     the siblings it imports into ONE module, because the platform uploads a
-//     single main module and nothing else.
-//
-// Everything here is preflight: it either produces a bundle the platform can
-// certainly accept, or it fails with the exact thing to fix. Spec:
-// cli/internal/bundle/next.go. Go is normative, including the pinned versions.
+// The Next.js path: run the OpenNext adapter (.next/ into .open-next/), then
+// wrangler `deploy --dry-run` to resolve worker.js and its imports into the one
+// module the platform uploads. All preflight. Spec: next.go, normative incl pins.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -27,24 +18,21 @@ import {
 import type { Bundle } from './static.js';
 import { PreflightError, dirExists, fail, fileExists, walkAssets, walkFiles } from './walk.js';
 
-// The pinned toolchain and runtime. Changing any of these invalidates the
-// compatibility spike's results, so they move together or not at all.
+// Pinned toolchain and runtime. Changing any invalidates the compatibility
+// spike's results, so they move together or not at all.
 const adapterPkg = '@opennextjs/cloudflare';
 const adapterVersion = '1.20.2';
 const wranglerPkg = 'wrangler';
 const wranglerVersion = '4.113.0';
 const compatibilityDate = '2026-07-23';
 
-// compatibilityFlags is what the adapter's worker needs from workerd:
-// nodejs_compat for the Node built-ins the Next server uses, and
-// global_fetch_strictly_public because the c3 Next template sets it and the
-// spike's results only hold with it on.
+// What the adapter's worker needs from workerd: nodejs_compat for the Next
+// server's Node built-ins, and global_fetch_strictly_public because the c3 Next
+// template sets it and the spike's results only hold with it on.
 const compatibilityFlags = ['nodejs_compat', 'global_fetch_strictly_public'];
 
-// outputDirName is the adapter's build output, always at the project root.
 const outputDirName = '.open-next';
 
-// buildNext runs the adapter and wrangler, then assembles the manifest.
 export function buildNext(root: string): Bundle {
   requireNodeToolchain();
   requireNextBuild(root);
@@ -72,9 +60,7 @@ export function buildNext(root: string): Bundle {
   }
 }
 
-// requireNodeToolchain checks the two binaries a Next.js push shells out to.
-// Node runs the adapter and wrangler; npm is how the pinned versions get into
-// the project when it does not already carry them.
+// npm is how the pinned adapter/wrangler get into a project that lacks them.
 export function requireNodeToolchain(): void {
   for (const bin of ['node', 'npm']) {
     if (!hasBin(bin)) {
@@ -86,9 +72,8 @@ export function requireNodeToolchain(): void {
   }
 }
 
-// requireNextBuild refuses to guess at a missing or partial build. 280 never
-// runs `next build` itself: the build is the developer's, with their env and
-// their exit code, and silently re-running it would hide their failures.
+// 280 never runs `next build` itself: it is the developer's, with their env and
+// exit code, and silently re-running it would hide their failures.
 export function requireNextBuild(root: string): void {
   if (!fileExists(join(root, '.next', 'BUILD_ID'))) {
     fail(
@@ -96,9 +81,8 @@ export function requireNextBuild(root: string): void {
       'run npx next build, then run 280 push again',
     );
   }
-  // The adapter consumes the standalone tree, which `next build` only emits when
-  // the app's own config asks for it. Without this check the adapter dies
-  // mid-build with a raw ENOENT stack trace instead of a fix.
+  // The adapter needs the standalone tree, which `next build` only emits when the
+  // app config asks; without this check it dies mid-build with a raw ENOENT.
   if (!dirExists(join(root, '.next', 'standalone'))) {
     fail(
       'the .next build has no standalone output, which the deploy adapter requires',
@@ -107,11 +91,9 @@ export function requireNextBuild(root: string): void {
   }
 }
 
-// ensureAdapterConfig writes the two config files the adapter and wrangler read,
-// and only when they are missing. They land in the project root, not a temp dir:
-// open-next.config.ts imports @opennextjs/cloudflare by bare specifier and is
-// compiled from wherever it sits, so outside the project it cannot resolve.
-// Returns the files it created.
+// Writes the adapter/wrangler config files, only when missing, into the project
+// root (not a temp dir): open-next.config.ts imports the adapter by bare
+// specifier, so it can only resolve from inside the project. Returns files created.
 export function ensureAdapterConfig(root: string): string[] {
   const made: string[] = [];
   if (!findFirst(root, 'open-next.config.ts')) {
@@ -176,12 +158,9 @@ function findFirst(root: string, ...names: string[]): boolean {
   return names.some((n) => fileExists(join(root, n)));
 }
 
-// ensureAdapterInstalled makes the adapter and wrangler resolvable from the
-// project. They have to be *in* the project: open-next.config.ts imports the
-// adapter by bare specifier, so `npx --package <pinned>` cannot satisfy it.
-// `npm install --no-save` adds them to node_modules and leaves package.json and
-// package-lock.json byte-identical. A project that already ships either builds
-// with its own version.
+// Adapter and wrangler must be *in* the project (bare-specifier import), so
+// `npx --package` cannot satisfy them. `npm install --no-save` adds them to
+// node_modules leaving package.json/lock byte-identical.
 export function ensureAdapterInstalled(root: string): void {
   const want: string[] = [];
   if (!fileExists(adapterCLI(root))) {
@@ -204,8 +183,8 @@ export function ensureAdapterInstalled(root: string): void {
       'run npm install ' + want.join(' ') + ' in your project, then run 280 push again',
     );
   }
-  // npm can report success and still leave nothing usable (a workspace root, an
-  // ignore-scripts policy). Fail here rather than on a confusing exec error.
+  // npm can exit 0 yet leave nothing usable (workspace root, ignore-scripts):
+  // fail here rather than on a confusing exec error later.
   for (const p of [adapterCLI(root), wranglerCLI(root)]) {
     if (!fileExists(p)) {
       fail(
@@ -228,9 +207,8 @@ function wranglerCLI(root: string): string {
   return join(root, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
 }
 
-// runAdapterBuild converts .next into .open-next. --skipNextBuild is the whole
-// point: the developer's build already ran, and re-running it here would discard
-// their environment.
+// --skipNextBuild is the whole point: the developer's build already ran, and
+// re-running it here would discard their environment.
 export function runAdapterBuild(root: string): void {
   const { out, ok } = run(root, 'node', [adapterCLI(root), 'build', '--skipNextBuild']);
   if (!ok) {
@@ -241,8 +219,8 @@ export function runAdapterBuild(root: string): void {
   }
 }
 
-// runWranglerBundle resolves worker.js and its sibling imports into one module.
-// Dry run only: nothing is uploaded to Cloudflare and no credentials are used.
+// Dry run only: resolves worker.js and its imports into one module; nothing is
+// uploaded and no credentials are used.
 export function runWranglerBundle(root: string, outDir: string): void {
   const { out, ok } = run(root, 'node', [
     wranglerCLI(root),
@@ -259,11 +237,9 @@ export function runWranglerBundle(root: string, outDir: string): void {
   }
 }
 
-// readBundledWorker picks the one module the platform will upload. Sourcemaps are
-// ignored (the platform does not attach them) and wrangler's own README is
-// bookkeeping, not code. Anything else left over is a module the worker needs and
-// the platform cannot carry, so it is named and refused rather than dropped into
-// a runtime "module not found".
+// Picks the one module the platform uploads. Sourcemaps and wrangler's README are
+// skipped; any other leftover is a module the platform cannot carry, so it is
+// named and refused rather than left to a runtime "module not found".
 export function readBundledWorker(outDir: string): Uint8Array {
   let entries;
   try {
@@ -317,9 +293,8 @@ export function readBundledWorker(outDir: string): Uint8Array {
   }
 }
 
-// checkEnvelope applies the User Worker size limit, which Cloudflare measures on
-// the gzipped script. The manifest carries raw sizes, so this is the only place
-// in the CLI where the real check can happen: the bytes exist here.
+// Cloudflare measures the Worker size limit on the gzipped script. The manifest
+// carries raw sizes, so this is the only place the real check can run.
 export function checkEnvelope(worker: Uint8Array): void {
   let gz: Buffer;
   try {
@@ -333,8 +308,8 @@ export function checkEnvelope(worker: Uint8Array): void {
   envelopeError(worker.length, gz.length);
 }
 
-// envelopeError is the decision alone, so the limit's message is testable without
-// producing ten megabytes of incompressible bytes.
+// The decision alone, so the limit message is testable without ten megabytes of
+// incompressible bytes.
 export function envelopeError(raw: number, gz: number): void {
   if (gz <= MAX_WORKER_GZIP_BYTES) {
     return;
@@ -355,9 +330,8 @@ function mib(n: number): string {
   return (n / (1 << 20)).toFixed(1) + ' MiB';
 }
 
-// checkNativeModules refuses a build that carries a compiled Node addon. Workers
-// run V8 isolates, not Node, so a .node binary can never load; it would otherwise
-// surface as an opaque runtime crash on the first request.
+// Workers run V8 isolates, not Node, so a compiled .node addon can never load; it
+// would otherwise surface as an opaque runtime crash on the first request.
 export function checkNativeModules(dirs: string[]): void {
   const found: string[] = [];
   for (const dir of dirs) {
@@ -383,9 +357,8 @@ export function checkNativeModules(dirs: string[]): void {
   );
 }
 
-// nativeModuleOwner names the dependency an addon belongs to, which is the thing
-// the developer can act on. Falls back to the file when the addon is not under a
-// node_modules tree.
+// Names the dependency an addon belongs to (the actionable thing), falling back
+// to the file when it is not under a node_modules tree.
 function nativeModuleOwner(p: string): string {
   const parts = p.split(/[\\/]/);
   for (let i = parts.length - 1; i >= 0; i--) {
@@ -412,9 +385,8 @@ function dedupe(input: string[]): string[] {
   return out;
 }
 
-// nextBundle assembles the manifest from a finished .open-next tree plus the
-// bundled worker. Split from buildNext so the manifest's shape is testable
-// against a fixture, with no adapter and no network.
+// Split from buildNext so the manifest shape is testable against a fixture, with
+// no adapter and no network.
 export function nextBundle(outputDir: string, worker: Uint8Array): Bundle {
   const content = new Map<Digest, Uint8Array>();
 
@@ -445,22 +417,13 @@ export function nextBundle(outputDir: string, worker: Uint8Array): Bundle {
   };
 }
 
-// cachePrefix is the adapter's DEFAULT_PREFIX. 280 never sets
-// NEXT_INC_CACHE_KV_PREFIX, so the running worker derives the same prefix when it
-// reads these entries back.
+// The adapter's DEFAULT_PREFIX. 280 never sets NEXT_INC_CACHE_KV_PREFIX, so the
+// running worker derives the same prefix when it reads these entries back.
 const cachePrefix = 'incremental-cache';
 
-// walkCache maps the adapter's prerendered cache into the KV keys the platform
-// writes at activation. This mirrors the pinned adapter's populateCache exactly,
-// because the worker's read path derives keys the same way and a mismatch is
-// invisible: every ISR page would silently miss and re-render.
-//
-//	.open-next/cache/<buildId>/<key>.cache   → key "/<key>", type "cache"
-//	.open-next/cache/__fetch/<buildId>/<key> → key "/<key>", type "fetch"
-//	KV key = "<prefix>/<buildId>/<sha256hex(key)>.<type>", "/"+ runs collapsed
-//
-// Anything else under cache/ is a shape this pinned adapter does not produce, so
-// it is refused rather than guessed at.
+// Maps the adapter's prerendered cache into the KV keys the platform writes at
+// activation, mirroring the pinned adapter's populateCache exactly: a mismatch is
+// invisible, every ISR page would silently miss and re-render.
 export function walkCache(
   cacheDir: string,
   content: Map<Digest, Uint8Array>,
@@ -499,7 +462,6 @@ export function walkCache(
   return out;
 }
 
-// cacheKey turns one path under .open-next/cache into its KV key.
 export function cacheKey(rel: string): string {
   let route: string;
   let buildID: string;
@@ -545,11 +507,9 @@ function collapseSlashes(s: string): string {
   return s;
 }
 
-// slug is the default app name for a generated wrangler config: package.json
-// "name" slugified, else the project directory name slugified. Mirrors
-// detect.Slug / detect.Slugify (cli/internal/detect/detect.go). Kept local so the
-// bundle module has no dependency on W2's detect module; the value only names a
-// generated config file and is never part of the manifest.
+// Default app name for a generated wrangler config: package.json "name" else the
+// dir name, slugified. Kept local (no detect dependency); only names a generated
+// config file, never part of the manifest.
 function slug(root: string): string {
   const name = packageName(root);
   if (name) {
@@ -579,19 +539,14 @@ function slugify(s: string): string {
   return s === '' ? 'app' : s;
 }
 
-// needsShell is true only for npm on Windows, where it is an npm.cmd shim.
-// Node refuses to spawn a .cmd without shell:true (CVE-2024-27980), so that one
-// case runs through cmd.exe, which resolves the shim via PATHEXT. node is a
-// plain .exe and is spawned directly on every platform (no shell, so its script
-// path arguments never need quoting). The npm args this package passes carry no
-// spaces, so routing them through the shell is safe without extra quoting.
+// True only for npm on Windows (an npm.cmd shim): Node refuses to spawn a .cmd
+// without shell:true (CVE-2024-27980). node is a plain .exe, spawned directly.
 function needsShell(name: string): boolean {
   return process.platform === 'win32' && name === 'npm';
 }
 
-// run executes a command in the project and returns its combined output, which is
-// the only useful thing to show when a build tool fails. CI=1 keeps the adapter
-// from waiting on a prompt no agent will ever answer.
+// Returns combined output (the useful thing when a build tool fails). CI=1 keeps
+// the adapter from waiting on a prompt no agent will ever answer.
 function run(
   dir: string,
   name: string,
@@ -608,8 +563,7 @@ function run(
   return { out, ok };
 }
 
-// hasBin reports whether a binary is on PATH, the way exec.LookPath does for the
-// Go CLI. Spawning `--version` also exercises the .cmd shim resolution on Windows.
+// Whether a binary is on PATH; `--version` also exercises the Windows .cmd shim.
 function hasBin(name: string): boolean {
   const res = spawnSync(name, ['--version'], {
     stdio: 'ignore',
@@ -618,8 +572,7 @@ function hasBin(name: string): boolean {
   return !res.error && res.status === 0;
 }
 
-// tail returns the last n non-empty lines, which is where build tools put the
-// error. The whole log would bury it.
+// Last n non-empty lines, where build tools put the error; the whole log buries it.
 export function tail(s: string, n: number): string {
   const lines: string[] = [];
   for (const l of s.replaceAll('\r\n', '\n').split('\n')) {
@@ -635,8 +588,7 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// Re-export the pinned identifiers so tests and the manifest-diff harness assert
-// against one source of truth.
+// Re-exported so tests assert the pinned identifiers against one source of truth.
 export {
   adapterPkg,
   adapterVersion,

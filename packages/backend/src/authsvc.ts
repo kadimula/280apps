@@ -1,20 +1,17 @@
-// The browser-login half of the backend, the counterpart to deploysvc. It owns
-// the OIDC flow, the user store, and the session store; the HTTP transport in
-// api.ts is thin over it, doing only cookies and redirects. Clock, randomness,
-// and the identity providers are injected seams, so the whole flow runs
-// in-process against a fake provider in tests.
+// The browser-login half of the backend, counterpart to deploysvc: it owns the OIDC
+// flow, the user store, and the session store, with api.ts thin over it. Clock,
+// randomness, and providers are injected seams, so the flow runs in-process in tests.
 //
 // Sessions are opaque random tokens stored only as a hash, so there is no signing
-// secret to manage: a token is valid because its hash is in the table and the
-// row has not expired, and logging out is deleting the row.
+// secret: a token is valid because its unexpired hash is in the table, and logging
+// out is deleting the row.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { OidcProvider } from './auth/oidc.js';
 import type { Session, Store, User } from './seams.js';
 
-// AuthError is thrown for anything the flow refuses: an unknown provider, a bad
-// state, a rate-limited caller. api.ts renders it as a plain 400/429 rather than
-// a deploy-shaped error, since the audience here is a browser, not the CLI.
+// AuthError is thrown for anything the flow refuses. api.ts renders it as a plain
+// 400/429, since the audience here is a browser, not the CLI.
 export class AuthError extends Error {
   constructor(
     readonly status: number,
@@ -26,24 +23,21 @@ export class AuthError extends Error {
 }
 
 export interface AuthConfig {
-  // providers is keyed by name ("google"); the map is the whole registry, so a
-  // second provider is one more entry and nothing else.
+  // Keyed by name ("google"); the map is the whole provider registry.
   providers: Record<string, OidcProvider>;
-  // apiOrigin is this backend's own public origin, used to build the OIDC
-  // callback URL. It must match what the provider console has registered.
+  // This backend's own public origin, used to build the OIDC callback URL. Must
+  // match what the provider console has registered.
   apiOrigin: string;
-  // frontendOrigin is the only origin a post-login redirect may land on. It is
-  // the open-redirect whitelist the default guard enforces.
+  // The only origin a post-login redirect may land on: the open-redirect whitelist.
   frontendOrigin: string;
-  // resolveRedirect optionally overrides that guard. The gateway sets it (its
-  // valid destinations are the whole *.280apps.run space, not one origin); the
-  // control plane leaves it unset for the single-origin default below.
+  // Optionally overrides that guard: the gateway sets it (its valid destinations are
+  // the whole *.280apps.run space); the control plane leaves it unset for the default.
   resolveRedirect?: (raw: string) => string;
-  // cookieDomain scopes the session cookie. Empty is host-only (localhost dev);
-  // ".280apps.com" lets api and www share it in production.
+  // Scopes the session cookie. Empty is host-only (localhost dev); ".280apps.com"
+  // lets api and www share it in production.
   cookieDomain: string;
   sessionTtlSecs: number;
-  // rate is the login limiter, applied per client IP at the start of the flow.
+  // Login limiter, applied per client IP at the start of the flow.
   rate: { windowSecs: number; max: number };
   // Injected seams; defaulted for production.
   now?: () => number;
@@ -52,15 +46,14 @@ export interface AuthConfig {
 }
 
 // StartResult is what the transport needs to begin a login: where to send the
-// browser, and the state cookie to set so the callback can prove the flow is
-// this browser's.
+// browser, and the state cookie the callback checks to prove the flow is this one's.
 export interface StartResult {
   authUrl: string;
   stateCookie: string;
 }
 
-// CompleteResult is a finished login: the session token to set as a cookie and
-// the validated URL to send the browser back to.
+// CompleteResult is a finished login: the session token to set as a cookie and the
+// validated URL to send the browser back to.
 export interface CompleteResult {
   user: User;
   sessionToken: string;
@@ -95,16 +88,14 @@ export class Auth {
   }
 
   // safeRedirect confines a destination to the frontend origin. Public so the
-  // transport can vet a logout redirect through the same guard the login flow
-  // uses.
+  // transport can vet a logout redirect through the same guard the login flow uses.
   safeRedirect(raw: string): string {
     return this.resolveRedirect(raw);
   }
 
-  // start validates the request, rate-limits it, and returns the provider's
-  // authorization URL plus the state cookie the callback will check. The state
-  // cookie carries the validated redirect target, so the callback trusts a
-  // destination this browser was actually issued.
+  // start validates and rate-limits the request, returning the provider's auth URL
+  // plus a state cookie. The cookie carries the validated redirect target, so the
+  // callback trusts a destination this browser was actually issued.
   async start(providerName: string, rawRedirect: string, clientIp: string): Promise<StartResult> {
     const provider = this.provider(providerName);
 
@@ -125,8 +116,8 @@ export class Auth {
   }
 
   // complete verifies the callback belongs to a flow this browser started, trades
-  // the code for an identity, resolves it to a user (creating or linking as
-  // needed), and mints a session.
+  // the code for an identity, resolves it to a user (creating or linking), and mints
+  // a session.
   async complete(
     providerName: string,
     code: string,
@@ -174,12 +165,9 @@ export class Auth {
     await this.store.deleteSession(hashToken(sessionToken));
   }
 
-  // ---- helpers ----
-
-  // resolveUser maps an external identity onto a stable user. The order is what
-  // preserves accounts across the migration: an existing provider login wins,
-  // then a matching email (a migrated password user, or a first Google login for
-  // a known address) which gets the provider linked onto it, then a fresh user.
+  // resolveUser maps an external identity onto a stable user. The order preserves
+  // accounts across the migration: an existing provider login wins, then a matching
+  // email (which gets the provider linked onto it), then a fresh user.
   private async resolveUser(provider: string, identity: { subject: string; email: string; name: string; image: string }): Promise<User> {
     const email = identity.email.trim().toLowerCase();
 
@@ -216,11 +204,9 @@ export class Auth {
     return `${this.cfg.apiOrigin}/auth/${provider}/callback`;
   }
 
-  // resolveRedirect confines the post-login destination. When the config
-  // supplies its own guard (the gateway's *.280apps.run policy) it wins;
-  // otherwise the default confines to the single frontend origin: a bare path is
-  // resolved against it, a full URL must already be on it, anything else falls
-  // back to the dashboard. This is the open-redirect guard.
+  // The open-redirect guard. A config-supplied guard (the gateway's *.280apps.run
+  // policy) wins; otherwise a bare path resolves against the frontend origin, a full
+  // URL must already be on it, and anything else falls back to the dashboard.
   private resolveRedirect(raw: string): string {
     if (this.cfg.resolveRedirect !== undefined) return this.cfg.resolveRedirect(raw);
     const origin = this.cfg.frontendOrigin;

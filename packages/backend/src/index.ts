@@ -1,8 +1,5 @@
-// @280/backend: the TS platform (control plane). Exposes the deploy service,
-// the HTTP API v1 server, the observability middleware, the internal seams, and
-// the Worker's config/deps assembly. The deployable Worker entrypoint itself is
-// src/worker.ts (wrangler `main`), imported directly by the runtime rather than
-// through this library index.
+// @280/backend: the TS platform (control plane) library index. The deployable Worker
+// entrypoint is src/worker.ts (wrangler `main`), not this index.
 export * from './seams.js';
 export * from './deploysvc.js';
 export * from './activator.js';

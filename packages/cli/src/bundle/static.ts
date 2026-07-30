@@ -1,6 +1,5 @@
 // The static path: content-address every file under the resolved build root and
-// pair it with a placeholder serving stub for the Worker slot. Spec:
-// cli/internal/bundle/bundle.go (staticWorker, buildStatic, staticDir). Go is
+// pair it with a placeholder serving stub for the Worker slot. Spec: bundle.go,
 // normative.
 
 import { join } from 'node:path';
@@ -13,24 +12,20 @@ import {
 } from '@280/contracts';
 import { fail, fileExists, walkAssets } from './walk.js';
 
-// A Bundle is a manifest plus the bytes for every blob it names, keyed by
-// digest. Notes are things the build did to the project on disk that the caller
-// would otherwise only find in git status (bundle.go Bundle).
+// A manifest plus the bytes for every blob it names, keyed by digest. Notes are
+// things the build did to disk that the caller would otherwise only find in git.
 export interface Bundle {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
   notes: string[];
 }
 
-// staticWorker is a placeholder serving stub so a static bundle has a Worker
-// blob. Replaced by the platform-supplied static worker once it exists
-// (bundle.go staticWorker). The exact bytes are part of the manifest, so they
-// match Go's string verbatim.
+// Placeholder serving stub so a static bundle has a Worker blob. The exact bytes
+// are part of the manifest, so they match Go's string verbatim.
 export const staticWorker: Uint8Array = Buffer.from(
   '// 280 static serving stub v0\n',
 );
 
-// buildStatic content-addresses every file under the resolved static root.
 export function buildStatic(root: string): Bundle {
   const dir = staticDir(root);
   const content = new Map<Digest, Uint8Array>();
@@ -66,9 +61,9 @@ export function buildStatic(root: string): Bundle {
   };
 }
 
-// staticDir resolves which directory holds the built static site: root itself
-// when it has an index.html, else the first conventional build dir that does
-// (bundle.go staticDir). The order — dist, build, out, public — is the contract.
+// Resolves which directory holds the built site: root when it has an index.html,
+// else the first conventional build dir that does. Order dist, build, out, public
+// is the contract.
 export function staticDir(root: string): string {
   if (fileExists(join(root, 'index.html'))) {
     return root;

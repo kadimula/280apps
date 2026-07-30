@@ -1,17 +1,13 @@
-// jsonfile is the safe read-modify-write primitive every agent-config merge is
-// built on. The named risk for `280 setup` is corrupting a config file
-// (settings.json etc.), so the contract here is strict: parse the existing file
-// as-is, hand the caller a mutable object, and write it back atomically (temp
-// file + rename) with a trailing newline. A malformed existing file is a hard
-// error, never a silent overwrite.
+// Safe read-modify-write primitive for agent-config merges: parse the file as-is,
+// hand back a mutable object, write atomically (temp file + rename). A malformed
+// existing file is a hard error, never a silent overwrite.
 
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// readObject loads a JSON object from p. A missing file yields {} (the caller is
-// creating it); a present but non-object or malformed file throws so a merge
-// never clobbers content it failed to understand.
+// Missing file yields {}; a non-object or malformed file throws so a merge never
+// clobbers content it failed to understand.
 export function readObject(p: string): Record<string, unknown> {
   let raw: string;
   try {
@@ -33,14 +29,11 @@ export function readObject(p: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-// writeObject serializes obj as pretty JSON and replaces p atomically, creating
-// parent directories as needed. The rename means a crash mid-write can never
-// leave a truncated config.
+// Atomic replace so a crash mid-write can never leave a truncated config.
 export function writeObject(p: string, obj: unknown): void {
   writeAtomic(p, JSON.stringify(obj, null, 2) + '\n');
 }
 
-// writeAtomic writes body to p via a sibling temp file and rename.
 export function writeAtomic(p: string, body: string): void {
   const dir = path.dirname(p);
   fs.mkdirSync(dir, { recursive: true });

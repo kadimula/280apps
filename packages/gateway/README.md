@@ -19,11 +19,12 @@ Per request the gateway makes four moves, each a named seam:
    neither.
 2. **Resolve the session** — the control plane's `Auth` service (reused), over a
    cookie scoped to `.280apps.run`. No session → bounce through OIDC.
-3. **Check access** (`access.ts`) — `AllowAllAccess` today; the grants check
-   slots in here (see Seams).
+3. **Check access** (`access.ts`) — `GrantsAccess` reads the flat grants table
+   (design §5.4): a viewer opens an app only with a grant naming them by email or
+   covering their org by domain. No grant is a hard 403, never proxied.
 4. **Mint identity + proxy** — sign a short-lived header for this app host, strip
-   any client-supplied `x-280-*` headers, forward to the upstream
-   (`StubUpstream` today).
+   any client-supplied `x-280-*` headers, and proxy to the app's running
+   Cloudflare Container (`ContainerUpstream`), addressed by its script name.
 
 The OIDC handshake lives on one fixed host (`auth.280apps.run`) because an IdP
 `redirect_uri` must be a registered exact URL, and `*.280apps.run` has
@@ -37,7 +38,7 @@ viewer → renewals.280apps.run          (no session)
        ← 302 IdP consent
        → auth.280apps.run/auth/<provider>/callback   (sets 280_session on .280apps.run)
        ← 302 renewals.280apps.run
-       → renewals.280apps.run          (session ✓) → [access] → X-280-Identity → upstream
+       → renewals.280apps.run          (session ✓) → [grant?] → X-280-Identity → container
 ```
 
 ## Sign-in providers
@@ -96,15 +97,19 @@ Entra's stable tenant authority is the `tid` GUID; carrying it is a follow-up
 that needs `OidcIdentity` to surface `tid` — a claim addition, not a format
 change.
 
-## Seams (where the trailing work slots in)
+## App access and the proxy
 
-- **App-access check** (`access.ts`) — `AllowAllAccess` passes every
-  authenticated viewer. Swap it for a grants-backed `AccessCheck` (task
-  `280-p2-gateway`); nothing else on the path moves.
-- **Upstream** (`upstream.ts`) — `StubUpstream` echoes the request. The real
-  target is the app container (design §04) or, on the WfP substrate, the
-  dispatch-namespace binding. Implement one more `Upstream`; the gateway is
-  unchanged.
+- **App-access check** (`access.ts`) — `GrantsAccess` reads the flat grants table
+  through the `Store` seam: `appByScript` resolves the host label to an app id,
+  then a grant lookup on the viewer's email and their `domain:<org>` decides. Any
+  match allows; none is a hard deny, and a missing app denies identically so app
+  existence is not probeable.
+- **Upstream** (`upstream.ts`) — `ContainerUpstream` proxies the allowed,
+  identity-stamped request to the app's running Cloudflare Container. The
+  container is reached through an `AppContainers` binding (`deps.ts`
+  `NamespaceContainers`: the `App280Container` Durable Object namespace addressed
+  by script name); the exact Cloudflare binding is a deploy concern (see
+  `wrangler.jsonc`), so the proxy stays testable against a fake container.
 
 ## Deploy
 

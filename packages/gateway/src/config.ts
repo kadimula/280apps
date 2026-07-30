@@ -4,6 +4,11 @@ export interface Env {
   // Shares the control plane's Postgres (users/sessions/oauth) via Hyperdrive.
   HYPERDRIVE: Hyperdrive;
 
+  // The app container substrate: a Durable Object namespace of App280Container,
+  // one instance per app script. The gateway proxies an allowed request to it.
+  // Optional so the Worker still boots before the container binding is wired.
+  APP_CONTAINER?: DurableObjectNamespace;
+
   TWO80_DB_SCHEMA?: string;
   TWO80_APP_DOMAIN?: string;
   TWO80_APP_HOST_SUFFIX?: string;

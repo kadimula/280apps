@@ -109,10 +109,46 @@ describe('DockerBuilder (injected exec)', () => {
 
     expect(res.imageRef).toBe('registry.cloudflare.com/acct1/demo-abc:dep_1');
     const cmds = calls.map((c) => `${c[0]} ${c[1]}`);
-    expect(cmds).toEqual(['docker build', 'docker login', 'docker push', 'wrangler containers']);
+    // The roll is `wrangler deploy` (report §7: `wrangler containers apply` never
+    // existed and no-oped), not `wrangler containers`.
+    expect(cmds).toEqual(['docker build', 'docker login', 'docker push', 'wrangler deploy']);
+    const rollCall = calls.find((c) => c[0] === 'wrangler')!;
+    expect(rollCall).toEqual(['wrangler', 'deploy', '--config', 'wrangler.roll.json', '--containers-rollout', 'immediate']);
     // The build ran in the materialized context, with the app's file present.
     const buildCall = calls.find((c) => c[0] === 'docker' && c[1] === 'build')!;
     expect(buildCall).toContain('registry.cloudflare.com/acct1/demo-abc:dep_1');
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('rolls with a generated wrangler config that pins the pre-built registry image', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    // Read the generated roll config during `wrangler deploy`, before rollout's
+    // finally removes the context, so no local Docker build happens on the roll.
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return { code: 0, output: '' };
+    };
+    const builder = new DockerBuilder({ accountId: 'acct1', apiToken: 'tok', workdir, workerEntry: 'harness.js', exec });
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    await builder.rollout({
+      app: act.app,
+      deployId: act.deployId,
+      build: act.manifest.build,
+      files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+    });
+    expect(rollConfig.name).toBe('demo-abc');
+    expect(rollConfig.main).toBe('harness.js');
+    expect(rollConfig.containers).toEqual([
+      {
+        class_name: 'App280Container',
+        image: 'registry.cloudflare.com/acct1/demo-abc:dep_1',
+        instance_type: 'dev',
+        max_instances: 1,
+      },
+    ]);
     await rm(workdir, { recursive: true, force: true });
   });
 

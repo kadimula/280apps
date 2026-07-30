@@ -1,13 +1,10 @@
-// push runs the deploy loop against a deploy.Port. It is the CLI's one stateful
-// algorithm, kept separate from command wiring so it is fully testable against a
-// Port double with no network.
-//
-// The whole strategy is the seam's contract restated: Sync (begin/resume),
-// upload whatever Sync says is missing, poll Status to terminal. Every step is
-// idempotent, so on any transient error the loop simply runs again from Sync.
-// The one hard ordering rule: persist the resolved appId before uploading any
-// blob, so a crash mid-push never creates a second app on the retry.
-// Spec: cli/internal/push/push.go. Go is normative.
+// push runs the deploy loop against a deploy.Port: the CLI's one stateful algorithm,
+// kept separate from command wiring so it is testable against a Port double.
+// Strategy: Sync (begin/resume), upload whatever Sync says is missing, poll Status
+// to terminal. Every step is idempotent, so any transient error just re-runs from
+// Sync. Hard ordering rule: persist the resolved appId before uploading any blob,
+// so a crash mid-push never creates a second app on the retry.
+// Spec: cli/internal/push/push.go; Go is normative.
 
 import { Readable } from 'node:stream';
 import {
@@ -24,9 +21,8 @@ import {
 } from '@280/contracts';
 import * as config from './config.js';
 
-// Bundle is what the bundler (W3) produces and push consumes: the manifest to
-// sync and the blob bytes to upload, keyed by digest. Defined here so push
-// depends on the shape, not on the bundler.
+// Bundle is what the bundler produces and push consumes: the manifest to sync and
+// the blob bytes to upload, keyed by digest.
 export interface Bundle {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
@@ -94,9 +90,8 @@ export async function run(
     manifest: b.manifest,
   };
 
-  // The run's resolution is the first Sync's: whether this push created, linked,
-  // or reused the app. Later re-Syncs (after uploads) always report "existing",
-  // so they must not overwrite it.
+  // The run's resolution is the first Sync's (created/linked/reused). Later
+  // re-Syncs report "existing", so they must not overwrite it.
   let resolution: string = Resolution.Existing;
   let resolved = false;
 
@@ -108,7 +103,7 @@ export async function run(
     }
 
     // Persist the app identity the instant the server assigns it, before any
-    // upload. This is the duplicate-app guard.
+    // upload: the duplicate-app guard.
     if (res.app.id !== '' && cfg.appId !== res.app.id) {
       cfg.appId = res.app.id;
       req.identity.appId = res.app.id;
@@ -148,8 +143,8 @@ async function uploadMissing(
   for (let i = 0; i < missing.length; i++) {
     const dig = missing[i]!;
     const data = b.content.get(dig) ?? new Uint8Array();
-    // Sequential uploads: one blob at a time, each idempotent and retried only
-    // on retryable errors (spec: push.go uploadMissing).
+    // Sequential, one blob at a time, each idempotent and retried only on
+    // retryable errors.
     await retry(opts, () => port.putBlob(appId, dig, data.length, Readable.from([Buffer.from(data)])));
     ev.onUpload?.(i + 1, total);
   }
@@ -187,8 +182,8 @@ async function retry<T>(opts: Options, fn: () => Promise<T>): Promise<T> {
   throw last;
 }
 
-// backoffFor doubles the base delay per attempt, capped at 5s (spec: push.go
-// backoffFor). A zero base means no delay, which the test suite runs on.
+// backoffFor doubles the base delay per attempt, capped at 5s. A zero base means
+// no delay, which the test suite runs on.
 function backoffFor(opts: Options, attempt: number): number {
   const base = opts.backoffMs ?? 0;
   if (base === 0) return 0;

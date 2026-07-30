@@ -1,23 +1,19 @@
 // Deploy & auth wire types, their zod schemas, and the two content derivations
-// Go co-locates in the contracts/deploy package (DigestBytes, CanonicalDigest).
-// Spec: contracts/deploy/deploy.go, contracts/auth/auth.go. Go is normative.
-//
-// Parsing mirrors Go encoding/json: unknown fields are preserved (passthrough)
-// and absent/null optionals become the Go zero value. A strict schema that
-// rejects extra fields would break old clients (plan §1).
+// (DigestBytes, CanonicalDigest). Parsing mirrors Go encoding/json: unknown fields
+// preserved, absent/null optionals become the Go zero value (a strict schema would
+// break old clients). Spec: contracts/deploy/deploy.go, contracts/auth/auth.go (normative).
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { errorSchema } from './errors.js';
 
-// MaxWorkerGzipBytes mirrors the User Worker envelope limit (deploy.go:34).
+// The User Worker envelope limit.
 export const MAX_WORKER_GZIP_BYTES = 10 << 20; // 10 MiB
 
-// Digest is a hex-encoded SHA-256 of blob content (deploy.go:39).
+// Hex-encoded SHA-256 of blob content.
 export type Digest = string;
 
-// ---- zero-value helpers: absent/null => Go zero value ----
-
+// zero-value helpers: absent/null => Go zero value
 const str = (d = '') =>
   z
     .string()
@@ -38,8 +34,6 @@ const arr = <T extends z.ZodTypeAny>(el: T) =>
     .array(el)
     .nullish()
     .transform((v) => v ?? ([] as z.infer<T>[]));
-
-// ---- deploy types (deploy.go) ----
 
 export const identitySchema = z
   .object({
@@ -76,7 +70,7 @@ export const manifestSchema = z
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
 
-// State (deploy.go:129-134). Callers treat unknown states as "in progress".
+// Callers treat unknown states as "in progress".
 export const State = {
   Uploading: 'uploading',
   Activating: 'activating',
@@ -89,7 +83,6 @@ export function stateTerminal(s: string): boolean {
   return s === State.Live || s === State.Failed;
 }
 
-// Resolution (deploy.go:144-148).
 export const Resolution = {
   Existing: 'existing',
   Created: 'created',
@@ -151,8 +144,6 @@ export const deployStatusSchema = z
   .passthrough();
 export type DeployStatus = z.infer<typeof deployStatusSchema>;
 
-// ---- auth types (auth.go) ----
-
 export const deviceCodeResponseSchema = z
   .object({
     deviceCode: str(),
@@ -174,9 +165,7 @@ export const tokenResponseSchema = z
   .passthrough();
 export type TokenResponse = z.infer<typeof tokenResponseSchema>;
 
-// The approving user's identity is no longer carried in the body: it comes from
-// the browser session the backend now owns. The web surface sends only the code
-// the human typed.
+// The approving user comes from the browser session, so the body carries only the code the human typed.
 export const approveRequestSchema = z
   .object({ userCode: str() })
   .passthrough();
@@ -197,19 +186,14 @@ export const appsResponseSchema = z
   .passthrough();
 export type AppsResponse = z.infer<typeof appsResponseSchema>;
 
-// Like approve: the owner is the session, so only the typed confirmation rides
-// in the body. Which app is in the path.
+// Like approve: the owner is the session, so only the typed confirmation rides in the body; the app is in the path.
 export const deleteAppRequestSchema = z
   .object({ confirm: str() })
   .passthrough();
 export type DeleteAppRequest = z.infer<typeof deleteAppRequestSchema>;
 
-// ---- browser session types ----
-//
-// The signed-in user the backend renders for the web surface. Its id is the
-// subject the platform keys accounts on, so a user carries their apps across a
-// re-login. Loose like every other wire type here: absent optionals default to
-// the empty string.
+// The signed-in user the backend renders for the web surface. Its id is the subject
+// the platform keys accounts on, so a user carries their apps across a re-login.
 export const userSchema = z
   .object({
     id: str(),
@@ -220,22 +204,19 @@ export const userSchema = z
   .passthrough();
 export type User = z.infer<typeof userSchema>;
 
-// meResponseSchema is what GET /auth/me returns: the current user, or a null
-// user when the request carries no valid session (the frontend renders the
-// signed-out state from that, without a database of its own).
+// What GET /auth/me returns: the current user, or a null user when the request
+// carries no valid session (the frontend renders the signed-out state from that).
 export const meResponseSchema = z
   .object({ user: userSchema.nullish().transform((v) => v ?? null) })
   .passthrough();
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
-// ---- content derivations (deploy.go DigestBytes / CanonicalDigest) ----
-
-// digestBytes is the hex SHA-256 of raw content (deploy.go:42).
+// The hex SHA-256 of raw content.
 export function digestBytes(data: Uint8Array): Digest {
   return createHash('sha256').update(data).digest('hex');
 }
 
-// byteCompare orders two strings by their UTF-8 bytes, matching Go's string <.
+// Orders two strings by their UTF-8 bytes, matching Go's string <.
 function byteCompare(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }
@@ -244,12 +225,8 @@ function sortedByPath(items: BlobInfo[]): BlobInfo[] {
   return [...items].sort((x, y) => byteCompare(x.path, y.path));
 }
 
-// canonicalDigest is the manifest's content digest (deploy.go:95). Each list
-// hashes in its own labeled section, sorted by path, so the digest is
-// independent of order and no entry can move between lists without changing it.
-//
-// Size is a Go int64 printed with %d; the manifests this contract carries hold
-// small integer sizes, so String(size) reproduces %d exactly.
+// The manifest's content digest. Each list hashes in its own labeled section,
+// sorted by path, so the digest is order-independent and no entry can move between lists unnoticed.
 export function canonicalDigest(m: Manifest): Digest {
   const h = createHash('sha256');
   h.update(`kind:${m.kind}\nworker:${m.worker.digest}:${m.worker.size}\n`);
@@ -262,8 +239,7 @@ export function canonicalDigest(m: Manifest): Digest {
   return h.digest('hex');
 }
 
-// manifestBlobs returns every blob a manifest names: worker, then assets, then
-// cache (deploy.go:115). The order is stable; callers derive Missing from it.
+// Every blob a manifest names, in stable order (worker, assets, cache); callers derive Missing from it.
 export function manifestBlobs(m: Manifest): BlobInfo[] {
   return [m.worker, ...m.assets, ...m.cache];
 }

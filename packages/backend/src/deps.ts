@@ -1,10 +1,7 @@
-// Request-scoped dependency construction: the Worker's assembly point, the
-// counterpart to the deleted Node bootstrap. buildRequestDeps turns one Env into
-// the per-request I/O container the deps middleware puts on the context — a
-// Platform over a lazily-connected pg client and the R2 blob store, the auth
-// service, and the request-scoped config the handlers read. Nothing here is an
-// isolate singleton: per-app activation serialization now lives in the
-// AppActivator Durable Object, reached through DurableObjectActivator.
+// Request-scoped dependency construction: the Worker's assembly point.
+// buildRequestDeps turns one Env into the per-request I/O container the deps
+// middleware puts on the context. Nothing here is an isolate singleton; per-app
+// activation serialization lives in the AppActivator Durable Object.
 
 import { Platform } from './deploysvc.js';
 import { DurableObjectActivator } from './activator.js';
@@ -17,13 +14,10 @@ import type { ExpiryCounts, Runtime, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
 
-// buildRequestDeps constructs the request-scoped I/O container from Env. The pg
-// client is lazy (connects on the first statement) and closed after the response
-// via the returned close(); the R2 store and auth are cheap plain objects around
-// it. The runtime is not built here — activation runs in the AppActivator Durable
-// Object, which builds its own runtime from the same Env; the request path only
-// hands the object a deploy to activate (DurableObjectActivator). This is called
-// once per request by the deps middleware.
+// buildRequestDeps constructs the request-scoped I/O container from Env, once per
+// request. The pg client is lazy and closed after the response via close(). No
+// runtime is built here: activation runs in the AppActivator Durable Object, which
+// builds its own from the same Env; the request path only hands it a deploy.
 export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
   const config = readConfig(env);
 
@@ -49,10 +43,8 @@ export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
   };
 }
 
-// selectRuntime picks where apps run. Misconfiguration is a request failure
-// rather than a degraded mode: a platform that accepts pushes and hosts nothing
-// is the one outcome with no honest error message for the agent. (Reads config,
-// not process.env; otherwise verbatim from the deleted main.ts.)
+// selectRuntime picks where apps run. Misconfiguration throws rather than degrading:
+// a platform that accepts pushes and hosts nothing has no honest error for the agent.
 export function selectRuntime(config: Config, log: Logger): Runtime {
   if (config.runtime === 'memory') {
     log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
@@ -80,10 +72,9 @@ export function selectRuntime(config: Config, log: Logger): Runtime {
   });
 }
 
-// buildAuth wires the browser-login flow, or returns undefined when no provider
-// is configured. Undefined is not fatal: a memory-runtime dev loop with no
-// Google credentials still serves the deploy API. But the web surface (login,
-// the dashboard, activate) is inert without it, so it is called out.
+// buildAuth wires the browser-login flow, or returns undefined when no provider is
+// configured. Undefined is not fatal (the deploy API still serves), but the web
+// surface is inert without it, so it is called out.
 export function buildAuth(store: Store, config: Config, log: Logger): Auth | undefined {
   const providers: Record<string, OidcProvider> = {};
   if (config.google.clientId !== '' && config.google.clientSecret !== '') {
@@ -110,9 +101,9 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
   });
 }
 
-// sweepExpired is the scheduled cleanup's core, factored out of the Worker so it
-// is testable against any Store: delete the expired sessions, device codes, and
-// lapsed login-rate windows, and log the counts. Invisible on the wire.
+// sweepExpired is the scheduled cleanup's core, factored out of the Worker so it is
+// testable against any Store: delete expired sessions, device codes, and lapsed
+// login-rate windows, and log the counts.
 export async function sweepExpired(store: Store, log: Logger, now: number): Promise<ExpiryCounts> {
   const counts = await store.deleteExpired(now);
   log.info('scheduled cleanup', {

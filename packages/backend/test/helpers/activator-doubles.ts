@@ -1,14 +1,14 @@
-// Test doubles for the activation suites (both the node ActivatorCore tests and
-// the Miniflare AppActivator DO tests): a store that logs the transition calls in
-// order, and a runtime whose activations can be made to fail a set number of times
-// or block on a gate. Pure JS, so both node and workerd can import them.
+// Test doubles for the activation suites (node ActivatorCore and Miniflare
+// AppActivator DO): a store that logs its transition calls in order, and a
+// runtime whose activations can be made to fail N times or block on a gate. Pure
+// JS, so both node and workerd can import them.
 
 import type { DeployError } from '@280/contracts';
 import { MemoryStore } from './memory-store.js';
 import type { Activation, Runtime, RuntimeApp, RuntimeResult } from '../../src/seams.js';
 
-// InstrumentedStore records the order of the deploy-transition calls so a test can
-// assert, e.g., that the store id is persisted before the deploy is marked live.
+// records the order of deploy-transition calls, so a test can assert e.g. that
+// the store id is persisted before the deploy is marked live.
 export class InstrumentedStore extends MemoryStore {
   readonly calls: string[] = [];
 
@@ -42,10 +42,10 @@ export class InstrumentedStore extends MemoryStore {
   }
 }
 
-// TestRuntime is a controllable runtime: it can be told to fail its next N
-// activations (simulating a substrate that keeps rejecting) and to block each
-// activation on a manually released gate (to hold an activation mid-flight while a
-// delete is attempted). It records activations and deletes in order.
+// A controllable runtime: it can be told to fail its next N activations (a
+// substrate that keeps rejecting) and to block each activation on a manually
+// released gate (to hold one mid-flight while a delete is attempted). It records
+// activations and deletes in order.
 export class TestRuntime implements Runtime {
   activations = 0;
   readonly order: string[] = [];
@@ -56,19 +56,18 @@ export class TestRuntime implements Runtime {
   private deleteError: Error | null = null;
   private gate: { promise: Promise<void>; release: () => void } | null = null;
 
-  // failNextN makes the next n activations throw before doing any work.
+  // the next n activations throw before doing any work.
   failNextN(n: number): void {
     this.failUntil = this.activations + n;
   }
 
-  // failDeleteWith makes delete throw, simulating a substrate that would not let
-  // go of the script.
+  // delete throws, simulating a substrate that would not let go of the script.
   failDeleteWith(err: Error): void {
     this.deleteError = err;
   }
 
-  // openGate holds every subsequent activation after it records its start, until
-  // releaseGate is called. Used to keep an activation mid-flight.
+  // holds every subsequent activation after it records its start, until
+  // releaseGate; used to keep an activation mid-flight.
   openGate(): void {
     let release!: () => void;
     const promise = new Promise<void>((r) => {
@@ -95,7 +94,7 @@ export class TestRuntime implements Runtime {
       this.order.push(`activate:fail:${act.deployId}`);
       throw new Error('substrate rejected the deploy');
     }
-    // Read the worker the way a real runtime would, so a missing blob fails here.
+    // read the worker the way a real runtime would, so a missing blob fails here
     await act.asset(act.manifest.worker.digest);
     const out: RuntimeResult = { storeId: '' };
     if (act.app.storeId === '') {

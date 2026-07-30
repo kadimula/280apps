@@ -1,8 +1,5 @@
-// W9 acceptance: install / repair / no-op on fixture configs for all three
-// agents (Claude Code, Codex, OpenCode), plus the skill generator and its
-// --check staleness gate. The named risk for `280 setup` is corrupting a config
-// file, so the merge tests deliberately start from fixtures that already carry
-// unrelated user content and assert it survives untouched.
+// install / repair / no-op across Claude Code, Codex, OpenCode plus the skill
+// generator; merge tests assert pre-existing user config survives untouched.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -37,16 +34,14 @@ function write(root: string, rel: string, body: string): void {
 }
 
 describe('hookcmd.resolveHookCommand', () => {
-  // A probe where the first `280` on PATH resolves to the running executable.
   function probe(map: Record<string, string>, files: string[]): BinProbe {
     return {
       realpath: (p) => map[p] ?? p,
       isFile: (p) => files.includes(p),
     };
   }
-  // Build paths and PATH strings through node's path module so the tests run on
-  // Windows (`;` delimiter, `\` join) as well as POSIX. resolveHookCommand joins
-  // candidates with path.join, so the probe keys must match that.
+  // Build paths/PATH through node's path module so tests run on Windows and
+  // POSIX; resolveHookCommand joins with path.join, so probe keys must match.
   const bin = path.resolve('/opt/two80/dist/bin.js');
   const binDir = path.resolve('/usr/local/bin');
   const candidate = path.join(binDir, '280');
@@ -124,10 +119,9 @@ describe('claude install', () => {
     const r = claude.install(root, CMD);
     expect(r.action).toBe('installed');
     const obj = JSON.parse(read(root, claude.FILE));
-    expect(obj.model).toBe('opus'); // untouched
-    expect(obj.$schema).toContain('schemastore'); // untouched
-    expect(obj.hooks.PreToolUse[0].hooks[0].command).toBe('my-linter'); // untouched
-    // The user's own SessionStart entry survives; ours is appended.
+    expect(obj.model).toBe('opus');
+    expect(obj.$schema).toContain('schemastore');
+    expect(obj.hooks.PreToolUse[0].hooks[0].command).toBe('my-linter');
     const groups = obj.hooks.SessionStart as Array<{ hooks: Array<{ command: string }> }>;
     const cmds = groups.flatMap((g) => g.hooks.map((h) => h.command));
     expect(cmds).toContain('echo hi');

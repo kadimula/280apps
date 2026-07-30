@@ -1,8 +1,8 @@
-// Test harness: builds a Platform on the real runtime (W6 MemoryRuntime) and the
-// real filesystem blob store (W4), with the real Postgres store when
-// TEST_DATABASE_URL is set and an in-memory store double otherwise. In-process
-// tests use the Service (Port) directly; transport tests go through the router
-// via app.request. Mirrors platform/conformance_test.go's newPlatform.
+// Test harness: builds a Platform on the real MemoryRuntime and filesystem blob
+// store, with the real Postgres store when TEST_DATABASE_URL is set and an
+// in-memory store double otherwise. In-process tests use the Service (Port)
+// directly; transport tests go through the router via app.request. Mirrors
+// platform/conformance_test.go's newPlatform.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,9 +38,8 @@ export interface Harness {
   cleanup: () => Promise<void>;
 }
 
-// newPlatform builds an empty platform. Each call is a fresh account's worth of
-// infrastructure: a fresh Postgres schema (or store double), a fresh blob
-// directory, and a fresh in-memory runtime.
+// builds an empty platform: a fresh Postgres schema (or store double), a fresh
+// blob directory, and a fresh in-memory runtime per call.
 export async function newPlatform(opts: { appDomain?: string; hostSuffix?: string } = {}): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -58,9 +57,9 @@ export async function newPlatform(opts: { appDomain?: string; hostSuffix?: strin
   const blobs = await openBlobStore(dir);
 
   const runtime = new MemoryRuntime();
-  // The tests drive the Service directly and expect a deploy to be live the moment
-  // its last blob lands, so the in-process activator runs activation inline (the
-  // single-isolate equivalent of production's AppActivator Durable Object).
+  // tests expect a deploy live the moment its last blob lands, so the in-process
+  // activator runs activation inline (the single-isolate equivalent of
+  // production's AppActivator Durable Object).
   const activator = new InProcessActivator({ store, blobs, runtime });
   const platform = new Platform({
     store,
@@ -80,15 +79,15 @@ export async function newPlatform(opts: { appDomain?: string; hostSuffix?: strin
   };
 }
 
-// portFor returns a Service scoped to an account, creating the account first.
+// returns a Service scoped to an account, creating the account first.
 export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Service> {
   await h.store.createAccount({ id: accountId, subject: '' });
   return h.platform.for(accountId);
 }
 
-// TestServerOpts is the test-facing surface: the per-request config a case wants
-// on the deps container, plus an optional shared harness and access logger. The
-// new Server takes a buildDeps closure, not these fields; testDeps wraps them.
+// The test-facing surface: per-request config a case wants on the deps container,
+// plus an optional shared harness and access logger. Server takes a buildDeps
+// closure, not these fields; testDeps wraps them.
 export interface TestServerOpts {
   harness?: Harness;
   auth?: Auth;
@@ -98,10 +97,9 @@ export interface TestServerOpts {
   logger?: Logger;
 }
 
-// testDeps returns the request-scoped deps a test drives the router with. The
-// harness store is shared across requests and torn down once, so there is no
-// per-request close(): the production close (ending the pg client) has no
-// analogue here.
+// the request-scoped deps a test drives the router with. The harness store is
+// shared and torn down once, so there is no per-request close() (production's
+// pg-client close has no analogue here).
 export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' | 'logger'> = {}): RequestDeps {
   return {
     platform: harness.platform,
@@ -121,7 +119,7 @@ export async function newServer(
   return { server, app: server.handler(), harness };
 }
 
-// testManifest is a well-formed minimal bundle whose only blob is the worker.
+// a well-formed minimal bundle whose only blob is the worker.
 export function testManifest(content = 'worker'): { manifest: Manifest; worker: Uint8Array; digest: Digest } {
   const worker = new TextEncoder().encode(content);
   const digest = digestBytes(worker);
@@ -134,8 +132,7 @@ export function testManifest(content = 'worker'): { manifest: Manifest; worker: 
   return { manifest, worker, digest };
 }
 
-// ---- HTTP client over the hono app (mirrors deployhttp) ----
-
+// HTTP client over the hono app (mirrors deployhttp).
 export class HttpClient {
   constructor(
     private readonly app: Hono<HonoEnv>,
@@ -182,8 +179,8 @@ export class HttpClient {
   }
 }
 
-// parse returns the decoded success body or throws the seam's error, the way a
-// real client does: parse the body, fall back to nothing.
+// returns the decoded success body or throws the seam's error, the way a real
+// client does.
 async function parse(res: Response): Promise<unknown> {
   const text = await res.text();
   const body = text === '' ? {} : JSON.parse(text);
@@ -198,8 +195,8 @@ async function parse(res: Response): Promise<unknown> {
   });
 }
 
-// capturingLogger records structured records for assertions (the JSON access log
-// in Go's observe_test).
+// records structured log records for assertions (the JSON access log in Go's
+// observe_test).
 export interface Captured {
   level: 'INFO' | 'WARN' | 'ERROR';
   msg: string;
@@ -216,7 +213,6 @@ export function capturingLogger(): { logger: Logger; records: Captured[] } {
   };
 }
 
-// requests keeps only the access lines.
 export function requests(records: Captured[]): Captured[] {
   return records.filter((r) => r.msg === 'request');
 }
@@ -225,8 +221,8 @@ export function bytesOf(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-// bodyOf wraps bytes as a single-chunk BlobBody for in-process putBlob calls
-// (iterating a Uint8Array directly would yield numbers, not chunks).
+// wraps bytes as a single-chunk BlobBody for in-process putBlob calls (iterating
+// a Uint8Array directly would yield numbers, not chunks).
 export function bodyOf(bytes: Uint8Array): AsyncIterable<Uint8Array> {
   return (async function* () {
     yield bytes;

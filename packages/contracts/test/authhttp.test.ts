@@ -1,5 +1,4 @@
-// The device-flow client: start, redeem, the polled authorization_pending
-// answer, and error coercion. Spec: contracts/auth/authhttp/authhttp.go.
+// The device-flow client: start, redeem, the polled authorization_pending answer, and error coercion.
 
 import { describe, it, expect } from 'vitest';
 import { Client, pending } from '../src/auth/http.js';

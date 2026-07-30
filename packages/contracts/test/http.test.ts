@@ -1,6 +1,5 @@
-// The HTTP adapter's error mapping by status, retryable transport-error
-// coercion, and the deliberate omission of Content-Length on blob PUT.
-// Spec: contracts/deploy/deployhttp/deployhttp.go.
+// The HTTP adapter's error mapping by status, retryable transport-error coercion,
+// and the deliberate omission of Content-Length on blob PUT.
 
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
@@ -13,7 +12,6 @@ interface Captured {
   init?: FetchInit;
 }
 
-// mockFetch records each call and replies with the queued Response.
 function mockFetch(reply: (url: string, init?: FetchInit) => Response | Promise<Response>): {
   fetch: FetchLike;
   calls: Captured[];

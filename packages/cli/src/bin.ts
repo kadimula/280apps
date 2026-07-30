@@ -1,11 +1,7 @@
-// bin is the composition root: the one place that binds the CLI's command
-// surface (app.ts, testable and side-effect-free) to the real world — process
-// streams, the working directory, git, and W1's HTTP/fake Port adapters. tsup
-// bundles this into dist/bin.js, the single artifact the `280` bin points at.
-//
-// Everything here is intentionally thin. Anything with logic worth testing lives
-// in a module app.ts calls, injected through Deps so tests never touch stdio,
-// the network, or subprocesses.
+// bin is the composition root: the one place that binds the CLI's command surface
+// (app.ts, side-effect-free) to the real world (process streams, working
+// directory, git, the HTTP/fake Port adapters). tsup bundles this into
+// dist/bin.js, the artifact the `280` bin points at.
 
 import { spawnSync } from 'node:child_process';
 import type { Port } from '@280/contracts';
@@ -22,9 +18,8 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-// gitRemote returns origin's URL for fingerprint dedup, "" when there is none.
-// Spawns git with no stdin so a prompt can never stall a push. Mirrors app.go
-// gitRemote.
+// gitRemote returns origin's URL for fingerprint dedup, "" when none. Spawns git
+// with no stdin so a prompt can never stall a push.
 function gitRemote(root: string): string {
   const r = spawnSync('git', ['-C', root, 'config', '--get', 'remote.origin.url'], {
     encoding: 'utf8',
@@ -34,21 +29,19 @@ function gitRemote(root: string): string {
   return r.stdout.trim();
 }
 
-// openPort builds the deploy adapter for real commands. TWO80_FAKE=1 selects the
-// in-memory fake (local demos); otherwise it is the authed HTTP client, which
-// first ensures a token (starting or resuming a device login as needed).
+// openPort builds the deploy adapter: the in-memory Fake when TWO80_FAKE=1, else
+// the authed HTTP client (ensuring a device-login token first).
 async function openPort(): Promise<Port> {
   if (process.env.TWO80_FAKE === '1') return new Fake();
   const api = apiBase();
   const token = await ensureToken(api, newAuthClient(api), nowSeconds());
-  // Every call announces the binary making it (X-280-Cli-Version), which is what
-  // lets the platform retire a CLI it can no longer talk to (cli_too_old).
+  // X-280-Cli-Version lets the platform retire a CLI it can no longer talk to
+  // (cli_too_old).
   return new DeployClient(api, { token, cliVersion: VERSION });
 }
 
-// buildBundle delegates to W3's bundler (src/bundle). build is synchronous and
-// throws a PreflightError carrying {code, message, fix}, which app.run renders
-// through the same output path as any other failure.
+// buildBundle delegates to the bundler, which throws a PreflightError {code,
+// message, fix} that app.run renders like any other failure.
 async function buildBundle(root: string, framework: string): Promise<Bundle> {
   return buildProject(root, framework);
 }
@@ -71,8 +64,8 @@ const env: Env = {
 run(env, deps).then(
   (code) => process.exit(code),
   (err) => {
-    // run() renders every command failure itself; reaching here means an
-    // unexpected internal fault. Fail closed with exit 1 and a diagnostic.
+    // run() renders every command failure itself; reaching here is an unexpected
+    // internal fault. Fail closed with exit 1 and a diagnostic.
     process.stderr.write(`280: internal error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   },

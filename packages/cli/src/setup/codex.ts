@@ -1,11 +1,6 @@
-// codex installs the SessionStart hook for Codex. Two files, per AXI §7 and the
-// plan's W9 note: the hook itself lives in project .codex/hooks.json, and Codex
-// only runs hooks when `[features].hooks = true` in .codex/config.toml, so setup
-// ensures both. hooks.json is JSON-merged (never overwritten) exactly like the
-// Claude installer; config.toml is edited with a one-key line-preserving setter
-// (setup/toml.ts) so no comment or unrelated key is disturbed. The hooks.json
-// schema mirrors the Claude event→groups shape for a single maintainable merge;
-// the `[features].hooks` gate is the Codex-specific requirement.
+// Installs the SessionStart hook for Codex across two files: the JSON-merged hook
+// in .codex/hooks.json, plus the `[features].hooks = true` gate Codex needs in
+// .codex/config.toml before it runs any hook.
 
 import path from 'node:path';
 import { readObject, writeObject, writeAtomic } from './jsonfile.js';
@@ -25,10 +20,8 @@ interface CommandHook {
   [k: string]: unknown;
 }
 
-// install merges the hook into hooks.json and flips the features gate in
-// config.toml. It reports the strongest action across both files: a change to
-// either is `installed`/`repaired`; only when both are already correct is it the
-// idempotent `unchanged`.
+// Reports the strongest action across both files: only when hook and gate are
+// both already correct is it the idempotent `unchanged`.
 export function install(root: string, command: string): InstallResult {
   const hookAction = installHook(path.join(root, HOOKS_FILE), command);
   const featureChanged = ensureFeatureGate(path.join(root, CONFIG_FILE));
@@ -56,8 +49,6 @@ function installHook(file: string, command: string): Action {
   return 'installed';
 }
 
-// ensureFeatureGate sets [features].hooks = true in config.toml, returning
-// whether the file changed. A brand-new file is created with just that table.
 function ensureFeatureGate(file: string): boolean {
   let current = '';
   try {

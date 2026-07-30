@@ -1,11 +1,5 @@
-// The client half of the device-flow seam. The counterpart to the platform's
-// auth endpoints, and the only place the flow's wire paths are written down on
-// the client side.
-//
-// Spec: contracts/auth/authhttp/authhttp.go. Go is normative. Errors use the
-// deploy Error shape (thrown as DeployErr) so the CLI has one error shape to
-// render; a "not finished yet" answer is authorization_pending, polled on
-// rather than failed on (auth.go Pending).
+// Client half of the device-flow seam. Spec: contracts/auth/authhttp/authhttp.go
+// (normative). Errors use the deploy Error shape; authorization_pending is polled on, not failed on.
 
 import {
   deviceCodeResponseSchema,
@@ -20,7 +14,7 @@ export interface AuthClientOptions {
   fetch?: FetchLike;
 }
 
-// Client talks to the auth server. No token: this is how a machine gets one.
+// No token: this is how a machine gets one.
 export class Client {
   readonly baseURL: string;
   private readonly fetch: FetchLike;
@@ -30,15 +24,12 @@ export class Client {
     this.fetch = opts.fetch ?? ((url, init) => fetch(url, init as RequestInit));
   }
 
-  // start issues a device code (authhttp.go:31).
   async start(): Promise<DeviceCodeResponse> {
     const out = await this.do('/v1/device/code', undefined);
     return deviceCodeResponseSchema.parse(out);
   }
 
-  // redeem exchanges a device code for a token. It rejects with an
-  // authorization_pending DeployErr until the human has approved, which is the
-  // expected answer rather than a failure (authhttp.go:42).
+  // Rejects authorization_pending until the human approves: the expected answer, not a failure.
   async redeem(deviceCode: string): Promise<string> {
     const out = await this.do('/v1/device/token', { deviceCode });
     return tokenResponseSchema.parse(out).token;
@@ -70,20 +61,17 @@ export class Client {
   }
 }
 
-// New returns a Client for baseURL (authhttp.go:26).
 export function newClient(baseURL: string): Client {
   return new Client(baseURL);
 }
 
-// pending reports whether err is the flow's "not finished yet" answer, which
-// callers poll on rather than fail on (auth.go Pending).
+// True when err is the flow's "not finished yet" answer, which callers poll on rather than fail on.
 export function pending(err: unknown): boolean {
   const de = asDeployError(err);
   return de !== undefined && de.code === AuthCode.AuthorizationPending;
 }
 
-// errorFrom prefers the server's error shape and only synthesizes one when the
-// body is something else — a proxy page, an HTML error (authhttp.go:83).
+// Prefers the server's error shape, synthesizing one only for a non-error body (proxy page, HTML).
 async function errorFrom(resp: Response): Promise<DeployErr> {
   const raw = await readBodyText(resp);
   const parsed = tryParseError(raw);

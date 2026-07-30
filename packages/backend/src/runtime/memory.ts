@@ -1,11 +1,6 @@
-// MemoryRuntime records activations instead of performing them.
-// Spec: platform/internal/runtime/memory.go. Go is normative.
-//
-// It exists so the deploy seam's behavior can be tested without an account on
-// anyone's infrastructure: conformance runs against it, and what it asserts
-// (idempotency, resumption, atomicity of the serving flip) is control-plane
-// behavior that must hold whatever the substrate is. The Cloudflare runtime is
-// verified separately, against a mocked Cloudflare.
+// MemoryRuntime records activations instead of performing them (Go is normative:
+// memory.go), so the deploy seam's behavior can be tested without any real account.
+// The Cloudflare runtime is verified separately, against a mocked Cloudflare.
 
 import type { Runtime, Activation, RuntimeApp, RuntimeResult } from '../seams.js';
 
@@ -14,13 +9,11 @@ export class MemoryRuntime implements Runtime {
   private readonly stores = new Map<string, string>(); // app id -> store id
   private failErr: Error | null = null; // one-shot: next activation fails
 
-  // failNext makes the next activation fail with err, simulating a substrate
-  // that rejected the deploy.
+  // failNext makes the next activation fail with err, simulating a rejecting substrate.
   failNext(err: Error): void {
     this.failErr = err;
   }
 
-  // activeDeploy reports which deploy an app is serving.
   activeDeploy(appId: string): string {
     return this.active.get(appId) ?? '';
   }

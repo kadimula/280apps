@@ -45,7 +45,7 @@ describe('MemoryRuntime', () => {
   it('is stable: the same app keeps its store id across activations', async () => {
     const rt = new MemoryRuntime();
     const first = await rt.activate(activation({ storeId: '' }));
-    // Second activation reports the store as already provisioned (empty = unchanged).
+    // already provisioned, so it reports empty (= unchanged)
     const second = await rt.activate(activation({ storeId: first.storeId, deployId: 'dep_2' }));
     expect(second.storeId).toBe('');
     expect(rt.activeDeploy('app_1')).toBe('dep_2');

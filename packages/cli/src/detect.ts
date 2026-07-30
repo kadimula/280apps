@@ -1,8 +1,7 @@
-// detect infers a project's framework and default app slug from the files on
-// disk. init/push depend on it so the agent never has to declare the framework
-// by hand. Detection is intentionally narrow: V1 supports Next.js and plain
-// static builds, and an unrecognized project fails loudly rather than guessing.
-// Spec: cli/internal/detect/detect.go. Go is normative, including the slug rules.
+// detect infers a project's framework and default slug from files on disk, so the
+// agent never declares the framework by hand. Narrow by design: Next.js or plain
+// static, and an unrecognized project fails loudly rather than guessing.
+// Spec: cli/internal/detect/detect.go; Go is normative, including slug rules.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,9 +17,8 @@ export interface DetectResult {
   slug: string; // default app name, from package.json name or the dir
 }
 
-// framework detects root's framework: Next.js when package.json depends on
-// `next`; else static when an index.html or a common build dir exists; else a
-// structured preflight_rejected error naming what is supported.
+// framework detects root's framework: Next.js when package.json depends on `next`,
+// else static when an index.html or common build dir exists, else preflight_rejected.
 export function framework(root: string): string {
   if (hasNextDependency(root)) return FrameworkNext;
   if (hasStaticEntry(root)) return FrameworkStatic;
@@ -31,7 +29,6 @@ export function framework(root: string): string {
   );
 }
 
-// detect resolves both framework and default slug.
 export function detect(root: string): DetectResult {
   return { framework: framework(root), slug: slug(root) };
 }
@@ -88,9 +85,9 @@ function fileExists(p: string): boolean {
 
 const NON_SLUG = /[^a-z0-9]+/g;
 
-// slugify lowercases, strips an npm scope leader, replaces runs of
-// non-alphanumerics with a hyphen, and trims hyphens. An empty or all-symbol
-// input becomes "app". Matches detect.go Slugify byte for byte.
+// slugify lowercases, strips an npm scope leader, replaces non-alphanumeric runs
+// with a hyphen, and trims hyphens; empty/all-symbol input becomes "app". Matches
+// detect.go Slugify byte for byte.
 export function slugify(s: string): string {
   s = s.trim().toLowerCase();
   if (s.startsWith('@')) s = s.slice(1); // npm scope leader

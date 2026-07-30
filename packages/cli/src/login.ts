@@ -1,16 +1,9 @@
-// login authenticates this machine, and never waits for a human.
-//
-// Agents run commands under timeouts in non-interactive shells, so a command
-// that blocks on a browser sign-in is a command that gets killed. Instead the
-// flow is split across invocations: one call starts a login and exits with the
-// link to show the user, a later call finds the approval waiting and finishes
-// silently. The device code lives in ~/.280/credentials between the two.
-//
-// Both `280 login` and an unauthenticated `280 push` enter through ensureToken,
-// so the agent sees the same instruction either way. whoami reports state
-// through resumeLogin, which redeems an approval the human just granted rather
-// than reporting "not logged in" until some later command happens to redeem it.
-// Spec: cli/internal/app/login.go. Go is normative.
+// login authenticates this machine and never waits for a human. Agents run under
+// timeouts in non-interactive shells, so a blocking browser sign-in gets killed.
+// The flow is split across invocations: one call starts a login and exits with the
+// link, a later call finds the approval and finishes. The device code lives in
+// ~/.280/credentials between the two.
+// Spec: cli/internal/app/login.go; Go is normative.
 
 import { AuthCode, type DeviceCodeResponse } from '@280/contracts';
 import * as credentials from './credentials.js';
@@ -24,9 +17,8 @@ re-run to finish. Never waits.
 Examples:
   280 login`;
 
-// AuthClient is the device-flow client login drives. The concrete HTTP client
-// is W1's auth/http adapter; login depends only on this two-method shape so it
-// is fully testable with a double.
+// AuthClient is the device-flow client login drives. login depends only on this
+// two-method shape so it is fully testable with a double.
 export interface AuthClient {
   start(): Promise<DeviceCodeResponse>; // POST /v1/device/code
   redeem(deviceCode: string): Promise<string>; // POST /v1/device/token -> token; throws on pending/expired/denied
@@ -38,13 +30,9 @@ export interface Resume {
 }
 
 // resumeLogin reports this machine's auth state, finishing a device login the
-// human approved since the last command ran. It never starts one.
-//
-// Exactly one of three outcomes holds: token set (logged in); pending set (a
-// login the human has not confirmed); both empty (not logged in, nothing in
-// flight). A dead code (expired, claimed, unreachable) reports nothing in
-// flight, so a caller that needs a token starts fresh rather than stranding the
-// user on it.
+// human approved since the last command ran. It never starts one. Exactly one
+// holds: token set (logged in), pending set (unconfirmed), or both empty (nothing
+// in flight). A dead code reports nothing in flight so a caller starts fresh.
 export async function resumeLogin(api: string, auth: AuthClient, now: number): Promise<Resume> {
   const { creds, loggedIn } = credentials.load();
   if (loggedIn && creds.api === api) {
@@ -67,12 +55,11 @@ export async function resumeLogin(api: string, auth: AuthClient, now: number): P
 }
 
 // ensureToken returns a usable API token, starting or resuming a device login if
-// there is none. When a human still has to act, it throws the
-// authorization_pending error carrying the link to show them.
+// there is none. When a human must act, it throws authorization_pending with the
+// link to show them.
 export async function ensureToken(api: string, auth: AuthClient, now: number): Promise<string> {
-  // Resume before starting: the common path is the agent re-running a command
-  // after the user signed in, and starting a second login there would
-  // invalidate the code they just approved.
+  // Resume before starting: the common path is a re-run after the user signed in,
+  // and starting a second login would invalidate the code they just approved.
   const { token, pending } = await resumeLogin(api, auth, now);
   if (token !== '') return token;
   if (pending) throw waitingOn(pending);
@@ -85,15 +72,14 @@ export async function ensureToken(api: string, auth: AuthClient, now: number): P
     expiresAt: now + start.expiresIn,
     api,
   };
-  // Persist before throwing: a link the user approves against a code we forgot
-  // is the one failure with no recovery except starting over.
+  // Persist before throwing: a link approved against a code we forgot is the one
+  // failure with no recovery but starting over.
   credentials.save({ token: '', api, pending: fresh });
   throw waitingOn(fresh);
 }
 
-// cmdLogin authenticates this machine, resuming a login already in flight. When
-// a human still has to act, ensureToken throws authorization_pending and the
-// dispatcher renders it with the link to relay.
+// cmdLogin authenticates this machine, resuming a login already in flight. When a
+// human must act, ensureToken throws authorization_pending, rendered with the link.
 export async function cmdLogin(ctx: Ctx): Promise<number> {
   const s = ctx.env.streams;
   const p = output.parseFlags(s, 'login', ctx.args, []);
@@ -107,9 +93,8 @@ export async function cmdLogin(ctx: Ctx): Promise<number> {
   return output.result(s, { loggedIn: true, api: ctx.api });
 }
 
-// waitingOn is the message the agent relays to its user. It is addressed to the
-// agent on purpose: the fix tells it what to do with the link and that it must
-// not try to open the URL or sign in itself.
+// waitingOn is the message the agent relays. Addressed to the agent on purpose:
+// the fix tells it not to open the URL or sign in itself.
 export function waitingOn(p: credentials.Pending): CliError {
   return new CliError(
     AuthCode.AuthorizationPending,

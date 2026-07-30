@@ -1,13 +1,10 @@
-// The platform's structured loggers. On Workers there is no process.stderr;
-// console.* is what Workers Logs captures, so every record is written through it
-// (info/warn on console.log/console.warn, error on console.error). The JSON form
-// is what production ships and queries; the text form stays for a local loop
-// where a human reads the lines as they scroll past.
+// The platform's structured loggers. On Workers there is no process.stderr, so every
+// record is written through console.* (what Workers Logs captures). JSON is what
+// production ships and queries; text is for a local loop a human reads.
 
 import type { Logger } from './observe.js';
 
-// newLogger picks the format. json is anywhere the lines are shipped to be
-// queried (Workers Logs); text is the local loop.
+// newLogger picks the format: json for shipped-and-queried lines, text for local.
 export function newLogger(format: 'json' | 'text'): Logger {
   return format === 'json' ? jsonLogger() : textLogger();
 }

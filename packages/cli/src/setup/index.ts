@@ -1,11 +1,6 @@
-// setup is `280 setup`: the explicit, opt-in command that wires 280 into an
-// agent's session lifecycle (AXI §7). It registers a SessionStart hook that runs
-// the bare `280` home view — so every session opens already showing this
-// directory's app state — for Claude Code, Codex, and OpenCode, and installs the
-// on-demand skill. Everything it writes is JSON-merged or managed-file safe: it
-// never overwrites a user's config, a re-run with an unchanged path is a silent
-// no-op, and a moved binary is repaired in place. It is directory-scoped and
-// token-budgeted: the home view IS the hook payload, no second format.
+// `280 setup`: opt-in command that registers a SessionStart hook running the bare
+// `280` home view for Claude Code, Codex, and OpenCode, plus the on-demand skill.
+// Everything it writes is JSON-merged or managed-file safe, never overwriting.
 
 import fs from 'node:fs';
 import type { Ctx } from '../app.js';
@@ -17,10 +12,8 @@ import * as opencode from './opencode.js';
 import * as skill from './skill.js';
 import type { InstallResult } from './result.js';
 
-// cmdSetup runs the command. Three modes, selected by flag:
-//   (default)  install/repair hooks for all three agents + the skill
-//   --check    verify the committed skill is fresh (CI staleness gate); exit 1 if not
-//   --write    regenerate the committed skill file (maintenance; used by --check's fix)
+// Three modes: default installs hooks + skill, --check is the CI staleness gate,
+// --write regenerates the committed skill.
 export function cmdSetup(ctx: Ctx): number {
   const s = ctx.env.streams;
   const p = output.parseFlags(s, 'setup', ctx.args, [
@@ -55,8 +48,7 @@ function installAll(ctx: Ctx): number {
   });
 }
 
-// checkSkill is the CI staleness gate. Fresh: exit 0. Stale or missing: a
-// structured failure whose fix regenerates the committed file, exit 1.
+// CI staleness gate: fresh exits 0; stale or missing throws a structured failure.
 function checkSkill(ctx: Ctx): number {
   const s = ctx.env.streams;
   const r = skill.check();
@@ -68,8 +60,6 @@ function checkSkill(ctx: Ctx): number {
   );
 }
 
-// writeSkill regenerates the committed skill from the generator. A maintenance
-// action, reported self-contained (no next-step help).
 function writeSkill(ctx: Ctx): number {
   const s = ctx.env.streams;
   const path = skill.committedPath();

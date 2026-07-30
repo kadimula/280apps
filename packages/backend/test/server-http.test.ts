@@ -1,7 +1,7 @@
-// Boots the real Node HTTP server (the @hono/node-server adapter main.ts uses)
-// over an ephemeral socket and drives it with fetch. This is the one path
-// app.request cannot exercise: the raw streamed blob PUT (c.req.raw.body), the
-// request-id echo across a real connection, and the activation-sized timeouts.
+// Boots the real Node HTTP server over an ephemeral socket and drives it with
+// fetch: the one path app.request cannot exercise, covering the raw streamed
+// blob PUT (c.req.raw.body), the request-id echo across a real connection, and
+// the activation-sized timeouts.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { serve } from '@hono/node-server';
@@ -59,7 +59,7 @@ describe('real node server', () => {
     const sync = (await syncRes.json()) as { app: { id: string; url: string }; deployId: string; missing: string[] };
     expect(sync.missing).toEqual([digest]);
 
-    // A real streamed octet-stream PUT through c.req.raw.body.
+    // a real streamed octet-stream PUT through c.req.raw.body
     const put = await fetch(`${base}/v1/apps/${sync.app.id}/blobs/${digest}`, {
       method: 'PUT',
       headers: { ...auth, 'Content-Type': 'application/octet-stream' },

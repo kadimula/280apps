@@ -1,10 +1,7 @@
-// The in-memory adapter of Port. It is the executable contract: the CLI's push
-// logic is developed and tested against it, and the conformance suite holds it
-// and the real service to the same behavior. Fault-injection knobs simulate the
-// failure modes push must self-heal from.
-//
-// Spec: contracts/deploy/fake.go. Go is normative, including FailNext /
-// DropBodyAfter / FailActivation and the atomic single-pointer activation.
+// The in-memory adapter of Port and executable contract: push logic is developed
+// against it, and conformance holds it and the real service to the same behavior.
+// Fault-injection knobs simulate the failure modes push must self-heal from.
+// Spec: contracts/deploy/fake.go (normative).
 
 import {
   DeployCode,
@@ -47,8 +44,7 @@ function deriveDeployId(appId: string, m: Manifest): string {
   return 'dep_' + digestBytes(Buffer.from(appId + ':' + canonicalDigest(m), 'utf8')).slice(0, 16);
 }
 
-// urlToken indexes the hex-string digest (seed[i] is an ASCII hex char), not
-// raw sha256 bytes (plan §10 parity trap; fake.go:99).
+// Indexes the hex-string digest (seed[i] is an ASCII hex char), not raw sha256 bytes (parity trap).
 function urlToken(appId: string): string {
   const seed = digestBytes(Buffer.from('token:' + appId, 'utf8'));
   let tok = '';
@@ -58,7 +54,7 @@ function urlToken(appId: string): string {
   return tok;
 }
 
-// byteLess orders two strings by their UTF-8 bytes, matching Go's string <.
+// Orders two strings by their UTF-8 bytes, matching Go's string <.
 function byteLess(a: string, b: string): boolean {
   return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')) < 0;
 }
@@ -78,32 +74,27 @@ export class Fake implements Port {
   private pendingDropBodyAfter = -1; // one-shot: PutBlob loses the connection after this many bytes (-1 off)
   private pendingFailActivation = false; // one-shot: next activation fails the deploy
 
-  // failNext makes the next n port calls fail with a retryable unavailable error
-  // before doing any work (fake.go FailNext).
+  // Next n port calls fail with a retryable unavailable before doing any work.
   failNext(n: number): void {
     this.pendingFailNext = n;
   }
 
-  // dropBodyAfter makes the next PutBlob whose size exceeds n read n bytes and
-  // then fail retryable, storing nothing — a connection dying mid-upload
-  // (fake.go DropBodyAfter).
+  // Next PutBlob whose size exceeds n reads n bytes then fails retryable, storing
+  // nothing: a connection dying mid-upload.
   dropBodyAfter(n: number): void {
     this.pendingDropBodyAfter = n;
   }
 
-  // failActivation makes the next activation mark the deploy failed instead of
-  // flipping the serving pointer (fake.go FailActivation).
+  // Next activation marks the deploy failed instead of flipping the serving pointer.
   failActivation(): void {
     this.pendingFailActivation = true;
   }
 
-  // ActiveDeployID reports which deploy the app is serving — the fake's stand-in
-  // for GETting the app URL. Empty until first activation.
+  // Which deploy the app is serving (the fake's stand-in for GETting the app URL). Empty until first activation.
   activeDeployId(appId: string): string {
     return this.active.get(appId) ?? '';
   }
 
-  // AppCount reports how many apps exist on the account.
   appCount(): number {
     return this.apps.size;
   }
@@ -187,8 +178,8 @@ export class Fake implements Port {
     return out;
   }
 
-  // maybeActivate finalizes a content-complete open deploy: the single atomic
-  // serving-pointer flip. There is no client-visible activation verb.
+  // Finalizes a content-complete open deploy: the single atomic serving-pointer
+  // flip. There is no client-visible activation verb.
   private maybeActivate(d: FakeDeploy): void {
     if (stateTerminal(d.state) || this.missing(d).length > 0) {
       return;
@@ -205,9 +196,8 @@ export class Fake implements Port {
     }
     d.state = State.Live;
     this.active.set(d.appId, d.id);
-    // One live deploy per app: the one being served. Deploy ids derive from
-    // content, so a revert re-pushes an id that was live before; a stale live
-    // row would read as terminal here and never re-activate.
+    // One live deploy per app. Ids derive from content, so a revert re-pushes an
+    // id that was live before; a stale live row would read terminal and never re-activate.
     for (const [key, other] of this.deploys) {
       if (other.appId === d.appId && other.id !== d.id && other.state === State.Live) {
         this.deploys.delete(key);
@@ -360,8 +350,7 @@ export class Fake implements Port {
     for (const [key, d] of this.deploys) {
       if (d.appId === app.id) this.deploys.delete(key);
     }
-    // The identity indexes go too, or the next push of the same project would
-    // autolink onto an app that no longer exists.
+    // Identity indexes go too, or the next push of the same project autolinks onto a gone app.
     for (const [fp, ids] of this.byFingerprint) {
       const kept = ids.filter((id) => id !== app.id);
       if (kept.length === 0) {
@@ -377,9 +366,7 @@ export class Fake implements Port {
   }
 }
 
-// quote mirrors Go's %q on a string: double-quoted, with the escaping Go's
-// strconv.Quote applies to the inputs this seam carries (app ids, slugs, user
-// input). For the ASCII identifiers here it is a plain double-quote wrap.
+// Mirrors Go's %q: a plain double-quote wrap for the ASCII identifiers here.
 function quote(s: string): string {
   return JSON.stringify(s);
 }
@@ -388,15 +375,12 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// errObj renders a thrown DeployErr as the plain wire error shape the server
-// puts in SyncResult.Failure / DeployStatus.Failure (deploy.go Error). Undefined
-// when there is no failure, matching Go's omitempty *Error.
+// Renders a thrown DeployErr as the plain wire error shape carried in
+// SyncResult.Failure / DeployStatus.Failure. Undefined when there is no failure.
 function errObj(e: DeployErr | undefined) {
   if (!e) return undefined;
   return { code: e.code, message: e.message, fix: e.fix, retryable: e.retryable, candidates: e.candidates };
 }
-
-// ---- body helpers: BlobBody is a Node Readable or an async iterable ----
 
 async function readAll(body: BlobBody): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
@@ -406,8 +390,7 @@ async function readAll(body: BlobBody): Promise<Uint8Array> {
   return Buffer.concat(chunks);
 }
 
-// readN consumes up to n bytes then stops reading, mirroring io.CopyN into
-// discard: the connection dies after n bytes and the rest is never read.
+// Consumes up to n bytes then stops reading: the connection dies after n bytes, the rest never read.
 async function readN(body: BlobBody, n: number): Promise<void> {
   let read = 0;
   if (n <= 0) return;

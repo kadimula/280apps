@@ -1,6 +1,5 @@
-// Static bundle behavior. Go has no static-specific test (bundle.go is covered
-// by the e2e 01-static case), so these pin staticDir resolution order, the empty
-// build rejection, and the placeholder worker's exact bytes.
+// Go has no static-specific test (covered by the e2e 01-static case), so these pin
+// staticDir order, the empty-build rejection, and the placeholder worker's bytes.
 
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +33,6 @@ describe('buildStatic', () => {
       '/style.css',
     ]);
     expect(b.manifest.cache).toHaveLength(0);
-    // The worker blob plus both assets all have content to upload.
     expect(b.content.size).toBe(3);
   });
 

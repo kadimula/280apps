@@ -29,6 +29,10 @@ Product and tech vision (direction, not shipped): any app deploys (push instruct
 - Agent integrations: `packages/cli/src/setup/`. `280 setup` JSON-merges (never overwrites) a SessionStart hook into Claude Code, Codex, OpenCode and installs the skill. `packages/cli/skill/SKILL.md` is generated from the home view: `pnpm --filter two80 skill:gen`; CI runs `280 setup --check` to fail on drift.
 
 
+## Code style
+
+Avoid comments wherever possible; make the code self-explanatory through naming and structure instead. Prefer a clear function or variable name, a named constant, or a small restructure over a comment that explains what the code does. Add a comment (2 lines maximum) only when the code genuinely cannot be made self-explanatory: a non-obvious "why", a subtle invariant, or a workaround rationale. Never restate the code, narrate the next line, or leave section-divider banners or commented-out code. Load-bearing markers (license headers, tooling directives, `eslint-disable` pragmas, machine-read annotations) stay.
+
 ## Local notes
 
 Private/local notes and infra details live in `CLAUDE.local.md` (gitignored, not committed). Never put secrets (connection strings, keys, tokens, passwords) in this committed file; they belong in `CLAUDE.local.md` or a secrets manager.

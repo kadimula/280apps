@@ -1,6 +1,5 @@
-// The fault-injection and atomicity story the fake must honor, mirroring
-// contracts/deploy/fake_test.go (the tests conformance cannot express: they
-// observe serving state directly and drive FailNext/DropBodyAfter/FailActivation).
+// The fault-injection and atomicity story the fake must honor: the tests conformance
+// cannot express, observing serving state directly and driving the fault knobs.
 
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';

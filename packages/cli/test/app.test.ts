@@ -1,6 +1,5 @@
-// The full command surface, mirroring cli/internal/app/app_test.go: dispatch,
-// exit codes, and the agent-facing {code, fix} per scenario — driven end to end
-// through app.run with W1's Fake as the injected port.
+// Full command surface driven end to end through app.run with the Fake port:
+// dispatch, exit codes, and the agent-facing {code, fix} per scenario.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -34,7 +33,7 @@ describe('version and help', () => {
     const r = await runCli(['help'], { root: tmpProject() });
     expect(r.code).toBe(0);
     expect(r.out).toContain('280 - Deploy and share your app');
-    expect(r.out).not.toContain('--json'); // dropped
+    expect(r.out).not.toContain('--json');
     expect(r.out).not.toContain('list, logs'); // roadmap stubs dropped from help
   });
 });
@@ -124,7 +123,7 @@ describe('delete', () => {
     const t = parseToon(r.out);
     expect(t.deleted).toBe('false');
     expect(t.note).toContain('already deleted');
-    expect(config.load(root).cfg.appId).toBe(''); // stale binding cleared
+    expect(config.load(root).cfg.appId).toBe('');
   });
 
   it('without confirmation: names the app, deletes nothing, exit 1', async () => {
@@ -139,7 +138,7 @@ describe('delete', () => {
     const t = parseToon(r.out);
     expect(t.error).toBe('confirmation_required');
     expect(t.fix).toBe(`run 280 delete --yes ${slug}`);
-    expect(config.load(root).cfg.appId).toBe(appId); // untouched
+    expect(config.load(root).cfg.appId).toBe(appId);
   });
 
   it('the wrong name is refused and leaves the binding intact, exit 1', async () => {
@@ -166,7 +165,6 @@ describe('delete', () => {
     const t = parseToon(del.out);
     expect(t.deleted).toBe('true');
     expect(t.slug).toBe(slug);
-    // Unbound but still a project: name/framework kept, appId cleared.
     const after = config.load(root).cfg;
     expect(after.appId).toBe('');
     expect(after.name).toBe(slug);

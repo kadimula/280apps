@@ -1,5 +1,5 @@
-// @280/backend: the TS platform (control plane) library index. The deployable Worker
-// entrypoint is src/worker.ts (wrangler `main`), not this index.
+// @280/backend: the TS platform (control plane) library index. The deployable
+// service entrypoint is src/main.ts (the Node/Railway target), not this index.
 export * from './seams.js';
 export * from './deploysvc.js';
 export * from './activator.js';

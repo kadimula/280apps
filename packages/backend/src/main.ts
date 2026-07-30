@@ -1,9 +1,8 @@
 // The Node entrypoint for the 280 control plane: serves HTTP API v1, activates
 // deploys inline, and sweeps expired rows on an interval. This is the host the
-// package ships as on Railway (packages/backend/Dockerfile); the Workers entry is
-// src/worker.ts. Everything I/O is a process-lifetime singleton here — one pg pool,
-// one blob store, one runtime, one in-process activator — rather than the
-// request-scoped, cross-isolate wiring the Worker needs.
+// package ships as on Railway (packages/backend/Dockerfile), and the only one.
+// Everything I/O is a process-lifetime singleton here — one pg pool, one blob
+// store, one runtime, one in-process activator — assembled once at boot.
 
 import type { Server as NodeHttpServer } from 'node:http';
 import { serve } from '@hono/node-server';

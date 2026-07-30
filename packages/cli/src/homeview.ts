@@ -1,8 +1,7 @@
-// homeview is the bare `280` content-first view (AXI §8, plan §3a): when an
-// agent runs the CLI with no arguments it sees live, directory-scoped state it
-// can act on, not a usage manual. This same payload is what the session-start
-// hook (W9) injects, so it is ruthlessly budgeted to ~10 lines and never dials
-// the network: login state is read from the credentials file, not redeemed.
+// homeview is the bare `280` content-first view (AXI §8): an agent running with no
+// arguments sees live, directory-scoped state, not a usage manual. This payload is
+// also what the session-start hook injects, so it is budgeted to ~10 lines and
+// never dials the network: login state is read from the credentials file.
 
 import os from 'node:os';
 import { encode } from '@toon-format/toon';
@@ -11,9 +10,8 @@ import * as credentials from './credentials.js';
 import * as output from './output.js';
 import type { Ctx } from './app.js';
 
-// DESCRIPTION is the tool's one-sentence identity. Exported so the W9 skill
-// generator (setup/skill.ts) renders the same line the home view prints, keeping
-// the installable skill a single source of truth with this view (AXI §7).
+// DESCRIPTION is the tool's one-sentence identity. Exported so the skill generator
+// renders the same line, keeping the installable skill a single source of truth.
 export const DESCRIPTION = 'Deploy and share your app with one command.';
 
 export interface HomeParams {
@@ -22,9 +20,8 @@ export interface HomeParams {
   api: string; // resolved platform endpoint
 }
 
-// render builds the home view as a TOON document. Pure and offline so it is
-// safe to run on every session start; returns the string without a trailing
-// newline so callers control framing.
+// render builds the home view as a TOON document. Pure and offline, safe on every
+// session start; returns the string without a trailing newline so callers frame it.
 export function render(params: HomeParams): string {
   const { cfg, found } = config.load(params.root);
   const { creds, loggedIn } = credentials.load();
@@ -39,8 +36,8 @@ export function render(params: HomeParams): string {
   return encode(doc);
 }
 
-// cmdHome renders the home view to stdout. Exit 0: the absence of a command is
-// answered with state, not treated as an error.
+// cmdHome renders the home view to stdout. Exit 0: no command is answered with
+// state, not an error.
 export function cmdHome(ctx: Ctx): number {
   output.text(ctx.env.streams, render({ binPath: ctx.env.binPath, root: ctx.env.root, api: ctx.api }));
   return output.ExitOK;
@@ -48,8 +45,8 @@ export function cmdHome(ctx: Ctx): number {
 
 function appLine(found: boolean, cfg: config.Config): string {
   if (!found) return 'none in this directory';
-  // No comma: the TOON encoder would quote a value containing one, and the home
-  // view reads cleaner unquoted.
+  // No comma: the TOON encoder would quote a value containing one, and unquoted
+  // reads cleaner.
   const base = `${cfg.name} (${cfg.framework})`;
   return cfg.appId !== '' ? `${base} deployed` : `${base} not yet deployed`;
 }
@@ -60,8 +57,8 @@ function helpFor(found: boolean, cfg: config.Config): string[] {
   return ['Run `280 push` to redeploy', `Run \`280 delete --yes ${cfg.name}\` to remove it`];
 }
 
-// collapseHome rewrites a leading home directory to `~` so the bin path is
-// stable and readable across machines (AXI §10).
+// collapseHome rewrites a leading home directory to `~` so the bin path is stable
+// and readable across machines (AXI §10).
 function collapseHome(p: string): string {
   const home = os.homedir();
   if (home && (p === home || p.startsWith(home + '/'))) {

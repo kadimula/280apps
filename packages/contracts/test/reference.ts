@@ -1,11 +1,6 @@
-// Independent TS reference derivations for the platform/cli-internal formulas
-// the golden vectors freeze. These live in the W0 test (not in another
-// workstream's src) so the Go<->TS math is proven to agree at freeze time; the
-// real src implementations land later (deploy id/fingerprint/url token/slug in
-// platform, cf hash in the CF runtime, cache key in the CLI bundle) and assert
-// against the same committed vectors.json.
-//
-// Every function is line-cited to its Go spec.
+// Independent TS reference derivations for the platform/cli-internal formulas the
+// golden vectors freeze, proving the Go<->TS math agrees against vectors.json.
+// Every function is line-cited to its normative Go spec.
 
 import { createHash } from 'node:crypto';
 import { canonicalDigest, type Manifest } from '../src/types.js';

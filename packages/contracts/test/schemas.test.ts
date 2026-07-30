@@ -1,6 +1,5 @@
-// Proves the wire schemas mirror Go encoding/json (plan §1): unknown fields are
-// preserved, absent/null optionals become the Go zero value, and no schema
-// rejects extra fields. A strict schema here would break old Go clients.
+// Proves the wire schemas mirror Go encoding/json: unknown fields preserved,
+// absent/null optionals become the Go zero value, no schema rejects extra fields.
 
 import { describe, it, expect } from 'vitest';
 import {

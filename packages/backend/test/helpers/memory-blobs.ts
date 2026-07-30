@@ -1,8 +1,7 @@
-// An in-memory BlobStore for tests that run where the filesystem store cannot —
-// the AppActivator Durable Object tests, which execute inside workerd. Pure JS, so
-// it works in both node and the Workers runtime. Content-addressed and app-scoped
-// like the real stores; it does not verify digests (the seam's put contract) since
-// the activation tests feed it bytes that already hash to their digest.
+// An in-memory BlobStore for tests that run where the filesystem store cannot:
+// the AppActivator DO tests, which execute inside workerd. Content-addressed and
+// app-scoped like the real stores, but it does not verify digests, since the
+// activation tests feed it bytes that already hash to their digest.
 
 import type { BlobBody, BlobInfo, Digest } from '@280/contracts';
 import type { BlobStore } from '../../src/seams.js';
@@ -14,8 +13,8 @@ export class MemoryBlobStore implements BlobStore {
     return `${appId}/${digest}`;
   }
 
-  // set stores bytes directly, the test-side counterpart to put (which frames a
-  // stream). The activation tests seed content this way.
+  // stores bytes directly, the test-side counterpart to put (which frames a
+  // stream); the activation tests seed content this way.
   set(appId: string, digest: Digest, bytes: Uint8Array): void {
     this.objects.set(this.key(appId, digest), bytes);
   }

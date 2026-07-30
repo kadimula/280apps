@@ -1,11 +1,7 @@
 // deploysvc is the server side of the deploy seam: the implementation of the
-// contracts deploy Port that the HTTP API is a thin transport over.
-//
-// Spec: platform/internal/deploysvc/deploysvc.go. Go is normative, including
-// every invariant documented in the seam's doc comment: methods are idempotent
-// and safe to re-invoke after any interruption, which is why nothing here holds
-// state between calls. Everything a resumed push needs is in the store and the
-// blob store.
+// contracts deploy Port that the HTTP API is a thin transport over. Go is normative
+// (platform/internal/deploysvc/deploysvc.go), including the invariant that methods
+// are idempotent and safe to re-invoke: nothing here holds state between calls.
 
 import {
   DeployCode,
@@ -35,11 +31,9 @@ import { randomBytes } from 'node:crypto';
 import type { App, BlobStore, Deploy, Store } from './seams.js';
 import type { Activator } from './activator.js';
 
-// The throwable is the contract's canonical DeployErr, so the HTTP adapter, the
-// conformance suite, and every caller share one error type. deployShaped
-// duck-types a caught value into the seam's plain error fields: the blob store
-// (W4) throws its own DeployErr subclass with the same shape but a different
-// identity, so `instanceof` alone would miss it.
+// deployShaped duck-types a caught value into the seam's plain error fields: the
+// blob store (W4) throws its own DeployErr subclass with the same shape but a
+// different identity, so `instanceof` alone would miss it.
 export function deployShaped(err: unknown): DeployError | null {
   if (err instanceof DeployErr) {
     return { code: err.code, message: err.message, fix: err.fix, retryable: err.retryable, candidates: err.candidates };
@@ -57,8 +51,8 @@ export function deployShaped(err: unknown): DeployError | null {
   return null;
 }
 
-// asDeployErr returns a canonical DeployErr for a deploy-shaped caught value, so
-// a seam error thrown by a different workstream's class rethrows as our type.
+// asDeployErr returns a canonical DeployErr for a deploy-shaped caught value, so a
+// seam error thrown by a different workstream's class rethrows as our type.
 export function asDeployErr(err: unknown): DeployErr | null {
   const s = deployShaped(err);
   return s === null ? null : new DeployErr(s);
@@ -68,20 +62,15 @@ export function asDeployErr(err: unknown): DeployErr | null {
 export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
-  // activator serializes one app's activation and delete and executes them. In
-  // production it hands the work to the app's AppActivator Durable Object, which
-  // provides cross-isolate per-app serialization (the real replacement for the
-  // retired in-isolate withAppLock); in tests it runs activation inline. The
-  // runtime lives behind it, so the Platform no longer holds one directly.
+  // activator serializes and executes one app's activation and delete. In
+  // production it hands the work to the app's AppActivator Durable Object (the
+  // cross-isolate per-app serialization point); in tests it runs inline.
   activator: Activator;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
-  // hostSuffix is appended to an app's URL host label (not its script name), so a
-  // staging deployment can emit first-level suffix hostnames like
-  // "<slug>-<token>-staging.280apps.run" that free Universal SSL still covers
-  // (a second-level "staging.280apps.run" would not). The script name stays bare,
-  // so the dispatcher recovers it by stripping the suffix (HOST_SUFFIX). Empty is
-  // the default and reproduces Go byte for byte; the divergence is a new env.
+  // hostSuffix is appended to an app's URL host label (not its script name), so
+  // staging can emit first-level suffix hostnames like "<slug>-<token>-staging..."
+  // that free Universal SSL still covers. Empty reproduces Go byte for byte.
   hostSuffix?: string;
 }
 
@@ -100,9 +89,9 @@ export class Platform {
     this.hostSuffix = deps.hostSuffix ?? '';
   }
 
-  // for returns the Port scoped to an account. Created per request so the
-  // account is a field rather than a parameter on every method: a query that
-  // forgets to scope by account is then not expressible.
+  // for returns the Port scoped to an account. Created per request so the account
+  // is a field, not a parameter: a query that forgets to scope by account is then
+  // not expressible.
   for(accountId: string): Service {
     return new Service(this, accountId);
   }
@@ -115,17 +104,15 @@ export class Service implements Port {
     private readonly accountId: string,
   ) {}
 
-  // ---- Sync ----
-
   async sync(req: SyncRequest): Promise<SyncResult> {
-    // Preflight first: rejecting the manifest must change no state, so it has
-    // to happen before the app is created, not after.
+    // Preflight first: rejecting the manifest must change no state, so it happens
+    // before the app is created.
     preflight(req.manifest);
 
     const { app, resolution } = await this.resolve(req.identity);
 
-    // The request is its own idempotency key: same app + same manifest content
-    // means the same deploy, so a retried push resumes instead of forking.
+    // The request is its own idempotency key: same app + same manifest content means
+    // the same deploy, so a retried push resumes instead of forking.
     const deployId = deriveDeployId(app.id, req.manifest);
     let dep = await this.wrapInternal('open deploy', () =>
       this.p.store.openDeploy({
@@ -157,11 +144,9 @@ export class Service implements Port {
     };
   }
 
-  // ---- identity resolution ----
-
-  // resolve maps an Identity onto an app, creating one if nothing matches. The
-  // order is the contract's: explicit id, then fingerprint autolink, then
-  // clientRef, then create.
+  // resolve maps an Identity onto an app, creating one if nothing matches. The order
+  // is the contract's: explicit id, then fingerprint autolink, then clientRef, then
+  // create.
   private async resolve(id: Identity): Promise<{ app: App; resolution: string }> {
     if (id.appId !== '') {
       const app = await this.wrapInternal('look up app', () =>
@@ -208,18 +193,14 @@ export class Service implements Port {
     return { app, resolution: Resolution.Created };
   }
 
-  // createApp allocates an app's permanent identity: its id, its script name,
-  // its URL, and its asset salt. None of these ever change, which is what makes
-  // an app's URL survive every redeploy.
+  // createApp allocates an app's permanent identity: id, script name, URL, and asset
+  // salt. None ever change, which is what makes an app's URL survive every redeploy.
   private async createApp(id: Identity): Promise<App> {
     const slug = sanitizeSlug(id.slug);
     const appId = 'app_' + randomHex(6);
-    // The script name is environment-independent: it is the app's bare identity
-    // in the dispatch namespace and the runtime upload/AppByScript key. The host
-    // suffix rides only on the URL host label, so staging serves the same script
-    // at "<script>-staging.280apps.run" while the staging dispatcher strips the
-    // suffix back to this bare name for lookup (platform/dispatcher, HOST_SUFFIX;
-    // tests/staging-cloudflare.md). Empty suffix ⇒ URL identical to Go.
+    // The script name is environment-independent: the app's bare identity in the
+    // dispatch namespace. The host suffix rides only on the URL host label, and the
+    // staging dispatcher strips it back to this bare name for lookup.
     const script = slug + '-' + urlToken(appId);
 
     const app: App = {
@@ -231,8 +212,8 @@ export class Service implements Port {
       url: 'https://' + script + this.p.hostSuffix + '.' + this.p.appDomain,
       salt: randomHex(16),
       fingerprint: id.gitRemote !== '' ? fingerprint(id.gitRemote, slug) : '',
-      // --new must always create, so it must not claim the nonce that would make
-      // the next push dedupe onto this app.
+      // --new must always create, so it must not claim the nonce that would make the
+      // next push dedupe onto this app.
       clientRef: id.forceNew ? '' : id.clientRef,
       storeId: '',
       activeDeploy: '',
@@ -241,9 +222,9 @@ export class Service implements Port {
     try {
       await this.p.store.createApp(app);
     } catch (err) {
-      // The unique index on (account, clientRef) is the create-dedup guard.
-      // Losing that race means a concurrent identical push already created the
-      // app, which is the answer we wanted anyway.
+      // The unique index on (account, clientRef) is the create-dedup guard. Losing
+      // that race means a concurrent identical push already created the app, which
+      // is the answer we wanted anyway.
       if (app.clientRef !== '') {
         const existing = await this.p.store
           .appByClientRef(this.accountId, app.clientRef)
@@ -255,11 +236,8 @@ export class Service implements Port {
     return app;
   }
 
-  // ---- PutBlob ----
-
-  // The size the client sent (Content-Length) is deliberately ignored: the blob
-  // store is framed to the size the open deploy's manifest declared, not to a
-  // claim the caller controls.
+  // The client's Content-Length (_size) is deliberately ignored: the blob store is
+  // framed to the size the open deploy's manifest declared, not a caller's claim.
   async putBlob(appId: string, digest: Digest, _size: number, body: BlobBody): Promise<void> {
     if (!validDigest(digest)) {
       throw new DeployErr({
@@ -278,17 +256,15 @@ export class Service implements Port {
       });
     }
 
-    // Idempotent re-send. Checked before the open-deploy test on purpose: a
-    // retry that arrives after activation completed is a success, not a
-    // protocol error.
+    // Idempotent re-send, checked before the open-deploy test: a retry arriving after
+    // activation completed is a success, not a protocol error.
     const has = await this.wrapInternal('check blob', () => this.p.blobs.has(appId, digest));
     if (has) return;
 
     const open = await this.wrapInternal('list open deploys', () => this.p.store.openDeploys(appId));
-    // The manifest that named this blob also declared its size. Look both up in
-    // one pass: an unwanted digest is rejected here (the upload endpoint is
-    // never general storage), and a wanted one carries the declared size the
-    // blob store frames the body to.
+    // The manifest that named this blob also declared its size. An unwanted digest is
+    // rejected here (the upload endpoint is never general storage); a wanted one
+    // carries the declared size the blob store frames the body to.
     const declared = declaredSize(open, digest);
     if (declared === null) {
       throw new DeployErr({
@@ -303,8 +279,8 @@ export class Service implements Port {
     } catch (err) {
       const de = asDeployErr(err);
       if (de !== null) throw de;
-      // A body that died mid-flight is transient and the blob is unchanged: the
-      // CLI's answer is to send it again.
+      // A body that died mid-flight is transient and the blob is unchanged: the CLI's
+      // answer is to send it again.
       throw new DeployErr({
         code: DeployCode.Unavailable,
         message: 'upload interrupted: ' + errText(err),
@@ -312,33 +288,19 @@ export class Service implements Port {
       });
     }
 
-    // No activation verb exists. When the last blob lands the server finalizes
-    // on its own, which is why there is nothing for an interrupted client to
-    // forget to call.
+    // No activation verb exists: when the last blob lands the server finalizes on its
+    // own, so there is nothing for an interrupted client to forget to call.
     for (const dep of open) {
       await this.settle(app, dep);
     }
   }
 
-  // ---- activation ----
-
-  // settle hands a content-complete deploy to the app's activator and returns the
-  // deploy's current state. It is the request-side half of activation: it checks
-  // that the deploy is not already terminal and that its content is complete, then
-  // enqueues the activation and reads back whatever the store now says.
-  //
-  // It does NOT claim the deploy. The claim (uploading -> activating) happens
-  // inside the activator, so nothing can wedge in activating from a lost handoff:
-  // if the enqueue is lost — this call throws, the handler dies, the isolate
-  // evicts — the deploy is still uploading, and the existing self-heal loop
-  // recovers it (the CLI re-syncs, this runs again, the activator is asked again).
-  // Deploy ids are content-derived and the CLI's poll loop has no attempt cap, so
-  // a deploy stuck in activating with no owner would be unrecoverable; keeping the
-  // claim on the activator's side of a durable handoff is what rules that out.
-  //
-  // In production the enqueue returns before the runtime activation completes, so
-  // the last blob's 204 ships ahead of the app going live; the CLI polls Status to
-  // a terminal state as it always has.
+  // settle hands a content-complete deploy to the app's activator and reads back its
+  // current state. It does NOT claim the deploy: the claim (uploading -> activating)
+  // happens inside the activator, past a durable handoff, so a lost enqueue leaves
+  // the deploy uploading for the self-heal loop rather than wedged in activating with
+  // no owner. In production the enqueue returns before activation completes, so the
+  // last blob's 204 ships ahead of the app going live.
   private async settle(app: App, dep: Deploy): Promise<Deploy> {
     if (stateTerminal(dep.state)) return dep;
     const missing = await this.wrapInternal('list missing blobs', () =>
@@ -348,21 +310,15 @@ export class Service implements Port {
 
     await this.wrapInternal('enqueue activation', () => this.p.activator.activate(app, dep.id));
 
-    // Report whatever the store now says: uploading (production, activation still
-    // in flight) or terminal (an inline activator that finished synchronously).
+    // Whatever the store now says: uploading (activation in flight) or terminal.
     const got = await this.wrapInternal('read deploy', () => this.p.store.deploy(app.id, dep.id));
     return got ?? dep;
   }
 
-  // ---- Delete ----
-
-  // The destructive tail runs through the activator (runtime, then content, then
-  // the row, in that order — every step idempotent, each only meaningful while the
-  // row still exists). Routing it through the same object activation goes through
-  // is what keeps a push already past its last blob from re-uploading the worker
-  // after this removes it: both serialize through one per-app object, and the
-  // activation re-checks the app row inside it. Dry-run and confirmation stay here
-  // in the request path.
+  // The destructive tail runs through the activator (runtime, then content, then the
+  // row, each idempotent and only meaningful while the row exists). Routing it through
+  // the same per-app object activation uses keeps a push past its last blob from
+  // re-uploading the worker after this removes it. Dry-run and confirmation stay here.
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const app = await this.wrapInternal('look up app', () =>
       this.p.store.app(this.accountId, req.appId),
@@ -375,13 +331,13 @@ export class Service implements Port {
       });
     }
 
-    // A dry run is how the CLI learns what it is about to destroy, so it must
-    // touch nothing.
+    // A dry run is how the CLI learns what it is about to destroy, so it touches
+    // nothing.
     if (req.confirm === '') {
       return { app: publicApp(app), deleted: false };
     }
-    // The server's slug is the authority, not the client's config file: a stale
-    // or hand-edited name must not be able to confirm a delete.
+    // The server's slug is the authority, not the client's config file: a stale or
+    // hand-edited name must not be able to confirm a delete.
     if (req.confirm !== app.slug) {
       throw new DeployErr({
         code: DeployCode.ConfirmationRequired,
@@ -393,8 +349,6 @@ export class Service implements Port {
     const deleted = await this.wrapInternal('delete app', () => this.p.activator.delete(app));
     return { app: publicApp(app), deleted };
   }
-
-  // ---- Status ----
 
   async status(appId: string, deployId: string): Promise<DeployStatus> {
     const app = await this.wrapInternal('look up app', () => this.p.store.app(this.accountId, appId));
@@ -422,11 +376,8 @@ export class Service implements Port {
   }
 }
 
-// ---- preflight ----
-
-// preflight rejects manifests the substrate cannot run, before any state
-// changes. Failing here rather than at request time is the whole point: a push
-// that cannot work must not produce a broken app.
+// preflight rejects manifests the substrate cannot run, before any state changes: a
+// push that cannot work must not produce a broken app.
 export function preflight(m: Manifest): void {
   if (m.kind !== MANIFEST_KIND_BUNDLE) {
     throw new DeployErr({
@@ -435,9 +386,8 @@ export function preflight(m: Manifest): void {
       fix: 'upgrade the 280 CLI, then run 280 push again',
     });
   }
-  // Manifest sizes are raw, so this is only the coarse half of the envelope
-  // check: raw over the limit can never compress under it. The exact gzipped
-  // limit is enforced at activation, where the bytes are.
+  // Only the coarse half of the envelope check: manifest sizes are raw, and raw over
+  // the limit can never compress under it. The exact gzipped limit is at activation.
   if (m.worker.size > MAX_WORKER_GZIP_BYTES) {
     throw new DeployErr({
       code: DeployCode.PreflightRejected,
@@ -457,10 +407,9 @@ export function preflight(m: Manifest): void {
   for (const c of m.cache) {
     checkCacheKey(c.path);
   }
-  // Every digest reaches the blob store, which builds a filesystem path out of
-  // it. Unchecked, a short digest panics on the fan-out slice and a crafted one
-  // escapes the app's directory. PutBlob already rejects these; the manifest is
-  // the other way in.
+  // Every digest reaches the blob store, which builds a filesystem path out of it.
+  // Unchecked, a short digest panics on the fan-out slice and a crafted one escapes
+  // the app's directory. The manifest is the other way in besides PutBlob.
   for (const b of manifestBlobs(m)) {
     if (!validDigest(b.digest)) {
       throw new DeployErr({
@@ -472,12 +421,11 @@ export function preflight(m: Manifest): void {
   }
 }
 
-// maxCacheKeyBytes is the KV key limit the cache seed is written under.
+// The KV key limit the cache seed is written under.
 const MAX_CACHE_KEY_BYTES = 512;
 
-// checkCacheKey rejects what the cache namespace would. A cache path is a KV
-// key, not a URL, so no leading slash is required. What is required is that the
-// key survive the bulk write at activation.
+// checkCacheKey rejects what the cache namespace would. A cache path is a KV key,
+// not a URL; what is required is that the key survive the bulk write at activation.
 function checkCacheKey(key: string): void {
   const reject = (why: string): never => {
     throw new DeployErr({
@@ -497,11 +445,9 @@ function checkCacheKey(key: string): void {
   }
 }
 
-// declaredSize returns the size an open deploy's manifest declared for digest,
-// or null when no open deploy names it. The size is the byte length the blob
-// store frames the upload to; null is the "not named by any open deploy"
-// rejection. The first match wins: a digest is content, so any manifest that
-// names it declares the same size.
+// declaredSize returns the size an open deploy's manifest declared for digest, or
+// null when no open deploy names it. First match wins: a digest is content, so any
+// manifest naming it declares the same size.
 function declaredSize(open: Deploy[], digest: Digest): number | null {
   for (const d of open) {
     for (const b of manifestBlobs(d.manifest)) {
@@ -519,25 +465,22 @@ function notFound(appId: string, deployId: string): DeployErr {
   });
 }
 
-// ---- naming / derivations (deploysvc.go). Proven against golden vectors. ----
-
 const BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
-// deriveDeployId makes the deploy id a pure function of what is being deployed.
-// No client-generated key, and therefore no resume journal (deploysvc.go:586).
+// deriveDeployId makes the deploy id a pure function of what is being deployed. No
+// client-generated key, and therefore no resume journal (deploysvc.go:586).
 export function deriveDeployId(appId: string, m: Manifest): string {
   return 'dep_' + digestBytes(utf8(appId + ':' + canonicalDigest(m))).slice(0, 16);
 }
 
-// fingerprint is the project identity used for autolink. The raw git remote
-// never lands in the database (deploysvc.go:592).
+// fingerprint is the project identity used for autolink. The raw git remote never
+// lands in the database (deploysvc.go:592).
 export function fingerprint(gitRemote: string, slug: string): string {
   return digestBytes(utf8('fp:' + gitRemote + ':' + slug));
 }
 
-// urlToken is the unguessable half of an app URL: 10 base36 characters derived
-// from the app id. seed is the hex-string digest; seed[i] is an ASCII hex char
-// (deploysvc.go:601).
+// urlToken is the unguessable half of an app URL: 10 base36 characters derived from
+// the app id (deploysvc.go:601).
 export function urlToken(appId: string): string {
   const seed = digestBytes(utf8('token:' + appId));
   let tok = '';
@@ -549,8 +492,8 @@ export function urlToken(appId: string): string {
 
 const NOT_SLUG_CHAR = /[^a-z0-9]+/g;
 
-// sanitizeSlug reduces a project name to something legal as both a hostname
-// label and a runtime script name (deploysvc.go:614).
+// sanitizeSlug reduces a project name to something legal as both a hostname label
+// and a runtime script name (deploysvc.go:614).
 export function sanitizeSlug(raw: string): string {
   let s = raw.toLowerCase().replace(NOT_SLUG_CHAR, '-');
   s = trimDash(s);
@@ -588,8 +531,8 @@ export function errText(err: unknown): string {
   return String(err);
 }
 
-// internal wraps a server-side fault as the seam's retryable error. The agent
-// never sees our stack; it sees "try again".
+// internal wraps a server-side fault as the seam's retryable error. The agent never
+// sees our stack; it sees "try again".
 export function internal(what: string, err: unknown): DeployErr {
   return new DeployErr({
     code: DeployCode.Unavailable,

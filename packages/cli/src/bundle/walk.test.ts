@@ -1,6 +1,5 @@
-// walkAssets shaping and ordering. The asset list order is part of the manifest
-// bytes, so it must match Go's filepath.WalkDir: lexical by basename within each
-// directory, pre-order.
+// The asset list order is part of the manifest bytes, so it must match Go's
+// filepath.WalkDir: lexical by basename within each directory, pre-order.
 
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,8 +37,8 @@ describe('walkAssets', () => {
 
   it('walks pre-order, lexically sorted by basename within each directory', () => {
     const dir = tempDir();
-    // Names chosen so directory recursion order is observable: "a" (dir) sorts
-    // before "b.txt" (file), and "z" (dir) after.
+    // Names chosen so recursion order is observable: "a" (dir) sorts before
+    // "b.txt" (file), "z" (dir) after.
     write(join(dir, 'b.txt'), '1');
     write(join(dir, 'a', 'inner.txt'), '2');
     write(join(dir, 'a', 'aa.txt'), '3');

@@ -1,6 +1,5 @@
-// Holds the Fake to the seam's behavioral contract: the same 20 cases the Go
-// suite runs, ported in src/deploy/conformance.ts. The production HTTP adapter
-// runs this identical array over the network at Gate C (TWO80_CONFORMANCE_URL).
+// Holds the Fake to the shared behavioral suite (src/deploy/conformance.ts); the
+// HTTP adapter runs the same array over the network via TWO80_CONFORMANCE_URL.
 
 import { describe, it } from 'vitest';
 import { cases } from '../src/deploy/conformance.js';

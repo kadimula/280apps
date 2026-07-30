@@ -1,6 +1,6 @@
-// init detects a project's framework and writes .280/config.json. push does
-// this for the agent (auto-init), so the two share ensureInit and can never
-// diverge. Spec: cli/internal/app/init.go. Go is normative.
+// init detects a project's framework and writes .280/config.json. push does this
+// for the agent (auto-init), so the two share ensureInit and can never diverge.
+// Spec: cli/internal/app/init.go; Go is normative.
 
 import { randomBytes } from 'node:crypto';
 import * as config from './config.js';
@@ -24,10 +24,9 @@ export interface Initialized {
   created: boolean;
 }
 
-// ensureInit loads the project config, creating it by detection if absent. It
-// is the shared core of `280 init` and the auto-init step of `280 push`. Safe
-// to re-run: an initialized project is returned unchanged. Overrides are ""
-// when not passed.
+// ensureInit loads the project config, creating it by detection if absent. Shared
+// core of `280 init` and push's auto-init; safe to re-run (an initialized project
+// is returned unchanged). Overrides are "" when not passed.
 export function ensureInit(root: string, nameOverride: string, frameworkOverride: string): Initialized {
   const { cfg, found } = config.load(root);
   if (found) return { cfg, created: false };
@@ -40,9 +39,8 @@ export function ensureInit(root: string, nameOverride: string, frameworkOverride
   return { cfg: created, created: true };
 }
 
-// newClientRef is a random create-dedup nonce. It closes the
-// crash-between-create-and-persist window for projects with no git remote (the
-// server dedupes app creation on it).
+// newClientRef is a random create-dedup nonce, closing the
+// crash-between-create-and-persist window for projects with no git remote.
 export function newClientRef(): string {
   return 'cr_' + randomBytes(16).toString('hex');
 }

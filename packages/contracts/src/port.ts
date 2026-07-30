@@ -1,10 +1,6 @@
-// The CLI-side deploy seam. Spec: contracts/deploy/deploy.go (Port). Go is
-// normative, including the idempotency invariants documented inline there.
-//
-// Four verbs; Sync carries all the deploy intelligence, PutBlob and Status are
-// deliberately dumb, and Delete is the only one that destroys anything. Every
-// method is idempotent and safe to re-invoke after any interruption: the
-// caller's entire retry strategy is "run the same sequence again from Sync".
+// The CLI-side deploy seam. Spec: contracts/deploy/deploy.go (normative). Every
+// method is idempotent and safe to re-invoke after any interruption: the caller's
+// entire retry strategy is "run the same sequence again from Sync".
 
 import type { Readable } from 'node:stream';
 import type {
@@ -16,11 +12,9 @@ import type {
   DeleteResult,
 } from './types.js';
 
-// BlobBody is the streamed content of one blob. It must be consumed as a raw
-// stream, never a buffered body (plan risk register: 100 MiB PUTs). The
-// async-iterable form is what the filesystem blob store and tests hand in; the
-// web ReadableStream form lets the R2 adapter forward the request body straight
-// through without re-wrapping it.
+// Streamed content of one blob, consumed as a raw stream never a buffered body
+// (100 MiB PUTs). Async-iterable is what the fs blob store and tests hand in; the
+// web ReadableStream form lets the R2 adapter forward the request body unchanged.
 export type BlobBody =
   | Readable
   | ReadableStream<Uint8Array>

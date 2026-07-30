@@ -6,21 +6,15 @@
 	"workers_dev": false,
 	"observability": { "enabled": true },
 
-	// Development serves apps at <script>-development.280apps.run: one label under
-	// the zone, so the free Universal SSL wildcard (*.280apps.run) already covers
-	// the TLS. This route is more specific than prod's *.280apps.run/* (its literal
-	// tail is longer), so *-development hosts route here while every prod host stays
-	// on the prod dispatcher. A prod script is <slug>-<10 base36 token>, whose
-	// first label never ends in "-development", so this route can never shadow prod.
+	// This route's longer literal tail is more specific than prod's *.280apps.run/*, and
+	// prod script labels never end in "-development", so dev routing can't shadow prod.
 	"routes": [{ "pattern": "*-development.280apps.run/*", "zone_name": "280apps.run" }],
 
-	// Switchboard into the development dispatch namespace user Workers upload to.
+	// Binding into the development dispatch namespace user Workers upload to.
 	"dispatch_namespaces": [{ "binding": "DISPATCHER", "namespace": "apps-development" }],
 
-	// HOST_SUFFIX turns on the -development suffix stripping in src/index.js so the
-	// dispatcher recovers the bare script name. Prod sets no such var.
+	// HOST_SUFFIX turns on -development suffix stripping in src/index.js; prod sets none.
 	"vars": { "WEB_ORIGIN": "https://280apps.com", "HOST_SUFFIX": "-development" }
 
-	// Same as prod: NO compatibility_flags on the dispatcher itself; those are
-	// set per tenant script at upload time by the platform.
+	// Same as prod: no compatibility_flags here; those are set per tenant script at upload.
 }

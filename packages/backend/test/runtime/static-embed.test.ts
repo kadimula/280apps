@@ -1,7 +1,6 @@
-// The embedded StaticWorker must equal the verbatim static.js on disk, byte for
-// byte. static.js is the source of truth (copied verbatim from the Go tree);
-// embed.ts compiles it in as a base64 constant so the module is self-contained.
-// This test is the guard that the two never drift.
+// The embedded StaticWorker must stay byte-identical to static.js on disk, the
+// source of truth; embed.ts compiles it in as a base64 constant. This test guards
+// against the two drifting.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

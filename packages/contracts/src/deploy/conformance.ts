@@ -1,16 +1,7 @@
-// The deploy seam's behavioral test suite. Every adapter of Port must pass it:
-// Fake in unit tests, and the production HTTP adapter pointed at the real
-// service in integration. Drift between fake and service is a failing build,
-// which is what keeps the fake an executable contract rather than a stale stub.
-//
-// Spec: contracts/deploy/conformance/conformance.go. Go is normative — all 20
-// named cases, the URL regex, and wantCode asserting a fix on every
-// non-retryable error are ported exactly.
-//
-// This module is framework-agnostic: it exports `cases`, an array of named
-// checks that throw on failure. A test file registers them with its runner, and
-// the same array runs against the fake (unit) and the HTTP client (integration,
-// via TWO80_CONFORMANCE_URL) with no change here.
+// The deploy seam's behavioral suite: every Port adapter must pass it, so drift
+// between the fake and the real service is a failing build. Spec:
+// contracts/deploy/conformance/conformance.go (normative). Framework-agnostic:
+// exports `cases`, run against the fake (unit) and the HTTP client (integration).
 
 import {
   Resolution,
@@ -30,15 +21,13 @@ import type { Port } from '../port.js';
 import { Readable } from 'node:stream';
 import { asDeployError, type DeployErr } from './error.js';
 
-// MakePort returns a fresh, empty Port (an empty account) for one case.
+// A fresh, empty Port (an empty account) for one case.
 export type MakePort = () => Port;
 
 export interface ConformanceCase {
   name: string;
   run: (mk: MakePort) => Promise<void>;
 }
-
-// ---- assertion + error helpers ----
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -48,9 +37,8 @@ function q(s: string): string {
   return JSON.stringify(s);
 }
 
-// wantCode runs fn expecting it to reject with the seam's typed error carrying
-// code, and enforces the same invariants Go's wantCode does: non-empty message,
-// and a fix on every non-retryable error (conformance.go:143).
+// Expects fn to reject with the typed error carrying code, and enforces the
+// invariants: non-empty message, and a fix on every non-retryable error.
 async function wantCode(fn: () => Promise<unknown>, code: string): Promise<DeployErr> {
   let err: unknown;
   let threw = false;
@@ -69,8 +57,6 @@ async function wantCode(fn: () => Promise<unknown>, code: string): Promise<Deplo
   return de;
 }
 
-// ---- bundle + identity helpers (conformance.go:44) ----
-
 interface Bundle {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
@@ -84,8 +70,8 @@ function mkBundle(worker: Uint8Array, assets: Record<string, Uint8Array> | null)
   return mkCacheBundle(worker, assets, null);
 }
 
-// mkCacheBundle is mkBundle plus a prerendered cache seed, keyed the way the
-// adapter emits it ("<buildId>/<route>.cache") rather than by URL path.
+// mkBundle plus a prerendered cache seed, keyed the way the adapter emits it
+// ("<buildId>/<route>.cache") rather than by URL path.
 function mkCacheBundle(
   worker: Uint8Array,
   assets: Record<string, Uint8Array> | null,
@@ -117,8 +103,7 @@ function identity(slug: string, remote: string): Identity {
   return { appId: '', slug, framework: 'next', gitRemote: remote, clientRef: '', forceNew: false };
 }
 
-// bodyOf yields the blob as one Uint8Array chunk (a Node Readable), the streamed
-// form PutBlob consumes. A fresh stream per call, exactly as Go's bytes.Reader.
+// A fresh stream per call, the streamed form PutBlob consumes.
 function bodyOf(data: Uint8Array): Readable {
   return Readable.from([Buffer.from(data)]);
 }
@@ -135,7 +120,7 @@ async function putAll(p: Port, appId: string, missing: Digest[], b: Bundle): Pro
   }
 }
 
-// pushToLive runs the exact loop the CLI runs: Sync, upload missing, poll.
+// The exact loop the CLI runs: Sync, upload missing, poll.
 async function pushToLive(p: Port, id: Identity, b: Bundle): Promise<SyncResult> {
   const res = await mustSync(p, id, b.manifest);
   await putAll(p, res.app.id, res.missing, b);
@@ -143,8 +128,7 @@ async function pushToLive(p: Port, id: Identity, b: Bundle): Promise<SyncResult>
   return res;
 }
 
-// waitLive polls until the deploy activates, which the platform does on its own
-// once the last blob lands.
+// Polls until the deploy activates, which the platform does on its own once the last blob lands.
 async function waitLive(p: Port, appId: string, deployId: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
     const st = await p.status(appId, deployId);
@@ -158,10 +142,8 @@ function hasDigest(list: Digest[], want: Digest): boolean {
   return list.includes(want);
 }
 
-// URL scheme (conformance.go:164): <slug>-<10 base36>.<domain>.
+// URL scheme: <slug>-<10 base36>.<domain>.
 const urlRe = /^https:\/\/[a-z0-9-]+-[a-z0-9]{10}\.[a-z0-9.-]+$/;
-
-// ---- the 20 cases, in the order conformance.go registers them ----
 
 export const cases: ConformanceCase[] = [
   {

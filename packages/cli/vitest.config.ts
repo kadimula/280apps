@@ -2,9 +2,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 // Resolve @280/contracts (and its adapter subpaths) to TS source so tests run
-// without a prior build step (the workspace package publishes ./dist, which CI
-// builds separately). Array form: subpath aliases must precede the bare package
-// alias so a subpath import is not misrouted through index.ts.
+// without a prior build. Subpath aliases must precede the bare package alias so a
+// subpath import is not misrouted through index.ts.
 const contracts = (rel: string) => fileURLToPath(new URL(`../contracts/src/${rel}`, import.meta.url));
 
 export default defineConfig({

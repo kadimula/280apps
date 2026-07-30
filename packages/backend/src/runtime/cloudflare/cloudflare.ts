@@ -1,28 +1,17 @@
-// Runs deployed apps on Cloudflare Workers for Platforms: one User Worker per
-// app inside a dispatch namespace, with static assets, a D1 store, and the ISR
-// cache attached as bindings.
-// Spec: platform/internal/runtime/cloudflare/cloudflare.go. Go is normative.
+// Runs deployed apps on Cloudflare Workers for Platforms: one User Worker per app in
+// a dispatch namespace, with static assets, a D1 store, and the ISR cache as
+// bindings. Go is normative (cloudflare.go).
 //
-// Activation is an ordered sequence, in this order and for these reasons:
+// Activation is an ordered sequence, each step for a reason:
+//   1. Create the app's D1 store if absent — a script binding a missing DB is rejected.
+//   2. Open an asset upload session (path -> hash); Cloudflare asks only for hashes it lacks.
+//   3. Upload those hashes, collect the completion token.
+//   4. Seed the ISR cache before the flip, under the new build id so the live version cannot read it.
+//   5. PUT the script with that token and bindings — the atomic flip.
 //
-//   1. Create the app's D1 store, if it has none. First, because a script that
-//      binds a database that does not exist is rejected outright.
-//   2. Open an asset upload session with a manifest of path -> hash. Cloudflare
-//      answers with only the hashes it lacks, so a server-only change uploads
-//      nothing.
-//   3. Upload those hashes and collect the completion token.
-//   4. Write the deploy's ISR cache seed into the KV namespace, before the flip:
-//      a script already live must never observe a half-seeded cache for its own
-//      build id. Seed keys carry the new build id, so the currently serving
-//      version cannot read them and the write is invisible until step 5.
-//   5. PUT the script into the dispatch namespace with that token and the
-//      bindings. This is the atomic flip.
-//
-// Every hash crossing into Cloudflare is salted with the app's own salt: asset
-// hashes are namespace-scoped, so without the salt two tenants holding identical
-// bytes would share an asset and observe each other's dedupe hits. That is a
-// leak fix, not an optimization, and cfHash is the only way this package names an
-// asset.
+// Every hash is salted with the app's salt: asset hashes are namespace-scoped, so
+// without it two tenants with identical bytes would share an asset and observe each
+// other's dedupe hits. A leak fix, not an optimization; cfHash is the only namer.
 
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
@@ -44,47 +33,37 @@ export const DEFAULT_COMPATIBILITY_DATE = '2026-07-23';
 
 const mainModule = 'worker.js';
 
-// Bounds on one bulk KV write. Cloudflare's own limits are 10,000 pairs and a
-// 100MB request; both are held well below because the request is all-or-nothing
-// and a rejected batch fails the whole deploy. The byte budget is counted on raw
-// content, leaving room for base64's 4/3 inflation and the JSON envelope.
-//
-// 16 MiB, not the 60 MiB a Node process could afford: seedCache base64-encodes a
-// batch and then JSON.stringify's it, so the transient peak is several times the
-// raw budget. Activation now runs inside the AppActivator Durable Object, whose
-// isolate is capped at 128 MiB; a 60 MiB batch's encoded peak blows past that,
-// while 16 MiB keeps it comfortably under. (If a real deploy ever needs larger
-// ISR seeds, the escape hatch is to split the bulk writes across successive alarm
-// invocations of the object — designed, not built; see app-activator.ts.)
+// Bounds on one all-or-nothing bulk KV write, held well below Cloudflare's limits.
+// 16 MiB, not 60: seedCache base64s then JSON.stringifies a batch (peak several times
+// raw), inside the AppActivator Durable Object's 128 MiB isolate.
 const KV_BULK_MAX_PAIRS = 1000;
 const KV_BULK_MAX_BYTES = 16 << 20;
 
-// FetchLike is the subset of the global fetch this runtime uses. Injected so
-// tests can stand in for Cloudflare; production defaults to the platform fetch.
+// FetchLike is the subset of global fetch this runtime uses, injected so tests can
+// stand in for Cloudflare.
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
-// Config is everything the runtime needs about the Cloudflare account. Nothing
-// here is per-app.
+// Config is the Cloudflare account config; nothing here is per-app.
 export interface Config {
   accountId: string;
   apiToken: string;
-  // namespace is the dispatch namespace User Workers live in.
+  // The dispatch namespace User Workers live in.
   namespace: string;
-  // isrCacheKV backs Next.js incremental static regeneration. Wired on every
-  // app rather than opt-in, because ISR silently no-ops without it.
+  // Backs Next.js ISR. Wired on every app rather than opt-in, because ISR silently
+  // no-ops without it.
   isrCacheKV: string;
-  // compatibilityDate pins the Workers runtime semantics user code sees.
+  // Pins the Workers runtime semantics user code sees.
   compatibilityDate?: string;
-  // d1Location is the primary location hint for app stores.
+  // Primary location hint for app stores.
   d1Location?: string;
   fetch?: FetchLike;
-  // timeoutMs bounds one request. Activation holds the CLI's connection open, so
-  // this bounds how long a push can appear hung.
+  // Bounds one request. Activation holds the CLI's connection open, so this bounds
+  // how long a push can appear hung.
   timeoutMs?: number;
 }
 
-// apiError is a non-2xx (or success:false) response from Cloudflare, carrying the
-// status so Delete can turn a 404 into idempotent success.
+// A non-2xx (or success:false) response, carrying the status so Delete can turn a 404
+// into idempotent success.
 class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -95,8 +74,7 @@ class ApiError extends Error {
   }
 }
 
-// gone turns "already deleted" (404) into success, which is the whole of
-// Delete's idempotency. Any other error passes through.
+// gone turns "already deleted" (404) into success, the whole of Delete's idempotency.
 function gone(err: unknown): unknown | null {
   if (err instanceof ApiError && err.status === 404) {
     return null;
@@ -104,11 +82,10 @@ function gone(err: unknown): unknown | null {
   return err;
 }
 
-// cfHash is the app-scoped name of a blob inside the dispatch namespace.
-// Cloudflare wants a 32-hex-character content hash and treats equal hashes as
-// the same asset across the whole namespace; salting with the app's salt keeps
-// two apps' identical bytes distinct. Spec: cloudflare.go cfHash; the width is
-// 16 bytes = 32 hex chars, asserted by the frozen cfHash vectors.
+// cfHash is the app-scoped name of a blob inside the dispatch namespace. Cloudflare
+// treats equal hashes as the same asset namespace-wide, so salting with the app's
+// salt keeps two apps' identical bytes distinct. 16 bytes = 32 hex chars (cfHash
+// vectors are frozen).
 export function cfHash(salt: string, d: Digest): string {
   const sum = createHash('sha256').update(salt + ':' + d).digest();
   return sum.subarray(0, 16).toString('hex');
@@ -118,16 +95,14 @@ function storeName(app: RuntimeApp): string {
   return 'store-' + app.id.replace(/^app_/, '');
 }
 
-// notFoundHandling decides what a request for an unknown path gets before it
-// reaches server code. Next.js owns its own 404s; a static site has no server
-// code to ask, so the asset router answers.
+// notFoundHandling decides what an unknown path gets before server code. Next.js owns
+// its own 404s; a static site has none to ask, so the asset router answers.
 function notFoundHandling(framework: string): string {
   return framework === 'static' ? 'single-page-application' : 'none';
 }
 
-// webTypes is what a deployed site is actually made of. An explicit table rather
-// than a host mime lookup alone, so the content type a visitor receives does not
-// depend on which image the control plane happens to run in.
+// An explicit table rather than a host mime lookup, so the content type a visitor
+// receives does not depend on which image the control plane runs in.
 const webTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
@@ -157,17 +132,15 @@ const webTypes: Record<string, string> = {
   '.mp3': 'audio/mpeg',
 };
 
-// contentType is what a visitor's browser will be told this asset is. Cloudflare
-// stores the upload's Content-Type verbatim and serves it back, so this is the
-// only place the answer is decided. An unrecognized extension falls back to
-// octet-stream, which browsers download rather than render.
+// contentType decides what a visitor's browser is told an asset is: Cloudflare stores
+// and serves the upload's Content-Type verbatim, so this is the only place it is set.
+// An unrecognized extension falls back to octet-stream (browsers download it).
 export function contentType(urlPath: string): string {
   const ext = extname(urlPath).toLowerCase();
   return webTypes[ext] ?? 'application/octet-stream';
 }
 
-// kvPair is one entry of a bulk write body. Cloudflare takes a bare array of
-// these, not an object wrapping one.
+// One entry of a bulk write body; Cloudflare takes a bare array of these.
 interface KVPair {
   key: string;
   value: string;
@@ -229,9 +202,8 @@ export class Runtime implements RuntimeSeam {
     return out;
   }
 
-  // Delete removes the app from the runtime. The script goes first: it is what
-  // visitors reach, so an interruption after this point leaves an unreachable
-  // database rather than a live app whose data has been pulled out from under it.
+  // Delete removes the app from the runtime. The script goes first: an interruption
+  // after it leaves an unreachable database rather than a live app with no data.
   async delete(app: RuntimeApp): Promise<void> {
     const script = `/accounts/${this.cfg.accountId}/workers/dispatch/namespaces/${this.cfg.namespace}/scripts/${app.script}`;
     try {
@@ -249,8 +221,6 @@ export class Runtime implements RuntimeSeam {
       if (err) throw new Error('delete app store: ' + errMsg(err));
     }
   }
-
-  // ---- step 1: the app's store ----
 
   private async createStore(app: RuntimeApp): Promise<string> {
     const body: Record<string, unknown> = { name: storeName(app) };
@@ -292,8 +262,6 @@ export class Runtime implements RuntimeSeam {
     return '';
   }
 
-  // ---- steps 2 and 3: static assets ----
-
   // uploadAssets runs the upload session and returns the completion token that
   // authorizes attaching these assets to the script.
   private async uploadAssets(act: Activation): Promise<string> {
@@ -313,9 +281,8 @@ export class Runtime implements RuntimeSeam {
     const jwt = session?.jwt ?? '';
     const buckets = session?.buckets ?? [];
 
-    // No buckets means Cloudflare already holds every asset, and the session
-    // token is itself the completion token. The common case for a server-only
-    // change, and the reason a redeploy uploads almost nothing.
+    // No buckets means Cloudflare already holds every asset and the session token is
+    // itself the completion token: the common server-only-change case.
     if (countFiles(buckets) === 0) {
       return jwt;
     }
@@ -331,9 +298,8 @@ export class Runtime implements RuntimeSeam {
     return completion;
   }
 
-  // uploadBucket sends one bucket of assets. Cloudflare requires base64 bodies in
-  // a multipart form whose field names are the asset hashes, authenticated with
-  // the session JWT rather than the account token.
+  // uploadBucket sends one bucket of assets: base64 bodies in a multipart form whose
+  // field names are the asset hashes, authenticated with the session JWT.
   private async uploadBucket(
     act: Activation,
     jwt: string,
@@ -363,12 +329,9 @@ export class Runtime implements RuntimeSeam {
     return res?.jwt ?? '';
   }
 
-  // ---- step 4: the ISR cache seed ----
-
-  // seedCache writes the deploy's prerendered ISR entries into the cache
-  // namespace. Keys are written verbatim: the worker derives the same key from
-  // its own build id at read time, so any prefix or normalization here is a cache
-  // that never hits. KV writes are upserts, which is this step's idempotency.
+  // seedCache writes the deploy's prerendered ISR entries into the cache namespace.
+  // Keys are verbatim: the worker derives the same key from its build id at read time,
+  // so any normalization here never hits. KV upserts are this step's idempotency.
   private async seedCache(act: Activation): Promise<void> {
     if (this.cfg.isrCacheKV === '' || act.manifest.cache.length === 0) return;
     const path = `/accounts/${this.cfg.accountId}/storage/kv/namespaces/${this.cfg.isrCacheKV}/bulk`;
@@ -401,11 +364,8 @@ export class Runtime implements RuntimeSeam {
     await flush();
   }
 
-  // ---- step 5: the script ----
-
-  // workerModule returns the JavaScript to run for this deploy. Static-only apps
-  // have no server code of their own, so the platform supplies the serving worker
-  // rather than shipping a stub through the CLI.
+  // workerModule returns the JavaScript to run for this deploy. Static-only apps have
+  // no server code, so the platform supplies the serving worker rather than the CLI.
   private async workerModule(act: Activation): Promise<Uint8Array> {
     if (act.app.framework === 'static') {
       return StaticWorker;
@@ -417,8 +377,8 @@ export class Runtime implements RuntimeSeam {
     }
   }
 
-  // putScript uploads the User Worker. Returning success is the moment the app
-  // starts serving this deploy.
+  // putScript uploads the User Worker. Its success is the moment the app starts
+  // serving this deploy.
   private async putScript(
     act: Activation,
     worker: Uint8Array,
@@ -458,11 +418,9 @@ export class Runtime implements RuntimeSeam {
     }
   }
 
-  // bindings are what server code sees on env. Every app gets the same set.
-  //
-  // Notably absent: WORKER_SELF_REFERENCE. Service bindings cannot resolve a
-  // script inside a dispatch namespace (Cloudflare API 10143), so the OpenNext
-  // template's default fails every deploy. ISR still works without it.
+  // bindings are what server code sees on env; every app gets the same set. Notably
+  // absent: WORKER_SELF_REFERENCE — service bindings cannot resolve a script inside a
+  // dispatch namespace (Cloudflare API 10143), and ISR still works without it.
   bindings(storeId: string): Record<string, unknown>[] {
     const out: Record<string, unknown>[] = [
       { type: 'assets', name: 'ASSETS' },
@@ -482,10 +440,8 @@ export class Runtime implements RuntimeSeam {
     return out;
   }
 
-  // ---- transport ----
-
-  // call issues a JSON request against the Cloudflare API. jwt, when set,
-  // replaces the account token (asset uploads authenticate with the session JWT).
+  // call issues a JSON request against the Cloudflare API. jwt, when set, replaces the
+  // account token (asset uploads authenticate with the session JWT).
   private async call(
     method: string,
     path: string,
@@ -523,7 +479,7 @@ export class Runtime implements RuntimeSeam {
   }
 
   // send executes a request and unwraps Cloudflare's envelope. Cloudflare reports
-  // failures both by status and by `success: false` with a 200, so both checked.
+  // failures both by status and by `success: false` on a 200, so both are checked.
   private async send(url: string, init: RequestInit, wantResult: boolean): Promise<unknown> {
     let resp: Response;
     try {

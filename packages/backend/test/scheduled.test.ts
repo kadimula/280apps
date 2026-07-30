@@ -1,8 +1,7 @@
-// The scheduled cleanup sweep (worker.ts scheduled() → sweepExpired): it deletes
-// expired browser sessions and device codes and lapsed login-rate windows,
-// leaves everything still valid, and logs the per-table counts. Invisible on the
-// wire; the store double stands in for the real Postgres, which implements the
-// same deleteExpired seam.
+// The scheduled cleanup sweep (worker.ts scheduled() → sweepExpired): deletes
+// expired sessions, device codes, and lapsed login-rate windows, leaves valid
+// rows, and logs the per-table counts. The store double stands in for the real
+// Postgres, which implements the same deleteExpired seam.
 
 import { describe, expect, it } from 'vitest';
 import { sweepExpired } from '../src/deps.js';
@@ -43,7 +42,6 @@ describe('scheduled cleanup', () => {
 
     expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1 });
 
-    // Fresh rows survive; expired ones are gone.
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.sessionByHash('sess_old')).toBeNull();
     expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();

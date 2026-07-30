@@ -1,10 +1,5 @@
-// Golden TOON stdout fixtures (plan §4.4). Hand-authored AXI output per §3a
-// (NOT recorded from Go), committed under testdata/. Each scenario asserts:
-//   - stdout byte-equals the committed fixture (version string normalized), and
-//   - the exit code and, for errors, the {code, fix} match the Go behavior the
-//     CLI mirrors (cli/internal/app/*.go). Those Go-derived expectations are
-//     encoded inline as `check`.
-// Regenerate with UPDATE_FIXTURES=1 (then review the diff), assert otherwise.
+// Golden TOON stdout fixtures (§4.4) under testdata/: each asserts byte-equal
+// stdout (version normalized) plus Go-parity {code, fix}. Regenerate: UPDATE_FIXTURES=1.
 
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -37,7 +32,7 @@ function normalize(s: string): string {
 
 interface Scenario {
   name: string; // fixture file basename
-  code: number; // expected exit code
+  code: number;
   check?: { error?: string; fix?: string }; // Go-parity cross-check on {code, fix}
   run: () => Promise<RunResult>;
 }

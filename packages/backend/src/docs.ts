@@ -1,33 +1,20 @@
-// docs is the backend home of every agent-facing product doc. The control plane
-// owns these because agents fetch them at stable URLs, and the frontend is only
-// a thin proxy that keeps those URLs live (frontend/app/setup.md, /the-280-way,
-// /platform-support.md). One source here produces every representation:
-//
-//   - setupMarkdown()            the entry doc an agent fetches first
-//   - platformSupportMarkdown()  the full support matrix, rendered as a table
-//   - docsCapabilities()         the same matrix as JSON, for the styled /docs page
-//   - the280WayMarkdown()        the opinionated build reference
-//
-// docsRoutes() mounts these as unauthenticated GETs; api.ts wires it in one line.
+// docs is the backend home of every agent-facing product doc: the control plane owns
+// these because agents fetch them at stable URLs that the frontend only proxies.
+// docsRoutes() mounts them as unauthenticated GETs; api.ts wires it in one line.
 
 import { Hono } from 'hono';
 
-// ============================ support matrix ============================
-//
-// Single source of truth for what 280 supports today. Moved here from the
-// frontend so the backend owns it: the deploy constraints live in the CLI
-// bundler (packages/cli/src/bundle/), and this is the readable projection of
-// that plus the runtime limits and the platform features 280 itself offers. It
-// cannot be derived from the bundler cheaply, so when a stack, the adapter
-// version, or a platform feature changes, revisit these rows.
+// Single source of truth for what 280 supports today. Not cheaply derivable from the
+// CLI bundler, so revisit these rows when a stack, adapter version, or platform
+// feature changes.
 
 export type CapabilityStatus = 'supported' | 'unsupported';
 
 export interface Feature {
   name: string;
   status: CapabilityStatus;
-  // Why, when it is not simply supported. Shown to humans and agents alike.
-  // Supported rows may also carry a note that adds the one detail a "yes" omits.
+  // Why, when not simply supported; a supported row may also add the one detail a
+  // "yes" omits.
   note?: string;
 }
 
@@ -38,10 +25,7 @@ export interface CapabilityGroup {
 
 // The stacks a push understands, each with the features verified end to end.
 // Anything not verified is listed unsupported on purpose: a guessed checkmark
-// misleads the agent worse than an honest "not yet". Next.js carries the nuance;
-// a static site is just files, so it is one row. Kept as its own group because
-// it is exactly "what a push can deploy", distinct from the runtime and platform
-// rows below.
+// misleads the agent worse than an honest "not yet".
 export const DEPLOY_STACKS: CapabilityGroup[] = [
   {
     name: 'Static HTML',
@@ -67,9 +51,8 @@ export const DEPLOY_STACKS: CapabilityGroup[] = [
   },
 ];
 
-// Workers runtime limits that hold regardless of stack. These are hard "no"s:
-// an app that needs any of them will not run, so the note says what to reach for
-// instead.
+// Workers runtime limits that hold regardless of stack. Hard "no"s: an app that
+// needs any of them will not run, so the note says what to reach for instead.
 export const RUNTIME_LIMITS: CapabilityGroup = {
   name: 'Runtime',
   features: [
@@ -89,9 +72,8 @@ export const RUNTIME_LIMITS: CapabilityGroup = {
   ],
 };
 
-// What the 280 platform gives an app around the deploy. The "supported" rows are
-// shipped today; the rest are the v2 direction, listed so the agent does not
-// assume they exist yet.
+// What the 280 platform gives an app around the deploy. "supported" rows ship today;
+// the rest are v2 direction, listed so the agent does not assume they exist yet.
 export const PLATFORM_FEATURES: CapabilityGroup = {
   name: 'Platform',
   features: [
@@ -133,9 +115,8 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
   ],
 };
 
-// The full matrix: deploy stacks, then the runtime limits and platform features
-// that apply across all of them. The markdown table and the JSON both render
-// this whole thing.
+// The full matrix: deploy stacks, then the runtime limits and platform features that
+// apply across all of them. The markdown table and the JSON both render this.
 export const SUPPORT_MATRIX: CapabilityGroup[] = [
   ...DEPLOY_STACKS,
   RUNTIME_LIMITS,
@@ -147,9 +128,8 @@ export const SUPPORT_MATRIX: CapabilityGroup[] = [
 export const CAPABILITY_REQUIREMENT =
   'Next.js requires output: "standalone" in next.config.';
 
-// DocsCapabilities is the JSON the styled /docs page fetches. The frontend
-// renders the matrix and the requirement note into its own table, so both
-// surfaces stay driven by this one list.
+// DocsCapabilities is the JSON the styled /docs page fetches, so both the page and
+// the markdown table stay driven by this one list.
 export interface DocsCapabilities {
   matrix: CapabilityGroup[];
   requirement: string;
@@ -159,9 +139,8 @@ export function docsCapabilities(): DocsCapabilities {
   return { matrix: SUPPORT_MATRIX, requirement: CAPABILITY_REQUIREMENT };
 }
 
-// Render a set of groups as a markdown table. The group name repeats down its
-// feature rows because markdown has no row spanning. The note column carries the
-// nuance a yes/no cannot.
+// Render groups as a markdown table. The group name repeats down its feature rows
+// because markdown has no row spanning.
 function matrixMarkdown(groups: CapabilityGroup[]): string {
   const rows = groups.flatMap((g) =>
     g.features.map(
@@ -186,11 +165,8 @@ export function platformSupportMarkdown(): string {
   ].join('\n');
 }
 
-// ============================ setup.md ============================
-//
-// The entry doc an agent fetches first (told: fetch .../setup.md and push). It
-// carries no table of its own; it points at /platform-support.md for the matrix.
-
+// The entry doc an agent fetches first. It carries no table of its own; it points at
+// /platform-support.md for the matrix.
 export function setupMarkdown(): string {
   return `\
 280apps.com is a platform which allows easy deployment, auth, and permission management of apps in small teams.
@@ -225,15 +201,9 @@ Push exits with the live URL. The edge can lag up to a minute.
 `;
 }
 
-// ============================ the 280 way ============================
-//
 // The opinionated build reference an agent fetches before writing app code: one
-// blessed answer per need, the forbidden list, the reference snippets, the loop.
-// Converted from the former generated HTML page into markdown; the crux (every
-// blessed answer, every snippet, the Never list, the loop) is preserved. This is
-// direction, not shipped: it describes the v2 experience (280.json, identity
-// headers, 280 dev), the companion to setup.md.
-
+// blessed answer per need. Direction, not shipped: it describes the v2 experience
+// (280.json, identity headers, 280 dev), the companion to setup.md.
 export function the280WayMarkdown(): string {
   return `\
 # The 280 way
@@ -423,18 +393,15 @@ export async function POST() {
 `;
 }
 
-// ============================ routes ============================
-
 const MARKDOWN_HEADERS = {
   'Content-Type': 'text/markdown; charset=utf-8',
-  // These docs move only when a capability or a blessed answer does; a short
-  // cache is plenty and keeps a busy agent fleet off the origin.
+  // These docs move only when a capability or blessed answer does; a short cache
+  // keeps a busy agent fleet off the origin.
   'Cache-Control': 'public, max-age=300',
 };
 
-// docsRoutes serves every agent-facing doc as an unauthenticated GET. The
-// frontend proxies these paths at their public URLs. api.ts mounts this under
-// /v1/docs in one line so the doc surface stays out of the transport core.
+// docsRoutes serves every agent-facing doc as an unauthenticated GET, mounted under
+// /v1/docs so the doc surface stays out of the transport core.
 export function docsRoutes(): Hono {
   const docs = new Hono();
 

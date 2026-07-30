@@ -1,17 +1,9 @@
-// delete destroys this project's app. It is the only command that takes
-// something away, and the only one that refuses to act on its own.
-//
-// The confirmation carries the app's name (`--yes <name>`): an agent cleaning
-// up, or a half-understood instruction, cannot produce the command without
-// first being told which app it is destroying. A bare `280 delete` never
-// deletes; it fails confirmation_required with the exact command that would, so
-// the agent has something precise to put in front of its user before anything
-// is gone.
-//
-// delete is idempotent (AXI §6): when there is nothing to delete — no app bound
-// to this directory, or a binding the server no longer knows — the desired state
-// already holds, so the answer is an exit-0 no-op, not an error. This diverges
-// from Go's exit-1 no_such_app on purpose.
+// delete destroys this project's app: the only command that takes something away
+// and the only one that refuses to act on its own. The `--yes <name>` confirmation
+// forces the caller to name the app; a bare `280 delete` fails confirmation_required
+// with the exact command that would delete, and never deletes.
+// Idempotent (AXI §6): nothing to delete is an exit-0 no-op, not an error
+// (diverges from Go's exit-1 no_such_app).
 
 import { DeployCode } from '@280/contracts';
 import { asError } from './output.js';
@@ -48,15 +40,14 @@ export async function cmdDelete(ctx: Ctx): Promise<number> {
   try {
     res = await port.delete({ appId: cfg.appId, confirm: p.values.yes as string });
   } catch (e) {
-    // A binding the server no longer knows (deleted elsewhere): the desired
-    // state holds. Unbind so the next push deploys instead of failing on it.
+    // A binding the server no longer knows (deleted elsewhere): desired state
+    // holds. Unbind so the next push deploys instead of failing on it.
     if (asError(e).code !== DeployCode.NoSuchApp) throw e;
     return noop(ctx, cfg, found, 'app already deleted');
   }
 
-  // The dry run (empty or wrong confirm). The server named the app; the CLI
-  // turns that into the command that would finish the job. One stream: the
-  // agent reads a single confirmation_required error carrying the exact fix.
+  // Dry run (empty or wrong confirm): the server named the app, the CLI turns
+  // that into the exact command that would finish the job.
   if (!res.deleted) {
     throw output.fail(
       DeployCode.ConfirmationRequired,
@@ -65,9 +56,8 @@ export async function cmdDelete(ctx: Ctx): Promise<number> {
     );
   }
 
-  // Unbind the directory, keeping name and framework: the project is still a
-  // project, it just no longer has an app. Leaving a dead appId here would make
-  // the next push fail no_such_app instead of deploying.
+  // Unbind the directory, keeping name and framework: leaving a dead appId would
+  // make the next push fail no_such_app instead of deploying.
   cfg.appId = '';
   config.save(ctx.env.root, cfg);
 

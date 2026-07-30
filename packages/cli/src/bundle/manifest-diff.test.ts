@@ -1,13 +1,6 @@
-// Manifest parity vs the Go CLI (plan W3 "Done"). The fixture under
-// testdata/02-next is the real .open-next assets + cache trees the Go CLI
-// produced for tests/280-test-cases/02-next, paired with a small stand-in worker
-// (the real worker is 4.2 MB; only its digest+size reach the manifest, which any
-// bytes exercise identically). manifest.golden.json is Go's own
-// json.Marshal(manifest) over exactly these committed bytes.
-//
-// TS nextBundle over the same tree must reproduce that JSON byte for byte. This
-// pins the whole manifest-assembly path — asset walk order, path shaping, cache
-// key derivation, worker digest/size — against the Go implementation.
+// Manifest parity vs the Go CLI: TS nextBundle over the committed 02-next
+// .open-next tree must reproduce manifest.golden.json (Go's own
+// json.Marshal(manifest)) byte for byte, pinning the whole assembly path.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,9 +11,8 @@ import { nextBundle } from './next.js';
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'testdata', '02-next');
 
-// goMarshalBlobInfo mirrors Go json.Marshal of deploy.BlobInfo: field order
-// Path, Digest, Size; Path omitted when empty (json:"path,omitempty"); Size
-// always present (no omitempty).
+// Mirrors Go json.Marshal of deploy.BlobInfo: field order Path, Digest, Size;
+// Path omitted when empty (json:"path,omitempty"); Size always present.
 function goMarshalBlobInfo(b: BlobInfo): string {
   const parts: string[] = [];
   if (b.path !== '') {
@@ -31,9 +23,8 @@ function goMarshalBlobInfo(b: BlobInfo): string {
   return `{${parts.join(',')}}`;
 }
 
-// goMarshalManifest mirrors Go json.Marshal of deploy.Manifest: field order
-// Kind, Worker, Assets, Cache; Cache omitted when empty (json:"cache,omitempty").
-// Assets is always present (no omitempty) and marshals a nil slice as null.
+// Mirrors Go json.Marshal of deploy.Manifest: field order Kind, Worker, Assets,
+// Cache; Cache omitted when empty; Assets always present, a nil slice as null.
 function goMarshalManifest(m: Manifest): string {
   const parts: string[] = [
     `"kind":${JSON.stringify(m.kind)}`,

@@ -1,9 +1,8 @@
-// The request-scoped deps lifecycle: the keystone of the Workers entrypoint. The
-// router is one isolate singleton; the deps middleware builds a fresh I/O
-// container per request and schedules its close after the response via
-// ctx.waitUntil (or, with no execution context, fire-and-forget). This drives
-// app.fetch's env/ctx plumbing the way the Worker's fetch handler does, which
-// the app.request-based suites do not otherwise cover.
+// The request-scoped deps lifecycle. The router is one isolate singleton; the
+// deps middleware builds a fresh I/O container per request and schedules its
+// close after the response via ctx.waitUntil (or, with no execution context,
+// fire-and-forget). Drives app.fetch's env/ctx plumbing the way the Worker's
+// fetch handler does, which the app.request-based suites do not cover.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { Server } from '../src/api.js';
@@ -15,8 +14,8 @@ afterEach(async () => {
   for (const h of live.splice(0)) await h.cleanup();
 });
 
-// fakeCtx stands in for the Workers ExecutionContext, recording what the deps
-// middleware hands to waitUntil.
+// stands in for the Workers ExecutionContext, recording what the deps middleware
+// hands to waitUntil.
 function fakeCtx(): { ctx: unknown; waited: Promise<unknown>[] } {
   const waited: Promise<unknown>[] = [];
   return {
@@ -45,12 +44,12 @@ describe('request-scoped deps lifecycle', () => {
     const res1 = await app.request('/healthz', {}, {} as never, first.ctx as never);
     expect(await res1.text()).toBe('ok\n');
     expect(builds).toBe(1);
-    // close is scheduled on waitUntil, not run inline before the response ships.
+    // close is scheduled on waitUntil, not run inline before the response ships
     expect(first.waited).toHaveLength(1);
     await Promise.all(first.waited);
     expect(closes).toBe(1);
 
-    // A second request gets its own container, not the first one reused.
+    // a second request gets its own container, not the first one reused
     const second = fakeCtx();
     await app.request('/healthz', {}, {} as never, second.ctx as never);
     expect(builds).toBe(2);
@@ -67,7 +66,7 @@ describe('request-scoped deps lifecycle', () => {
       buildDeps: () => ({ ...testDeps(harness), close: async () => void closes++ }),
     }).handler();
 
-    // No executionCtx passed: c.executionCtx throws, so close runs directly.
+    // no executionCtx passed: c.executionCtx throws, so close runs directly
     const res = await app.request('/healthz');
     expect(await res.text()).toBe('ok\n');
     await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget settle

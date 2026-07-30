@@ -1,6 +1,6 @@
-// Ported from platform/observe_test.go: the access log records every request
-// except health checks, splits client faults (4xx) from platform faults (5xx)
-// by level, and the request id is honored inbound and echoed outbound.
+// Ported from platform/observe_test.go: the access log records every request but
+// health checks, splits client faults (4xx) from platform faults (5xx) by level,
+// and the request id is honored inbound and echoed outbound.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { REQUEST_ID_HEADER } from '../src/observe.js';
@@ -23,7 +23,7 @@ describe('access log', () => {
       identity: { slug: 'demo', framework: 'static' } as never,
       manifest: testManifest().manifest,
     });
-    // A missing app is a client fault: status must 404 and log at WARN.
+    // a missing app is a client fault: status must 404 and log at WARN
     await expect(client.status('app_missing', 'dep_missing')).rejects.toThrow();
     const health = await app.request('/healthz');
     expect(await health.text()).toBe('ok\n');

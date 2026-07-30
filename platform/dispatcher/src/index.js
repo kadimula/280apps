@@ -1,23 +1,11 @@
 /**
- * The 280 dispatcher: the only thing in front of user code.
- *
- * Every request to *.280apps.run lands here. The hostname's first label is the
- * app's script name, so routing is a string split and one binding call — no
- * lookup, no cache, no database in the request path. That is deliberate: app
- * URLs are assigned once at create time and never change (deploysvc), which is
- * what buys the request path having no state to be stale.
- *
- * Cloudflare bills one request for the whole chain, not two, so keeping this
- * the single hop in front of tenants costs nothing. It is also where any future
- * non-unlisted sharing check lands (plan/sharing.html), which is the other
- * reason nothing else may sit here.
- *
- * Deliberately absent from the spike version: the X-Probe header and /p/<script>/
- * path routing. Both let a caller address any script from any hostname, which is
- * a harness affordance and a tenant-isolation hole in production.
+ * The 280 dispatcher: the only hop in front of user code. The hostname's first
+ * label is the app's script name, so routing is a string split and one binding
+ * call — no lookup, cache, or db in the request path, safe because app URLs are
+ * assigned once at create time and never change (deploysvc). Any future sharing
+ * check lands here too, so nothing else may sit in front of tenants.
  */
 
-/** Hostname labels that are the platform, never an app. */
 const RESERVED = new Set(["www", "api", "app", "admin", "dashboard", "status", "assets"]);
 
 /** Cloudflare script naming rules; reject early rather than round-trip a 400. */
@@ -28,9 +16,8 @@ export default {
 		const script = scriptFor(new URL(request.url).hostname, env);
 		if (!script) return notFound(env, request);
 
-		// get() is lazy: it binds a stub and does not throw for a missing
-		// script. "Worker not found" surfaces at fetch() time instead, mixed in
-		// with genuine tenant exceptions, so both paths check for it.
+		// get() is lazy: a missing script does not throw here but at fetch() time,
+		// mixed with genuine tenant exceptions, so both paths check for it.
 		let worker;
 		try {
 			worker = env.DISPATCHER.get(script);
@@ -45,8 +32,7 @@ export default {
 			const message = err?.message ?? String(err);
 			if (message.includes("Worker not found")) return notFound(env, request);
 
-			// The app threw before producing a response. This is the app's
-			// failure, not the platform's, and it is what its visitors see.
+			// app threw before responding: its failure, not the platform's, shown to its visitors.
 			return new Response("This app crashed.\n", {
 				status: 502,
 				headers: { "content-type": "text/plain; charset=utf-8" },
@@ -61,12 +47,8 @@ export default {
 /** @returns {string | null} */
 function scriptFor(hostname, env) {
 	let label = hostname.split(".")[0];
-	// Development serves apps at <script>-development.280apps.run, a single label
-	// under the zone so the free Universal SSL wildcard (*.280apps.run) covers
-	// them; a second-level *.development.280apps.run would need a paid cert.
-	// HOST_SUFFIX is set only on the development dispatcher and strips that suffix
-	// back to the script name. Prod leaves it unset, so prod parsing is
-	// byte-for-byte the same as before.
+	// Dev serves apps at <script>-development.280apps.run under the free *.280apps.run
+	// wildcard cert; HOST_SUFFIX (dev dispatcher only) strips it back to the script name.
 	const suffix = env.HOST_SUFFIX;
 	if (suffix && label.length > suffix.length && label.endsWith(suffix)) {
 		label = label.slice(0, -suffix.length);
@@ -75,12 +57,8 @@ function scriptFor(hostname, env) {
 	return label;
 }
 
-/**
- * An unknown hostname is overwhelmingly a deleted app or a mistyped URL, and
- * the person seeing it was handed a link by a coworker. It gets a page, not a
- * stack trace. Rendered here rather than fetched from the web surface so a
- * control-plane outage cannot turn this into a timeout.
- */
+// Unknown hostname is almost always a deleted app or typo; show a page, not a stack
+// trace. Rendered inline so a control-plane outage can't turn this into a timeout.
 function notFound(env, request) {
 	if (request.headers.get("accept")?.includes("application/json")) {
 		return Response.json({ error: "app_not_found" }, { status: 404 });

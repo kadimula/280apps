@@ -1,8 +1,7 @@
-// The device login flow and the session-gated web-surface endpoints the browser
-// calls (approve, list, delete). Ported from platform/device_test.go, then
-// updated for phase 1: the web surface authenticates with the browser session
-// the backend now owns, not a shared secret, and the approving user is whoever
-// the session resolves to rather than a subject named in the request body.
+// The device login flow and the session-gated web-surface endpoints (approve,
+// list, delete). Ported from platform/device_test.go, then updated for phase 1:
+// the web surface authenticates with the browser session, not a shared secret,
+// and the approving user is whoever the session resolves to.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Hono } from 'hono';
@@ -16,8 +15,7 @@ afterEach(async () => {
   for (const h of live.splice(0)) await h.cleanup();
 });
 
-// authServer builds a server with the browser-login flow wired to the fake
-// provider, sharing the harness store so sessions and the deploy seam agree.
+// shares the harness store so sessions and the deploy seam agree.
 async function authServer(): Promise<Hono<HonoEnv>> {
   const harness = await newPlatform();
   live.push(harness);
@@ -52,8 +50,7 @@ async function redeem(app: Hono<HonoEnv>, deviceCode: string): Promise<{ status:
   return { status: res.status, body: (await res.json()) as TokenBody };
 }
 
-// approve posts the typed code with the browser session; a null session omits
-// the cookie, which is the sessionless-call case.
+// a null session omits the cookie, exercising the sessionless-call case.
 async function approve(app: Hono<HonoEnv>, userCode: string, session: string | null): Promise<number> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (session !== null) headers.Cookie = session;
@@ -92,8 +89,8 @@ async function deleteApp(
   return res.status;
 }
 
-// login signs a browser in, then runs the device flow it approves, returning
-// both the CLI token and the session that approved it.
+// signs a browser in and runs a device flow it approves, returning the CLI token
+// and the session that approved it.
 async function login(app: Hono<HonoEnv>, email: string): Promise<{ token: string; session: string }> {
   const session = await signIn(app, email);
   const s = await start(app);
@@ -112,7 +109,7 @@ describe('device flow', () => {
     expect(s.userCode).not.toBe('');
     expect(s.verificationUri).not.toBe('');
 
-    // Before approval the CLI must be told to wait, not that it failed.
+    // before approval the CLI must be told to wait, not that it failed
     const pending = await redeem(app, s.deviceCode);
     expect(pending.body.code).toBe(AuthCode.AuthorizationPending);
 
@@ -122,7 +119,7 @@ describe('device flow', () => {
     expect(redeemed.status).toBe(200);
     expect(redeemed.body.token).not.toBe('');
 
-    // The token has to work on the deploy seam.
+    // the token has to work on the deploy seam
     const client = new HttpClient(app, redeemed.body.token as string);
     const res = await client.sync({
       identity: { slug: 'demo', framework: 'static' } as never,

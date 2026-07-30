@@ -1,12 +1,9 @@
-// The OIDC provider seam and its one production implementation (Google). It is
-// an injected seam like the store and the runtime: the auth service depends on
-// the interface, so tests drive a fake provider in-process and production drives
-// the real one. Adding Microsoft later is a second implementation of this
-// interface and one more entry in the provider map, nothing in the flow.
+// The OIDC provider seam and its one production implementation (Google). Injected
+// like the store and runtime, so tests drive a fake provider in-process; a second
+// provider is one more implementation and one more entry in the provider map.
 
-// OidcIdentity is what a provider tells us about the person who just signed in.
-// `subject` is the provider's stable, opaque handle for the user (Google's
-// `sub`), never their email, so a changed address does not fork the account.
+// `subject` is the provider's stable, opaque handle for the user (Google's `sub`),
+// never their email, so a changed address does not fork the account.
 export interface OidcIdentity {
   subject: string;
   email: string;
@@ -14,11 +11,9 @@ export interface OidcIdentity {
   image: string;
 }
 
-// OidcProvider is one identity provider. authUrl is where the browser is sent to
-// approve; exchange trades the code the provider hands back for the identity.
-// redirectUri is the backend's own callback and must be byte-identical between
-// the two calls, which is why the auth service builds it once and passes it to
-// both.
+// OidcProvider is one identity provider. redirectUri is the backend's own callback
+// and must be byte-identical between authUrl and exchange, so the caller builds it
+// once and passes it to both.
 export interface OidcProvider {
   readonly name: string;
   authUrl(opts: { state: string; redirectUri: string }): string;
@@ -31,15 +26,13 @@ const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 export interface GoogleOptions {
   clientId: string;
   clientSecret: string;
-  // fetch is injectable so a test can exercise the real provider without a
-  // network; production leaves it unset and gets the global.
+  // Injectable so a test exercises the real provider without a network.
   fetch?: typeof fetch;
 }
 
-// GoogleProvider speaks the OpenID Connect authorization-code flow to Google.
-// The id_token comes back over TLS straight from Google's token endpoint, so its
-// payload is decoded rather than signature-verified: nothing between us and
-// Google could have forged it without also holding TLS to google.com.
+// GoogleProvider speaks the OIDC authorization-code flow to Google. The id_token
+// arrives over TLS straight from Google's token endpoint, so its payload is decoded
+// rather than signature-verified: forging it would require holding TLS to google.com.
 export class GoogleProvider implements OidcProvider {
   readonly name = 'google';
   private readonly clientId: string;
@@ -104,16 +97,15 @@ const ENTRA_BASE = 'https://login.microsoftonline.com';
 export interface EntraOptions {
   clientId: string;
   clientSecret: string;
-  // Entra authority. "organizations" is the multi-tenant work/school endpoint
-  // (design §5.3): each customer's admin consents once. Defaults to it.
+  // "organizations" is the multi-tenant work/school endpoint (each customer's
+  // admin consents once); the default.
   tenant?: string;
   fetch?: typeof fetch;
 }
 
-// The same OIDC authorization-code flow GoogleProvider runs, against Microsoft
-// Entra: one more entry in the provider registry, one code path. Like Google,
-// the id_token is decoded rather than signature-verified (TLS to the token
-// endpoint is the trust; see GoogleProvider).
+// The same OIDC authorization-code flow as GoogleProvider, against Microsoft
+// Entra. Like Google, the id_token is decoded rather than signature-verified (TLS
+// to the token endpoint is the trust; see GoogleProvider).
 export class EntraProvider implements OidcProvider {
   readonly name = 'microsoft';
   private readonly clientId: string;
@@ -193,9 +185,8 @@ function firstNonEmpty(...vals: string[]): string {
   return '';
 }
 
-// decodeJwtPayload reads the middle segment of a JWT as JSON. It does not verify
-// the signature (see the class note); a malformed token throws, which the caller
-// surfaces as a failed login.
+// Reads the middle segment of a JWT as JSON. It does not verify the signature
+// (see the class note); a malformed token throws.
 function decodeJwtPayload(token: string): Record<string, unknown> {
   const parts = token.split('.');
   if (parts.length !== 3) throw new Error('malformed id_token');

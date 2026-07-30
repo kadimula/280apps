@@ -1,22 +1,18 @@
-// bundle turns a built project directory into a deploy Manifest plus the blob
-// content it names, ready for the deploy seam's Sync/PutBlob loop. Two
-// frameworks: `static` walks the build dir and content-addresses every file;
-// `next` runs the pinned OpenNext Cloudflare adapter and wrangler. Spec:
-// cli/internal/bundle/bundle.go (Build dispatch). Go is normative.
+// Turns a built project directory into a deploy Manifest plus the blob content it
+// names. Two frameworks: `static` content-addresses the build dir; `next` runs the
+// pinned OpenNext adapter and wrangler. Spec: bundle.go (Build), normative.
 
 import { buildNext } from './next.js';
 import { buildStatic, type Bundle } from './static.js';
 import { fail } from './walk.js';
 
-// Framework names this package can build. Mirrors detect.FrameworkNext /
-// FrameworkStatic (cli/internal/detect); duplicated as a constant so bundle has
-// no dependency on W2's detect module.
+// Duplicated from detect.FrameworkNext/Static so bundle has no dependency on the
+// detect module.
 export const Framework = {
   Static: 'static',
   Next: 'next',
 } as const;
 
-// build produces a Bundle for a project of the given framework rooted at root.
 export function build(root: string, framework: string): Bundle {
   switch (framework) {
     case Framework.Static:
@@ -31,8 +27,6 @@ export function build(root: string, framework: string): Bundle {
   }
 }
 
-// assetPaths returns the manifest's asset URL paths, for logging (bundle.go
-// AssetPaths).
 export function assetPaths(m: { assets: { path: string }[] }): string[] {
   return m.assets.map((a) => a.path);
 }

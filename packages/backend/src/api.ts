@@ -1,10 +1,5 @@
-// api is HTTP API v1: the transport in front of the deploy service.
-//
-// Spec: platform/internal/api/api.go. It is deliberately thin. Every behavioral
-// decision belongs to deploysvc, so this file only does the three things
-// transport must: authenticate, translate the wire format, and map the seam's
-// typed errors onto status codes. The wire format is HTTP API v1 (the client
-// the conformance suite dials); Go is normative.
+// HTTP API v1: the thin transport in front of deploysvc. It only authenticates,
+// translates the wire format, and maps seam errors to status codes; Go is normative.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
@@ -35,48 +30,36 @@ import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
 import type { RequestDeps } from './config.js';
 import { DeviceStatus, type User } from './seams.js';
 
-// SESSION_COOKIE names the browser session the backend now owns. STATE_COOKIE is
-// the short-lived CSRF binding for one in-flight OIDC login.
 const SESSION_COOKIE = '280_session';
+// STATE_COOKIE is the short-lived CSRF binding for one in-flight OIDC login.
 const STATE_COOKIE = '280_oauth';
 
-// HeaderCLIVersion carries the caller's binary version. The server uses it to
-// refuse a CLI too old to speak this API. Spec: deployhttp.HeaderCLIVersion.
+// Caller's binary version; the server uses it to refuse a CLI too old for this API.
 const HEADER_CLI_VERSION = 'X-280-Cli-Version';
 
-// MaxBlobBytes bounds one uploaded blob. Deliberately set UNDER Cloudflare's
-// ~100 MB edge request-body limit (phase-1a size-cap exception): a blob at the
-// old 100 MiB cap is larger than the edge accepts, so the largest legal upload
-// would die at the edge with an HTML 413 the CLI cannot parse, instead of a
-// typed seam error. 95 MiB keeps the whole range under the edge limit and still
-// leaves the largest realistic asset room. Raise only against a verified higher
-// zone limit.
-export const MAX_BLOB_BYTES = 95 << 20; // 99,614,720 bytes
+// Bounds one uploaded blob, deliberately UNDER Cloudflare's ~100 MB edge limit: a
+// blob at the old 100 MiB cap would die at the edge with an HTML 413 the CLI cannot
+// parse. Raise only against a verified higher zone limit.
+export const MAX_BLOB_BYTES = 95 << 20;
 
-// Body limits per route (plan §3 table).
 const SYNC_LIMIT = 8 << 20;
 const SMALL_LIMIT = 64 << 10;
 
-// Device-flow tuning. The TTL is what a human plausibly takes to notice the
-// message, open a browser, and sign in (api.go:71).
+// TTL is what a human plausibly takes to notice the message, open a browser, and
+// sign in (api.go:71).
 const DEVICE_CODE_TTL_SECS = 15 * 60;
 const DEVICE_POLL_SECS = 5;
 
-// userCodeAlphabet omits characters that are misread when a human copies a code
-// off one screen and types it into another (api.go:447; Go value, per plan §10).
+// Omits characters that are misread when a human copies a code off one screen and
+// types it into another (api.go:447).
 const USER_CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
 
-// dashboardConfirm is what a human types into the delete dialog (api.go:372).
+// What a human types into the delete dialog (api.go:372).
 const DASHBOARD_CONFIRM = 'delete';
 
 export interface ServerConfig {
-  // buildDeps constructs the request-scoped I/O container from the Hono context:
-  // c.env is the Workers Env the deps read their bindings from, and
-  // c.executionCtx is the lifetime the pg client's close is scheduled on. The
-  // Worker passes the Env-driven builder (buildRequestDeps); tests pass one that
-  // returns a shared in-memory Platform. Everything a handler needs — Platform,
-  // auth, openSignup, verificationUri, minCliVersion — comes from here, so the
-  // router itself is the isolate's only singleton and holds no I/O.
+  // buildDeps constructs the request-scoped I/O container from the Hono context
+  // (c.env for bindings, c.executionCtx for the pg client's close lifetime).
   buildDeps: (c: Context<HonoEnv>) => RequestDeps | Promise<RequestDeps>;
   logger?: Logger;
 }
@@ -90,20 +73,17 @@ export class Server {
     this.log = cfg.logger;
   }
 
-  // handler returns the router. It is built once per isolate and reused across
-  // every request; the leading deps middleware is what makes that safe, building
-  // a fresh I/O container per request rather than closing over one here.
+  // handler returns the router, built once per isolate and reused; the leading deps
+  // middleware is what makes reuse safe, building fresh I/O per request.
   handler(): Hono<HonoEnv> {
     const app = new Hono<HonoEnv>();
 
-    // Wrapping the whole app rather than each route is what makes the access log
-    // cover a route someone adds later without remembering to.
+    // Wrapping the whole app rather than each route covers a route someone adds
+    // later without remembering to.
     app.use('*', observe({ logger: () => this.logger(), renderPanic: (e) => this.renderPanic(e) }));
 
-    // The deps container, built per request and put on the context, with its
-    // cleanup scheduled after the response. It runs inside observe, so a build
-    // failure renders as the seam's error with a request id rather than a
-    // dropped connection.
+    // Per-request deps on the context, cleanup scheduled after the response. Runs
+    // inside observe so a build failure renders as a seam error, not a dropped conn.
     app.use('*', (c, next) => this.withDeps(c, next));
 
     app.post('/v1/sync', this.route((c) => this.handleSync(c)));
@@ -111,38 +91,34 @@ export class Server {
     app.get('/v1/apps/:app/deploys/:deploy', this.route((c) => this.handleStatus(c)));
     app.post('/v1/apps/:app/delete', this.route((c) => this.handleDelete(c)));
 
-    // Device flow. The only unauthenticated endpoints: how a machine gets a
-    // token in the first place.
+    // The only unauthenticated deploy endpoints: how a machine gets a token.
     app.post('/v1/device/code', this.route((c) => this.handleDeviceCode(c)));
     app.post('/v1/device/token', this.route((c) => this.handleDeviceToken(c)));
 
-    // Browser login the backend now owns. Start and callback are top-level
-    // navigations that set cookies; me and logout serve the frontend's
-    // signed-in state and sign-out.
+    // Browser login. start/callback are top-level navigations that set cookies; me
+    // and logout serve the frontend's signed-in state and sign-out.
     app.get('/auth/:provider/start', (c) => this.handleAuthStart(c));
     app.get('/auth/:provider/callback', (c) => this.handleAuthCallback(c));
     app.get('/auth/me', (c) => this.handleAuthMe(c));
     app.post('/auth/logout', (c) => this.handleAuthLogout(c));
 
     // The web surface, authenticated by the browser session rather than a shared
-    // secret: the approving user is whoever the cookie resolves to, never a
-    // subject named in the body.
+    // secret: the approving user is whoever the cookie resolves to.
     app.post('/internal/device/approve', this.route((c) => this.handleDeviceApprove(c)));
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
 
     app.get('/healthz', (c) => c.text('ok\n'));
 
-    // Agent-facing product docs, served as markdown and JSON. Unauthenticated:
-    // the frontend proxies these at their public URLs. Owned by docs.ts so the
-    // transport core stays about deploy and auth.
+    // Agent-facing product docs, unauthenticated; the frontend proxies these at
+    // their public URLs. Owned by docs.ts.
     app.route('/v1/docs', docsRoutes());
 
     return app;
   }
 
-  // withDeps builds the request-scoped I/O container, puts it on the context,
-  // and schedules its cleanup once the response is on its way.
+  // withDeps builds the request-scoped I/O container, puts it on the context, and
+  // schedules its cleanup once the response is on its way.
   private async withDeps(c: Context<HonoEnv>, next: () => Promise<void>): Promise<void> {
     const deps = await this.buildDeps(c);
     c.set('deps', deps);
@@ -158,10 +134,8 @@ export class Server {
     }
   }
 
-  // scheduleClose runs close after the response ships: on Workers via
-  // ctx.waitUntil (the request stays alive until the pg client closes, but the
-  // reply is not delayed); with no execution context (in-process tests) the
-  // promise simply runs fire-and-forget.
+  // scheduleClose runs close after the response ships: on Workers via ctx.waitUntil
+  // (reply not delayed); with no execution context (tests) it runs fire-and-forget.
   private scheduleClose(c: Context<HonoEnv>, close: () => Promise<void>): void {
     const done = close().catch(() => {});
     try {
@@ -171,8 +145,6 @@ export class Server {
     }
   }
 
-  // deps is the request-scoped I/O container the leading middleware built. Every
-  // handler reaches its Platform, auth, and per-request config through here.
   private deps(c: Context<HonoEnv>): RequestDeps {
     return c.get('deps');
   }
@@ -192,8 +164,6 @@ export class Server {
       }
     };
   }
-
-  // ---- deploy routes ----
 
   private async handleSync(c: Context<HonoEnv>): Promise<Response> {
     const svc = await this.authorize(c);
@@ -229,14 +199,11 @@ export class Server {
       message: 'could not read the delete request',
       fix: 'upgrade the 280 CLI, then run 280 delete again',
     });
-    // The path names the app, not the body. Two places to say which app to
-    // destroy is one place too many.
+    // The path names the app, not the body.
     req.appId = (c.req.param('app') ?? '');
     const res = await svc.delete(req);
     return c.json(encodeDeleteResult(res));
   }
-
-  // ---- device flow ----
 
   private async handleDeviceCode(c: Context<HonoEnv>): Promise<Response> {
     const deviceCode = randomSecret(32);
@@ -285,8 +252,8 @@ export class Server {
     } catch {
       throw unavailable('login lookup failed');
     }
-    // Unknown, expired, and already-claimed are one answer on purpose. Telling a
-    // caller which of the three it hit is free reconnaissance on a guessed code.
+    // Unknown, expired, and already-claimed are one answer on purpose: telling a
+    // caller which it hit is free reconnaissance on a guessed code.
     if (dc === null || dc.status === DeviceStatus.Claimed || nowSecs() >= dc.expiresAt) {
       throw new DeployErr({
         code: AuthCode.ExpiredToken,
@@ -302,8 +269,8 @@ export class Server {
       });
     }
 
-    // Claim first. Whoever wins this update is the only caller that may mint a
-    // token for this code, so a duplicated poll cannot produce two credentials.
+    // Claim first: whoever wins this update is the only caller that may mint a token
+    // for this code, so a duplicated poll cannot produce two credentials.
     let won: boolean;
     try {
       won = await this.deps(c).platform.store.claimDeviceCode(dc.deviceHash);
@@ -336,8 +303,8 @@ export class Server {
       appendReason: false,
     });
 
-    // The subject is the signed-in user, not a body field: a browser cannot
-    // approve a login for anyone but itself.
+    // The subject is the signed-in user, not a body field: a browser cannot approve
+    // a login for anyone but itself.
     let acct;
     try {
       acct = await this.deps(c).platform.store.ensureAccount(user.id, newAccountId());
@@ -369,8 +336,8 @@ export class Server {
     } catch {
       throw unavailable('could not resolve the account');
     }
-    // No account means nothing pushed yet, which the dashboard renders as an
-    // empty state. Not an error.
+    // No account means nothing pushed yet, which the dashboard renders as an empty
+    // state. Not an error.
     if (acct === null) {
       return c.json({ apps: [] });
     }
@@ -415,8 +382,8 @@ export class Server {
 
     const svc = this.deps(c).platform.for(acct.id);
 
-    // The dry run does the looking up: it fails closed on an app this account
-    // does not own, and it is where the slug comes from.
+    // The dry run does the looking up: it fails closed on an app this account does
+    // not own, and it is where the slug comes from.
     const target = await svc.delete({ appId: (c.req.param('app') ?? ''), confirm: '' });
     if (req.confirm.trim().toLowerCase() !== DASHBOARD_CONFIRM) {
       throw new DeployErr({
@@ -430,11 +397,8 @@ export class Server {
     return c.json(encodeDeleteResult(res));
   }
 
-  // ---- auth (browser login) ----
-
-  // handleAuthStart sends the browser to the provider's consent screen. A
-  // failure here (unknown provider, rate limit) bounces back to the frontend
-  // login page rather than showing a bare error to a human.
+  // handleAuthStart sends the browser to the provider's consent screen. A failure
+  // bounces back to the frontend login page rather than showing a bare error.
   private async handleAuthStart(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
@@ -452,9 +416,8 @@ export class Server {
     }
   }
 
-  // handleAuthCallback finishes the flow: it sets the session cookie, drops the
-  // state cookie, and returns the browser to the destination the start endpoint
-  // vetted.
+  // handleAuthCallback finishes the flow: sets the session cookie, drops the state
+  // cookie, and returns the browser to the destination start vetted.
   private async handleAuthCallback(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
@@ -479,8 +442,8 @@ export class Server {
     }
   }
 
-  // handleAuthMe is what the frontend reads to render the signed-in state. It
-  // never errors: no session is a null user, not a failure.
+  // handleAuthMe is what the frontend reads to render the signed-in state. It never
+  // errors: no session is a null user, not a failure.
   private async handleAuthMe(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.json({ user: null });
@@ -488,8 +451,7 @@ export class Server {
     return c.json({ user: user === null ? null : encodeUser(user) });
   }
 
-  // handleAuthLogout clears the session everywhere: the row, so the token is
-  // dead, and the cookie, so the browser stops sending it.
+  // handleAuthLogout clears both the session row (killing the token) and the cookie.
   private async handleAuthLogout(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
@@ -498,16 +460,15 @@ export class Server {
     return c.redirect(auth.safeRedirect(c.req.query('redirect') ?? '/'), 303);
   }
 
-  // authBounce returns a failed login to the frontend's login page. One message
+  // authBounce returns a failed login to the frontend's login page with one message
   // for every failure: which step broke is not a browser's concern.
   private authBounce(c: Context<HonoEnv>, auth: Auth): Response {
     return c.redirect(auth.frontendOrigin + '/login?error=auth', 302);
   }
 
-  // cookieOpts builds the attributes every cookie this server sets shares. maxAge
-  // 0 expires the cookie. Secure rides on a real HTTPS request or a configured
-  // cookie domain (production is always both); localhost dev over http is not
-  // Secure, or the browser would drop the cookie.
+  // cookieOpts builds the attributes every cookie shares (maxAge 0 expires). Secure
+  // rides on a real HTTPS request or a configured cookie domain; localhost dev over
+  // http is not Secure, or the browser would drop the cookie.
   private cookieOpts(c: Context<HonoEnv>, maxAge: number): {
     httpOnly: true;
     sameSite: 'Lax';
@@ -527,12 +488,8 @@ export class Server {
     };
   }
 
-  // ---- gates ----
-
-  // sessionUser resolves the browser session on a web-surface call, or refuses.
-  // It is the session-cookie counterpart to authorize()'s bearer token. An unset
-  // Auth is a closed door: the internal endpoints answer not-found rather than
-  // trusting an unauthenticated caller.
+  // sessionUser resolves the browser session on a web-surface call, or refuses. An
+  // unset Auth is a closed door: internal endpoints answer not-found.
   private async sessionUser(c: Context<HonoEnv>): Promise<User> {
     const auth = this.deps(c).auth;
     if (auth === undefined) {
@@ -545,9 +502,8 @@ export class Server {
     return user;
   }
 
-  // tooOld throws cli_too_old if the caller's CLI predates MinCLIVersion. It runs
-  // before the token lookup: a binary that cannot speak this API gets the same
-  // answer whether or not it is signed in, and the answer costs no DB round trip.
+  // tooOld throws cli_too_old if the caller's CLI predates MinCLIVersion, before the
+  // token lookup so a binary that cannot speak this API costs no DB round trip.
   private tooOld(c: Context<HonoEnv>): void {
     if (!version.valid(this.deps(c).minCliVersion)) return;
     const got = c.req.header(HEADER_CLI_VERSION) ?? '';
@@ -568,8 +524,8 @@ export class Server {
     if (token === '' || token === header.trim()) {
       throw noAccount();
     }
-    // Only the hash is stored, so a leaked database does not hand over the
-    // ability to push to every account in it.
+    // Only the hash is stored, so a leaked database does not hand over the ability
+    // to push to every account in it.
     const hash = hashToken(token);
 
     let acct;
@@ -580,8 +536,8 @@ export class Server {
     }
     if (acct === null) {
       if (!this.deps(c).openSignup) throw noAccount();
-      // Derive the id from the token so a repeated presentation of the same
-      // token lands on the same account even if the insert below raced.
+      // Derive the id from the token so a repeated presentation lands on the same
+      // account even if the insert below raced.
       acct = { id: 'acct_' + hash.slice(0, 12), subject: '' };
       try {
         await this.deps(c).platform.store.createAccount(acct);
@@ -594,11 +550,8 @@ export class Server {
     return this.deps(c).platform.for(acct.id);
   }
 
-  // ---- responses ----
-
-  // failResponse writes the seam's error shape. The client parses the body first
-  // and only falls back to the status code, so the body is the contract and the
-  // status is a courtesy to anything else in the path.
+  // failResponse writes the seam's error shape. The client parses the body first and
+  // only falls back to the status code, so the body is the contract.
   private failResponse(_c: Context<HonoEnv>, de: DeployError): Response {
     return new Response(JSON.stringify(encodeError(de)), {
       status: statusForCode(de.code),
@@ -606,8 +559,8 @@ export class Server {
     });
   }
 
-  // renderPanic is the observe backstop's error body: an unmapped throw is a
-  // bug, not retryable, and the request id is how a user quotes it back.
+  // renderPanic is the observe backstop's error body: an unmapped throw is a bug,
+  // not retryable, and the request id is how a user quotes it back.
   private renderPanic(_err: unknown): Response {
     const body = encodeError({
       code: DeployCode.Unavailable,
@@ -627,7 +580,7 @@ export class Server {
   }
 }
 
-// ---- wire encoders (Go omitempty semantics) ----
+// Wire encoders mirror Go's omitempty semantics.
 
 function encodeError(e: DeployError): Record<string, unknown> {
   const out: Record<string, unknown> = { code: e.code, message: e.message };
@@ -647,9 +600,8 @@ function encodeSyncResult(r: SyncResult): Record<string, unknown> {
     resolution: r.resolution,
     deployId: r.deployId,
     state: r.state,
-    // Go's Blobs.Missing returns a nil slice when nothing is missing, which
-    // encoding/json renders as null (never []). Mirror that on the wire byte for
-    // byte; the loose client schema (arr) normalizes null back to [] on receipt.
+    // Go's nil Missing slice renders as null (never []); mirror that byte for byte.
+    // The loose client schema normalizes null back to [] on receipt.
     missing: r.missing && r.missing.length > 0 ? r.missing : null,
   };
   if (r.failure) out.failure = encodeError(r.failure as DeployError);
@@ -668,15 +620,12 @@ function encodeDeleteResult(r: DeleteResult): Record<string, unknown> {
   return { app: encodeApp(r.app), deleted: r.deleted };
 }
 
-// ---- secrets ----
-
 function randomSecret(n: number): string {
   return randomBytes(n).toString('hex');
 }
 
-// randomUserCode returns the canonical (storage) form: 8 characters, no
-// separator. Everything that compares codes normalizes, so the dash only ever
-// exists for human eyes.
+// randomUserCode returns the canonical (storage) form: 8 characters, no separator.
+// Everything that compares codes normalizes, so the dash only exists for human eyes.
 function randomUserCode(): string {
   const b = randomBytes(8);
   let out = '';
@@ -690,8 +639,8 @@ function displayUserCode(code: string): string {
   return code.slice(0, 4) + '-' + code.slice(4);
 }
 
-// normalizeUserCode accepts what a human actually types: any case, with or
-// without the dash or surrounding space.
+// normalizeUserCode accepts what a human actually types: any case, with or without
+// the dash or surrounding space.
 function normalizeUserCode(s: string): string {
   return s.trim().toUpperCase().replaceAll('-', '');
 }
@@ -713,17 +662,16 @@ function encodeUser(u: User): Record<string, unknown> {
   return { id: u.id, email: u.email, name: u.name, image: u.image };
 }
 
-// clientIp is the caller's address as seen past the proxy. Behind Railway (and
-// any similar edge) the connecting address is the proxy, so the first
-// X-Forwarded-For hop is the real one. It keys the login rate limiter.
+// clientIp is the caller's address past the proxy: behind Railway the connecting
+// address is the proxy, so the first X-Forwarded-For hop is the real one. Keys the
+// login rate limiter.
 function clientIp(c: Context<HonoEnv>): string {
   const fwd = c.req.header('x-forwarded-for') ?? '';
   const first = fwd.split(',')[0]?.trim() ?? '';
   return first !== '' ? first : (c.req.header('x-real-ip') ?? 'unknown');
 }
 
-// isSecureRequest reports whether the browser reached us over HTTPS, trusting
-// the proxy's X-Forwarded-Proto since TLS terminates there.
+// isSecureRequest trusts the proxy's X-Forwarded-Proto since TLS terminates there.
 function isSecureRequest(c: Context<HonoEnv>): boolean {
   if ((c.req.header('x-forwarded-proto') ?? '').split(',')[0]?.trim() === 'https') return true;
   try {
@@ -733,8 +681,6 @@ function isSecureRequest(c: Context<HonoEnv>): boolean {
   }
 }
 
-// ---- errors ----
-
 function noAccount(): DeployErr {
   return new DeployErr({ code: DeployCode.Unauthorized, message: 'not logged in to 280', fix: 'run 280 login' });
 }
@@ -742,8 +688,6 @@ function noAccount(): DeployErr {
 function unavailable(msg: string): DeployErr {
   return new DeployErr({ code: DeployCode.Unavailable, message: msg, retryable: true });
 }
-
-// ---- body reading ----
 
 function contentLength(c: Context<HonoEnv>): number {
   const len = c.req.header('Content-Length');
@@ -758,11 +702,9 @@ async function readBodyText(c: Context<HonoEnv>, limit: number): Promise<string>
   return Buffer.from(buf).toString('utf8');
 }
 
-// readJson reads a JSON body and validates it through a loose schema, throwing
-// the given seam error on any failure. sync/delete append the decoder's reason
-// (mirroring Go's decode error); the internal endpoints use a fixed message.
-// Folding schema validation in here means a non-object body fails the same way
-// a malformed one does, rather than escaping to the panic backstop.
+// readJson reads and validates a JSON body, throwing the given seam error on any
+// failure. sync/delete append the decoder's reason; internal endpoints use a fixed
+// message. Folding validation here makes a non-object body fail like a malformed one.
 async function readJson<T>(
   c: Context<HonoEnv>,
   limit: number,
@@ -780,9 +722,7 @@ async function readJson<T>(
 }
 
 // cappedStream enforces the byte cap on a streamed body without buffering it.
-// Exceeding the cap errors the stream, which the blob store surfaces as an
-// upload fault (deploysvc maps it to a retryable unavailable, mirroring Go's
-// MaxBytesReader).
+// Exceeding the cap errors the stream, which deploysvc maps to a retryable error.
 function cappedStream(
   body: ReadableStream<Uint8Array> | null,
   limit: number,

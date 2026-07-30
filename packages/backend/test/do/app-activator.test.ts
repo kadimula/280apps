@@ -1,20 +1,10 @@
 // AppActivator Durable Object behavior, exercised inside workerd (real DO storage
-// and alarms) via @cloudflare/vitest-pool-workers. The object's per-execution deps
-// are overridden with in-memory doubles (store, blobs, runtime) and a logical
-// clock, so these assert control-plane behavior without a database or the
-// Cloudflare API:
+// and alarms) via @cloudflare/vitest-pool-workers. Per-execution deps are
+// overridden with in-memory doubles (store, blobs, runtime) and a logical clock,
+// so these assert control-plane behavior without a database or the Cloudflare API.
 //
-//   - the same transitions the old inline settle produced (the store id persisted
-//     before the outcome; live; failed);
-//   - the claim (uploading -> activating) happens INSIDE the object, not the
-//     request;
-//   - a dropped enqueue leaves the deploy uploading and a re-sync recovers it;
-//   - alarm retries back off and proceed under the existing claim;
-//   - the watchdog fails a stuck activation and a subsequent push succeeds;
-//   - a delete supersedes a mid-flight or pending activation.
-//
-// The logical clock is seeded far in the future so armed alarms never auto-fire;
-// each execution is stepped deterministically with runDurableObjectAlarm, and the
+// The clock is seeded far in the future so armed alarms never auto-fire; each
+// execution is stepped deterministically with runDurableObjectAlarm, and the
 // watchdog's clock is advanced by hand.
 
 import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
@@ -25,8 +15,8 @@ import { InstrumentedStore, TestRuntime } from '../helpers/activator-doubles.js'
 import { AppActivator, __setActivatorTestConfig } from '../../src/app-activator.js';
 import type { App } from '../../src/seams.js';
 
-// A far-future base so setAlarm(now()) is never due against real wall-clock: alarms
-// only run when the test steps them.
+// far-future base so setAlarm(now()) is never due against real wall-clock;
+// alarms only run when the test steps them.
 const CLOCK_BASE = 4_000_000_000_000;
 const OPTIONS = { stuckMs: 10 * 60 * 1000, attemptCap: 4, backoffBaseMs: 1_000, backoffCapMs: 8_000 };
 
@@ -50,8 +40,8 @@ beforeEach(() => {
 
 const ACCOUNT = 'acct_test';
 
-// seed creates a fresh app and an uploading deploy whose only blob (the worker) is
-// already stored — the state settle hands the object. Each call uses a unique app
+// creates a fresh app and an uploading deploy whose only blob (the worker) is
+// already stored: the state settle hands the object. Each call uses a unique app
 // id, so every case runs against its own Durable Object instance and storage.
 async function seed(content = 'worker'): Promise<{ app: App; deployId: string }> {
   const appId = `app_${counter++}`;
@@ -96,8 +86,7 @@ function enqueue(stub: Stub, app: App, deployId: string): Promise<void> {
   );
 }
 
-// step runs one execution (one alarm firing), returning whether an alarm was
-// scheduled to run.
+// runs one execution (one alarm firing), returning whether an alarm was scheduled.
 function step(stub: Stub): Promise<boolean> {
   return runDurableObjectAlarm(stub);
 }
@@ -116,8 +105,8 @@ describe('AppActivator: activation', () => {
     const stub = stubFor(app.id);
 
     await enqueue(stub, app, deployId);
-    // The enqueue only persists a task and arms the alarm; the claim is the
-    // object's job, so the deploy is still uploading and the request never claimed.
+    // enqueue only persists a task and arms the alarm; claiming is the object's
+    // job, so the deploy is still uploading and the request never claimed
     expect(await state(app.id, deployId)).toBe(State.Uploading);
     expect(store.claimCount()).toBe(0);
 
@@ -125,12 +114,12 @@ describe('AppActivator: activation', () => {
 
     expect(await state(app.id, deployId)).toBe(State.Live);
     expect(runtime.activeDeploy(app.id)).toBe(deployId);
-    // The claim happened inside the object, exactly once, before the runtime ran;
-    // the store id was persisted before the deploy was marked live.
+    // claim ran inside the object once, before the runtime; the store id was
+    // persisted before the deploy was marked live
     expect(store.claims()).toEqual(['claim:true']);
     expect(store.calls).toEqual(['claim:true', 'setStoreId', 'finishLive']);
     expect((await store.app(ACCOUNT, app.id))?.storeId).toBe(`store_${app.id}`);
-    // Once live, the task and its alarm are cleared.
+    // once live, the task and its alarm are cleared
     expect(await scheduledAlarm(stub)).toBeNull();
     expect(await step(stub)).toBe(false);
   });
@@ -156,13 +145,13 @@ describe('AppActivator: dropped enqueue', () => {
     const { app, deployId } = await seed();
     const stub = stubFor(app.id);
 
-    // The handoff was lost: settle never reached the object. Nothing is scheduled
-    // and the deploy is still uploading — it cannot wedge in activating.
+    // handoff was lost: settle never reached the object. Nothing is scheduled and
+    // the deploy is still uploading, so it cannot wedge in activating.
     expect(await scheduledAlarm(stub)).toBeNull();
     expect(await step(stub)).toBe(false);
     expect(await state(app.id, deployId)).toBe(State.Uploading);
 
-    // The self-heal: the CLI re-syncs, settle runs again, the object is asked.
+    // self-heal: the CLI re-syncs, settle runs again, the object is asked
     await enqueue(stub, app, deployId);
     expect(await step(stub)).toBe(true);
     expect(await state(app.id, deployId)).toBe(State.Live);
@@ -177,26 +166,22 @@ describe('AppActivator: retries', () => {
 
     await enqueue(stub, app, deployId);
 
-    // Attempt 1 claims (uploading -> activating), fails, and re-arms with the base
-    // backoff.
+    // attempt 1 claims (uploading -> activating), fails, re-arms at base backoff
     expect(await step(stub)).toBe(true);
     expect(await state(app.id, deployId)).toBe(State.Activating);
     expect((await scheduledAlarm(stub))! - clock).toBe(1_000);
 
-    // Attempt 2 does not re-claim (the deploy is already activating) and backs off
-    // further.
+    // attempt 2 does not re-claim (already activating) and backs off further
     expect(await step(stub)).toBe(true);
     expect((await scheduledAlarm(stub))! - clock).toBe(2_000);
 
-    // Attempt 3.
-    expect(await step(stub)).toBe(true);
+    expect(await step(stub)).toBe(true); // attempt 3
     expect((await scheduledAlarm(stub))! - clock).toBe(4_000);
 
-    // Attempt 4 succeeds.
-    expect(await step(stub)).toBe(true);
+    expect(await step(stub)).toBe(true); // attempt 4 succeeds
     expect(await state(app.id, deployId)).toBe(State.Live);
 
-    // The claim ran once across every attempt: retries proceed under it.
+    // the claim ran once across every attempt: retries proceed under it
     expect(store.claimCount()).toBe(1);
   });
 });
@@ -208,12 +193,11 @@ describe('AppActivator: watchdog', () => {
     runtime.failNextN(100); // never succeeds while stuck
 
     await enqueue(stub, app, deployId);
-    // Burn through the attempt cap (attempts 0..3 run, then attempt reaches 4).
+    // burn through the attempt cap (attempts 0..3 run, then attempt reaches 4)
     for (let i = 0; i < OPTIONS.attemptCap; i++) await step(stub);
     expect(await state(app.id, deployId)).toBe(State.Activating);
 
-    // The next firing is past the attempt cap: the watchdog fails it retryably and
-    // clears the task.
+    // next firing is past the cap: the watchdog fails it retryably, clears the task
     expect(await step(stub)).toBe(true);
     const dep = await store.deploy(app.id, deployId);
     expect(dep?.state).toBe(State.Failed);
@@ -222,8 +206,8 @@ describe('AppActivator: watchdog', () => {
     expect(dep?.failure?.message).toContain('timed out');
     expect(await scheduledAlarm(stub)).toBeNull();
 
-    // A subsequent push: openDeploy reopens the failed deploy, and this time the
-    // runtime succeeds.
+    // a subsequent push: openDeploy reopens the failed deploy, and this time the
+    // runtime succeeds
     runtime.failNextN(0);
     await store.openDeploy({ appId: app.id, id: deployId, manifest: dep!.manifest, state: State.Uploading, failure: null });
     expect((await store.deploy(app.id, deployId))?.state).toBe(State.Uploading);
@@ -241,7 +225,7 @@ describe('AppActivator: watchdog', () => {
     expect(await step(stub)).toBe(true); // attempt 1: claim + fail
     expect(await state(app.id, deployId)).toBe(State.Activating);
 
-    // Ten minutes pass; the next firing is over the age limit.
+    // ten minutes pass; the next firing is over the age limit
     clock += OPTIONS.stuckMs + 1;
     expect(await step(stub)).toBe(true);
     expect((await store.deploy(app.id, deployId))?.state).toBe(State.Failed);
@@ -254,7 +238,7 @@ describe('AppActivator: delete', () => {
     const { app, deployId } = await seed();
     const stub = stubFor(app.id);
 
-    // An activation is enqueued but not yet run (its alarm is armed).
+    // enqueued but not yet run (its alarm is armed)
     await enqueue(stub, app, deployId);
     expect(await scheduledAlarm(stub)).not.toBeNull();
 
@@ -263,8 +247,8 @@ describe('AppActivator: delete', () => {
     );
     expect(outcome).toEqual({ deleted: true });
 
-    // The runtime was asked to delete, the row is gone, and the pending task and
-    // its alarm are cleared — a stale alarm firing now finds no app and no work.
+    // runtime asked to delete, row gone, pending task and alarm cleared: a stale
+    // alarm firing now finds no app and no work
     expect(runtime.deleted).toEqual([app.id]);
     expect(await store.app(ACCOUNT, app.id)).toBeNull();
     expect(await scheduledAlarm(stub)).toBeNull();
@@ -281,8 +265,8 @@ describe('AppActivator: delete', () => {
       (obj as AppActivator).delete({ app: { ...app }, accountId: ACCOUNT }),
     );
 
-    // The failure comes back as data (so its fields survive the RPC boundary), and
-    // nothing past the runtime step ran: the app row is still there to retry.
+    // the failure comes back as data (so its fields survive the RPC boundary) and
+    // nothing past the runtime step ran: the app row is still there to retry
     expect(outcome).toHaveProperty('error');
     if ('error' in outcome) {
       expect(outcome.error.code).toBe(DeployCode.Unavailable);
@@ -295,16 +279,15 @@ describe('AppActivator: delete', () => {
     const { app, deployId } = await seed();
     const stub = stubFor(app.id);
 
-    // Hold the activation inside the runtime.
+    // hold the activation inside the runtime
     runtime.openGate();
     await enqueue(stub, app, deployId);
     const activating = step(stub); // fires the alarm; blocks in runtime.activate
-    // Let the execution reach the gated runtime.
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10)); // let it reach the gated runtime
     expect(runtime.order.at(-1)).toBe(`activate:start:${deployId}`);
 
-    // Ask to delete while the activation is mid-flight. It must not touch the
-    // runtime until the activation releases.
+    // delete while the activation is mid-flight: it must not touch the runtime
+    // until the activation releases
     const deleting = runInDurableObject(stub, (obj) =>
       (obj as AppActivator).delete({ app: { ...app }, accountId: ACCOUNT }),
     );
@@ -315,7 +298,7 @@ describe('AppActivator: delete', () => {
     await activating;
     const outcome = await deleting;
 
-    // The activation completed, then the delete ran — one operation at a time.
+    // the activation completed, then the delete ran: one operation at a time
     expect(outcome).toEqual({ deleted: true });
     expect(runtime.order).toContain(`activate:done:${deployId}`);
     expect(runtime.order.indexOf(`activate:done:${deployId}`)).toBeLessThan(runtime.order.indexOf(`delete:${app.id}`));

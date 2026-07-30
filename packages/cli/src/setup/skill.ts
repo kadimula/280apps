@@ -1,11 +1,6 @@
-// skill generates and installs the 280 Agent Skill — the secondary integration
-// (AXI §7) that loads on demand in any skill-aware agent, complementing the
-// session hook. It is generated from the home view's static content (the shared
-// DESCRIPTION plus the fixed command guidance), with live state stripped so the
-// skill never drifts from the CLI's own guidance. Command examples are rewritten
-// to `npx -y two80@latest ...` because a skill can be installed without the `280`
-// binary on PATH. `280 setup` writes it into the agent's skills dir; `--check`
-// (wired into CI) fails when the committed copy is stale.
+// Generates and installs the 280 Agent Skill that loads on demand in a skill-aware
+// agent. Built from the home view's static content (shared DESCRIPTION) so it
+// never drifts from the CLI; examples use `npx` since `280` may not be on PATH.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,23 +9,16 @@ import { writeAtomic } from './jsonfile.js';
 import { DESCRIPTION } from '../homeview.js';
 import type { InstallResult } from './result.js';
 
-// SKILL_NAME is the skill's directory name and frontmatter `name`.
 export const SKILL_NAME = '280-deploy';
 
-// INSTALL_FILE is where `280 setup` writes the skill, project-scoped so it is
-// directory-scoped like the hooks (AXI §7). This is the Agent Skills layout a
-// skill-aware agent reads.
 export const INSTALL_FILE = path.join('.claude', 'skills', SKILL_NAME, 'SKILL.md');
 
-// TRIGGER is the frontmatter description, written as a trigger (AXI §7): terse,
-// outcome-focused, so an agent loads the skill on the right intent.
 const TRIGGER =
   'Deploy and share a local web app (Next.js or static) to a live URL with one command. ' +
   'Use when the user wants to deploy, publish, ship, or share an app or prototype and get a link.';
 
-// generate renders the full SKILL.md. Deterministic and state-free, so the
-// committed file and `--check` compare byte for byte. DESCRIPTION is imported
-// from the home view (single source of truth).
+// Deterministic and state-free, so the committed file and `--check` compare byte
+// for byte. DESCRIPTION is imported from the home view (single source of truth).
 export function generate(): string {
   return `---
 name: ${SKILL_NAME}
@@ -72,8 +60,6 @@ npx -y two80@latest delete --yes <name>   # destroy the app: URL, content, data
 `;
 }
 
-// install writes the generated skill into the agent's skills dir, idempotently:
-// an identical existing file is a no-op.
 export function install(root: string): InstallResult {
   const file = path.join(root, INSTALL_FILE);
   const desired = generate();
@@ -88,9 +74,8 @@ export function install(root: string): InstallResult {
   return { target: 'skill', action: current === null ? 'installed' : 'repaired', path: INSTALL_FILE };
 }
 
-// committedPath locates the repo's committed SKILL.md (packages/cli/skill/) by
-// walking up from this module to the `two80` package root, so `--check` works
-// from source (vitest), from the tsup bundle, and from an installed package.
+// Walks up to the `two80` package root so `--check` works from source, from the
+// tsup bundle, and from an installed package.
 export function committedPath(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
@@ -112,11 +97,8 @@ export interface CheckResult {
   path: string; // committed file path
 }
 
-// check compares the committed skill against freshly generated content. fresh is
-// false when they differ (the committed copy is stale) or the file is missing.
-// The comparison is newline-normalized so a CRLF checkout (git autocrlf on
-// Windows CI) is not mistaken for drift — the committed file is canonical LF
-// (pinned in .gitattributes), and content, not line endings, is what matters.
+// Newline-normalized so a CRLF checkout (git autocrlf on Windows CI) is not
+// mistaken for drift; content, not line endings, is what matters.
 export function check(): CheckResult {
   const p = committedPath();
   let committed = '';

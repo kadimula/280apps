@@ -1,7 +1,6 @@
 // The docs endpoints are unauthenticated GETs the frontend proxies at their
-// public URLs (/setup.md, /platform-support.md, /the-280-way). They carry no
-// per-app randomness, so unlike the deploy routes they can be asserted against
-// their exact source rendering rather than replayed from a Go recording.
+// public URLs. They carry no per-app randomness, so unlike the deploy routes
+// they can be asserted against their exact source rendering.
 
 import { describe, expect, it } from 'vitest';
 import { Server } from '../src/api.js';
@@ -59,7 +58,6 @@ describe('docs endpoints', () => {
       expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
       const body = await res.text();
       expect(body).toBe(the280WayMarkdown());
-      // Every blessed answer, the Never list, the snippets, the loop.
       expect(body).toContain('# The 280 way');
       expect(body).toContain('## Never');
       expect(body).toContain('```json');
@@ -87,7 +85,7 @@ describe('docs endpoints', () => {
   it('does not require auth', async () => {
     const { app, cleanup } = await server();
     try {
-      // No Authorization header at all; deploy routes would 401 here.
+      // no Authorization header at all; deploy routes would 401 here
       const res = await app.request('/v1/docs/setup.md');
       expect(res.status).toBe(200);
     } finally {

@@ -77,7 +77,6 @@ function pathBaseSlug(root: string): string {
   return detect.slugify(base);
 }
 
-// Guard the fileExists helper does not treat a directory as a static entry.
 it('a bare directory named index.html is not a static entry', () => {
   const root = tmpProject({ 'other.txt': 'x' });
   fs.mkdirSync(path.join(root, 'index.html'));

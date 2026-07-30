@@ -1,7 +1,4 @@
 // Blobstore tests. Behavior spec: platform/internal/blobstore/blobstore.go.
-// The claims that matter: content is verified on the way in, a mismatch stores
-// nothing, blobs are app-scoped, the layout fans out, and every path-building
-// input is guarded.
 
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,8 +15,8 @@ function digestOf(b: Uint8Array | string): string {
     .digest('hex');
 }
 
-// bodyFrom yields the bytes in small chunks, so the streaming/hash path is
-// exercised rather than a single-write shortcut.
+// yields bytes in small chunks so the streaming/hash path is exercised, not a
+// single-write shortcut.
 function bodyFrom(data: Uint8Array): Readable {
   const chunks: Uint8Array[] = [];
   for (let i = 0; i < data.length; i += 3) {
@@ -78,9 +75,8 @@ describe('blobstore', () => {
     expect(caught).toBeInstanceOf(DeployErr);
     expect((caught as DeployErr).code).toBe(DeployCode.DigestMismatch);
     expect((caught as DeployErr).fix).toBe('run 280 push again');
-    // Nothing stored: the corrupt upload must not satisfy a manifest entry.
+    // corrupt upload must not satisfy a manifest entry, nor leave temp files
     expect(await store.has('app_1', wrong)).toBe(false);
-    // And no temp files left behind in the fan-out directory.
     const fan = join(root, 'app_1', wrong.slice(0, 2));
     const entries = await readdir(fan).catch(() => []);
     expect(entries).toEqual([]);
@@ -112,7 +108,7 @@ describe('blobstore', () => {
     const b = Buffer.from('b');
     const c = Buffer.from('c');
     const [da, db, dc] = [digestOf(a), digestOf(b), digestOf(c)];
-    await store.put('app_1', db, b.length, bodyFrom(b)); // b is present
+    await store.put('app_1', db, b.length, bodyFrom(b));
     const want = [
       { path: '', digest: da, size: a.length },
       { path: '', digest: db, size: b.length },
@@ -128,9 +124,9 @@ describe('blobstore', () => {
     await store.put('app_del', d, data.length, bodyFrom(data));
     await store.deleteApp('app_del');
     expect(await store.has('app_del', d)).toBe(false);
-    // Deleting an app that stored nothing succeeds.
+    // deleting an app that stored nothing succeeds
     await store.deleteApp('app_never');
-    // Re-deleting is a no-op, which lets an interrupted delete finish on re-run.
+    // re-deleting is a no-op, so an interrupted delete can finish on re-run
     await store.deleteApp('app_del');
   });
 
@@ -143,9 +139,9 @@ describe('blobstore', () => {
 
   it('rejects a non-sha256 digest', async () => {
     await expect(store.has('app_1', 'short')).rejects.toThrow(/is not a sha-256 digest/);
-    // Uppercase hex is not the canonical lowercase form Go accepts.
+    // uppercase hex is not the canonical lowercase form Go accepts
     await expect(store.has('app_1', 'A'.repeat(64))).rejects.toThrow(/is not a sha-256 digest/);
-    // Right length, non-hex character.
+    // right length, non-hex character
     await expect(store.has('app_1', 'g'.repeat(64))).rejects.toThrow(/is not a sha-256 digest/);
   });
 });

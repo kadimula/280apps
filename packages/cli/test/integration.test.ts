@@ -1,7 +1,5 @@
-// End-to-end "fake push": the whole command surface (app.run) over W3's real
-// static bundler and W1's real Fake port — the closest a unit test gets to what
-// `280 push` does in a shell, minus process wiring. This is the integration the
-// plan gates on W1 (the fake) and W3 (the bundler).
+// End-to-end "fake push": the whole command surface (app.run) over the real
+// static bundler and real Fake port, the closest a unit test gets to `280 push`.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';

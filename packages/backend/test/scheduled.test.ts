@@ -1,4 +1,4 @@
-// The scheduled cleanup sweep (worker.ts scheduled() → sweepExpired): deletes
+// The scheduled cleanup sweep (main.ts interval → sweepExpired): deletes
 // expired sessions, device codes, and lapsed login-rate windows, leaves valid
 // rows, and logs the per-table counts. The store double stands in for the real
 // Postgres, which implements the same deleteExpired seam.

@@ -10,6 +10,7 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/testdata/**",
+      "**/scripts/**",
       "frontend/**",
       "cli/**",
       "platform/**",

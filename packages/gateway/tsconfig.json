@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // The gateway runs on the Workers runtime (src/worker.ts): Hyperdrive,
+    // ExecutionContext, WebCrypto's CryptoKey/JsonWebKey, and the global fetch
+    // types come from @cloudflare/workers-types alongside node.
+    "types": ["node", "@cloudflare/workers-types"]
+  },
+  "include": ["src"]
+}

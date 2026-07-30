@@ -99,6 +99,100 @@ export class GoogleProvider implements OidcProvider {
   }
 }
 
+const ENTRA_BASE = 'https://login.microsoftonline.com';
+
+export interface EntraOptions {
+  clientId: string;
+  clientSecret: string;
+  // Entra authority. "organizations" is the multi-tenant work/school endpoint
+  // (design §5.3): each customer's admin consents once. Defaults to it.
+  tenant?: string;
+  fetch?: typeof fetch;
+}
+
+// The same OIDC authorization-code flow GoogleProvider runs, against Microsoft
+// Entra: one more entry in the provider registry, one code path. Like Google,
+// the id_token is decoded rather than signature-verified (TLS to the token
+// endpoint is the trust; see GoogleProvider).
+export class EntraProvider implements OidcProvider {
+  readonly name = 'microsoft';
+  private readonly clientId: string;
+  private readonly clientSecret: string;
+  private readonly tenant: string;
+  private readonly fetch: typeof fetch;
+
+  constructor(opts: EntraOptions) {
+    this.clientId = opts.clientId;
+    this.clientSecret = opts.clientSecret;
+    this.tenant = opts.tenant && opts.tenant !== '' ? opts.tenant : 'organizations';
+    this.fetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  }
+
+  private authEndpoint(): string {
+    return `${ENTRA_BASE}/${this.tenant}/oauth2/v2.0/authorize`;
+  }
+
+  private tokenEndpoint(): string {
+    return `${ENTRA_BASE}/${this.tenant}/oauth2/v2.0/token`;
+  }
+
+  authUrl({ state, redirectUri }: { state: string; redirectUri: string }): string {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+      // Callback shape identical to Google's, so one handler reads both.
+      response_mode: 'query',
+      prompt: 'select_account',
+    });
+    return `${this.authEndpoint()}?${params.toString()}`;
+  }
+
+  async exchange({ code, redirectUri }: { code: string; redirectUri: string }): Promise<OidcIdentity> {
+    const res = await this.fetch(this.tokenEndpoint(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({
+        code,
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+        scope: 'openid email profile',
+      }).toString(),
+    });
+    if (!res.ok) {
+      throw new Error(`entra token exchange failed: HTTP ${res.status}`);
+    }
+    const body = (await res.json()) as { id_token?: string };
+    if (!body.id_token) {
+      throw new Error('entra token response carried no id_token');
+    }
+    const claims = decodeJwtPayload(body.id_token);
+    const subject = strClaim(claims.sub);
+    // Entra puts the work address in `email` or, failing that, `preferred_username`/`upn`.
+    const email = firstNonEmpty(strClaim(claims.email), strClaim(claims.preferred_username), strClaim(claims.upn));
+    if (subject === '' || email === '') {
+      throw new Error('entra id_token missing sub or email');
+    }
+    return {
+      subject,
+      email,
+      name: strClaim(claims.name),
+      image: '',
+    };
+  }
+}
+
+function firstNonEmpty(...vals: string[]): string {
+  for (const v of vals) {
+    if (v !== '') return v;
+  }
+  return '';
+}
+
 // decodeJwtPayload reads the middle segment of a JWT as JSON. It does not verify
 // the signature (see the class note); a malformed token throws, which the caller
 // surfaces as a failed login.

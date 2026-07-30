@@ -122,6 +122,41 @@ export interface ExpiryCounts {
   rateLimits: number;
 }
 
+// App-level roles: tier 1 of the permission model (design §5.4). They govern the
+// app as an object — who can open it, change its code, and manage its permission
+// list — and are identical for every 280 app, which is what lets one share
+// dialog drive them all. Owner and Admin can manage grants; Editor can change
+// code; Viewer can only open.
+export const AppRole = {
+  Owner: 'owner',
+  Admin: 'admin',
+  Editor: 'editor',
+  Viewer: 'viewer',
+} as const;
+export type AppRole = (typeof AppRole)[keyof typeof AppRole];
+
+// Grant is one principal's access to one app (design §5.4). The model is flat:
+// one row per (app, principal), no relationship graph — one table carries the
+// whole thing until relationships turn graph-shaped. The two tiers answer two
+// separate questions and live in two columns:
+//   appRole     — tier 1, the app as an object (owner|admin|editor|viewer).
+//   featureRole — tier 2, a builder-defined role name from the app's 280.json
+//                 (e.g. 'manager'); '' when the principal holds no feature role.
+//                 Custom actions fold into this + can() checks rather than a
+//                 separate actions concept (manifest-custom-actions decision).
+// dataScope is advisory JSON in the MVP (null when unset); grantedBy/grantedAt
+// record who shared and when. Enforcement (route gates, can()) and the share
+// dialog that write these rows are a later phase; this seam is the data surface.
+export interface Grant {
+  appId: string;
+  principal: string; // 'alice@firm.com' or 'domain:firm.com'
+  appRole: AppRole;
+  featureRole: string;
+  dataScope: Record<string, unknown> | null;
+  grantedBy: string;
+  grantedAt: number; // unix seconds
+}
+
 // Store is the platform's control-plane database (store.go:121).
 export interface Store {
   close(): Promise<void>;
@@ -183,6 +218,20 @@ export interface Store {
   claimActivation(appId: string, deployId: string): Promise<boolean>;
   finishLive(appId: string, deployId: string): Promise<void>;
   finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void>;
+
+  // grants: the two-tier sharing model, flat — one row per (app, principal)
+  // (design §5.4). This is the data surface only; route gating and the share
+  // dialog that drive these rows come later. putGrant upserts on
+  // (appId, principal), so re-sharing to someone already on the list changes
+  // their role in place rather than erroring — exactly what the dialog does when
+  // an owner picks a new role. grant reads one principal's grant; grantsByApp
+  // lists an app's grants; revokeGrant removes one and reports whether a row was
+  // there, so revoking twice is not a failure. An app's grants are deleted with
+  // the app (deleteApp), so a re-created app id never inherits stale access.
+  putGrant(g: Grant): Promise<void>;
+  grant(appId: string, principal: string): Promise<Grant | null>;
+  grantsByApp(appId: string): Promise<Grant[]>;
+  revokeGrant(appId: string, principal: string): Promise<boolean>;
 }
 
 // ========================= blobstore (blobstore.go) =========================

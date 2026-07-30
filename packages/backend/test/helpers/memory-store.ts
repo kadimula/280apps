@@ -14,6 +14,7 @@ import {
   type DeviceCode,
   type Event,
   type ExpiryCounts,
+  type Grant,
   type OAuthAccount,
   type Session,
   type Store,
@@ -31,6 +32,7 @@ export class MemoryStore implements Store {
   private readonly oauth = new Map<string, OAuthAccount>(); // `${provider}/${providerAccountId}`
   private readonly sessions = new Map<string, Session>(); // tokenHash -> session
   private readonly loginRate = new Map<string, { count: number; expiresAt: number }>();
+  private readonly grants = new Map<string, Grant>(); // `${appId}/${principal}`
 
   async close(): Promise<void> {}
 
@@ -234,6 +236,10 @@ export class MemoryStore implements Store {
     for (const key of [...this.deploys.keys()]) {
       if (this.deploys.get(key)!.appId === appId) this.deploys.delete(key);
     }
+    // Grants are dropped with the app, so a re-created app id inherits no access.
+    for (const [key, g] of [...this.grants.entries()]) {
+      if (g.appId === appId) this.grants.delete(key);
+    }
     return true;
   }
 
@@ -314,6 +320,30 @@ export class MemoryStore implements Store {
     d.state = State.Failed;
     d.failure = failure;
   }
+
+  // ---- grants ----
+
+  async putGrant(g: Grant): Promise<void> {
+    // Upsert on (appId, principal): re-granting replaces the role in place.
+    this.grants.set(grantKey(g.appId, g.principal), cloneGrant(g));
+  }
+
+  async grant(appId: string, principal: string): Promise<Grant | null> {
+    const g = this.grants.get(grantKey(appId, principal));
+    return g ? cloneGrant(g) : null;
+  }
+
+  async grantsByApp(appId: string): Promise<Grant[]> {
+    return [...this.grants.values()]
+      .filter((g) => g.appId === appId)
+      .sort((x, y) => x.grantedAt - y.grantedAt || cmp(x.principal, y.principal))
+      .map(cloneGrant);
+  }
+
+  async revokeGrant(appId: string, principal: string): Promise<boolean> {
+    // Reports whether a row was there, so revoking twice is not a failure.
+    return this.grants.delete(grantKey(appId, principal));
+  }
 }
 
 interface StoredApp extends App {
@@ -326,6 +356,16 @@ interface StoredDeploy extends Deploy {
 
 function key(appId: string, deployId: string): string {
   return `${appId}/${deployId}`;
+}
+
+function grantKey(appId: string, principal: string): string {
+  return `${appId}/${principal}`;
+}
+
+function cloneGrant(g: Grant): Grant {
+  // dataScope is a nested object, so deep-copy it: a stored grant must not share
+  // mutable state with the caller's copy, mirroring the Postgres round-trip.
+  return { ...g, dataScope: g.dataScope === null ? null : { ...g.dataScope } };
 }
 
 function cloneApp(a: StoredApp): App {

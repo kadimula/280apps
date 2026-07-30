@@ -31,8 +31,12 @@
 	// enabled cache on this config as a provisioning bug.
 	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_PROD_HYPERDRIVE_ID" }],
 
-	// Activation runs inside the request that lands the last blob; the Durable
-	// Object serializes per-app activation so two in-flight pushes can't race.
+	// Activation runs inside the AppActivator Durable Object (src/app-activator.ts),
+	// not in the request: the request that lands the last blob only enqueues the
+	// activation on the app's object, which then claims, runs the runtime, and
+	// retries under an alarm. Keyed per app, the object is the cross-isolate
+	// serialization point for activation and delete, so two in-flight pushes (or a
+	// push racing a delete) can't race one app into the runtime.
 	"durable_objects": {
 		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]
 	},

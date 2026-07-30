@@ -1,0 +1,18 @@
+{
+	// Test-only wrangler config for the AppActivator Durable Object tests under
+	// @cloudflare/vitest-pool-workers (Miniflare). It declares only what those tests
+	// need — the DO binding and its SQLite migration — so Miniflare does not require
+	// a real Hyperdrive/R2/CF account; the tests override the object's per-execution
+	// deps with in-memory doubles. Production config is wrangler.jsonc.
+	"name": "280-backend-do-test",
+	"main": "src/worker.ts",
+	// Pinned to the vendored workerd's own version window (the production date is
+	// newer than the test runner's workerd binary). The DO logic does not depend on
+	// the exact date.
+	"compatibility_date": "2025-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"durable_objects": {
+		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AppActivator"] }]
+}

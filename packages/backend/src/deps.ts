@@ -3,9 +3,11 @@
 // the per-request I/O container the deps middleware puts on the context — a
 // Platform over a lazily-connected pg client and the R2 blob store, the auth
 // service, and the request-scoped config the handlers read. Nothing here is an
-// isolate singleton except appLocks, which is a coordination map, not I/O.
+// isolate singleton: per-app activation serialization now lives in the
+// AppActivator Durable Object, reached through DurableObjectActivator.
 
 import { Platform } from './deploysvc.js';
+import { DurableObjectActivator } from './activator.js';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { newPgStore } from './store/store.js';
@@ -15,31 +17,26 @@ import type { ExpiryCounts, Runtime, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
 
-// appLocks is the isolate-scoped per-app activation lock registry every
-// per-request Platform shares, so activation serialization outlives one request
-// (Platform.locks). One map per isolate; the accepted phase-1a limit is that it
-// does not reach across isolates — that is the AppActivator DO's later job.
-const appLocks = new Map<string, Promise<unknown>>();
-
 // buildRequestDeps constructs the request-scoped I/O container from Env. The pg
 // client is lazy (connects on the first statement) and closed after the response
-// via the returned close(); the R2 store, runtime, and auth are cheap plain
-// objects around it. This is called once per request by the deps middleware.
+// via the returned close(); the R2 store and auth are cheap plain objects around
+// it. The runtime is not built here — activation runs in the AppActivator Durable
+// Object, which builds its own runtime from the same Env; the request path only
+// hands the object a deploy to activate (DurableObjectActivator). This is called
+// once per request by the deps middleware.
 export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
   const config = readConfig(env);
 
   const store = newPgStore(config.dbConnectionString, config.dbSchema);
   const blobs = new R2BlobStore(env.BLOBS);
-  const runtime = selectRuntime(config, log);
   const auth = buildAuth(store, config, log);
 
   const platform = new Platform({
     store,
     blobs,
-    runtime,
+    activator: new DurableObjectActivator(env.APP_ACTIVATOR),
     appDomain: config.appDomain,
     hostSuffix: config.hostSuffix,
-    locks: appLocks,
   });
 
   return {

@@ -20,6 +20,7 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
+import { InProcessActivator } from '../../src/activator.js';
 import { Server } from '../../src/api.js';
 import type { Auth } from '../../src/authsvc.js';
 import type { RequestDeps } from '../../src/config.js';
@@ -57,10 +58,14 @@ export async function newPlatform(opts: { appDomain?: string; hostSuffix?: strin
   const blobs = await openBlobStore(dir);
 
   const runtime = new MemoryRuntime();
+  // The tests drive the Service directly and expect a deploy to be live the moment
+  // its last blob lands, so the in-process activator runs activation inline (the
+  // single-isolate equivalent of production's AppActivator Durable Object).
+  const activator = new InProcessActivator({ store, blobs, runtime });
   const platform = new Platform({
     store,
     blobs,
-    runtime,
+    activator,
     appDomain: opts.appDomain ?? '280apps.run',
     hostSuffix: opts.hostSuffix ?? '',
   });

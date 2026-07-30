@@ -8,17 +8,23 @@
 // client it holds is closed after the response via ctx.waitUntil. No I/O object
 // is ever carried across requests.
 //
-// Accepted phase-1a limitation: activation still runs INLINE in the request that
-// lands the last blob (deploysvc settle), NOT in the AppActivator Durable
-// Object. AppActivator is a no-op stub here so the merged wrangler config (which
-// declares the class + migration tag v1) can deploy; the real per-app activation
-// DO that provides cross-isolate serialization is a later wave.
+// Activation runs in the AppActivator Durable Object (src/app-activator.ts), not
+// inline in the request: the request that lands the last blob only enqueues the
+// activation on the app's object and returns, so its 204 ships before the app
+// goes live. That object is the per-app, cross-isolate serialization point for
+// activation and delete; it is exported below because the merged wrangler config
+// binds the class by name.
 
 import { Server } from './api.js';
 import { buildRequestDeps, sweepExpired } from './deps.js';
 import { newPgStore } from './store/store.js';
 import { readConfig, type Env } from './config.js';
 import { newLogger } from './logger.js';
+
+// AppActivator is bound by the wrangler config (durable_objects, migration tag
+// v1). It ships in this same Worker script, so it sees the same Env — Hyperdrive,
+// R2, the CF API secrets — that the request path reads.
+export { AppActivator } from './app-activator.js';
 
 // The isolate singletons: one JSON logger (Workers Logs captures console.*) and
 // one router. The router closes over buildDeps, which reads c.env per request —
@@ -53,13 +59,3 @@ export default {
     }
   },
 };
-
-// AppActivator is a no-op Durable Object stub. The merged wrangler config
-// declares this class with migration tag v1, so the Worker will not deploy
-// unless the class is exported — but phase 1a runs activation INLINE in the
-// request (deploysvc settle), NOT in this DO, so nothing addresses it yet. The
-// real per-app activation DO (cross-isolate serialization) is the next wave; do
-// not add behavior here.
-export class AppActivator {
-  constructor(_state: DurableObjectState, _env: Env) {}
-}

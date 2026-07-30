@@ -5,6 +5,7 @@
 // through this library index.
 export * from './seams.js';
 export * from './deploysvc.js';
+export * from './activator.js';
 export * from './api.js';
 export * from './docs.js';
 export * from './observe.js';

@@ -1,7 +1,0 @@
-// StaticWorker is the platform-supplied serving worker for static-only apps: a
-// compiled-in constant (base64 of static.js) so the module stays self-contained, no
-// filesystem read. static-embed.test.ts asserts it equals the verbatim file.
-const STATIC_JS_BASE64 =
-  'Ly8gVGhlIHNlcnZpbmcgd29ya2VyIGZvciBzdGF0aWMtb25seSBhcHBzLiBTdGF0aWMgc2l0ZXMgaGF2ZSBubyBzZXJ2ZXIgY29kZSwgYnV0Ci8vIHRoZSBkaXNwYXRjaCBuYW1lc3BhY2Ugc3RpbGwgaGFuZHMgcmVxdWVzdHMgdG8gYSBVc2VyIFdvcmtlciwgc28gdGhlIHBsYXRmb3JtCi8vIHN1cHBsaWVzIHRoaXMgb25lIGluIHBsYWNlIG9mIHRoZSBDTEkncyBwbGFjZWhvbGRlciBzdHViLiBUaGUgYXNzZXQgcm91dGVyCi8vIGFscmVhZHkgaGFuZGxlZCBldmVyeSBmaWxlIG1hdGNoIGFuZCB0aGUgU1BBIGZhbGxiYWNrLCBzbyBmZXRjaCgpIGlzIHRoZSBsYXN0IHdvcmQuCmV4cG9ydCBkZWZhdWx0IHsKCWFzeW5jIGZldGNoKHJlcXVlc3QsIGVudikgewoJCXJldHVybiBlbnYuQVNTRVRTLmZldGNoKHJlcXVlc3QpOwoJfSwKfTsK';
-
-export const StaticWorker: Uint8Array = new Uint8Array(Buffer.from(STATIC_JS_BASE64, 'base64'));

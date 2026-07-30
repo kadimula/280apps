@@ -31,20 +31,20 @@ describe('loose parsing (Go encoding/json semantics)', () => {
     expect(id['futureField']).toBe(42);
   });
 
-  it('coerces null and absent lists to empty arrays', () => {
+  it('coerces null and absent files to an empty array', () => {
     const m = manifestSchema.parse({
-      kind: 'bundle',
-      worker: { digest: 'aa', size: 3 },
-      assets: null,
+      kind: 'container',
+      build: { builder: 'next', dockerfile: 'Dockerfile', port: 8080 },
+      files: null,
     });
-    expect(m.assets).toEqual([]);
-    expect(m.cache).toEqual([]);
-    expect(m.worker.path).toBe('');
+    expect(m.files).toEqual([]);
+    expect(m.build).toEqual({ builder: 'next', dockerfile: 'Dockerfile', port: 8080 });
   });
 
-  it('fills a missing worker with a zero BlobInfo', () => {
-    const m = manifestSchema.parse({ kind: 'bundle' });
-    expect(m.worker).toEqual({ path: '', digest: '', size: 0 });
+  it('fills a missing build with a zero BuildSpec and empty files', () => {
+    const m = manifestSchema.parse({ kind: 'container' });
+    expect(m.build).toEqual({ builder: '', dockerfile: '', port: 0 });
+    expect(m.files).toEqual([]);
   });
 
   it('defaults blob size/path/digest to zero values', () => {

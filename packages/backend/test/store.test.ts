@@ -12,18 +12,16 @@ import { DeviceStatus, EventKind } from '../src/seams.js';
 import { hasDatabase, newStore } from './pg.js';
 
 const emptyManifest: Manifest = {
-  kind: 'bundle',
-  worker: { path: '', digest: '', size: 0 },
-  assets: [],
-  cache: [],
+  kind: 'container',
+  build: { builder: '', dockerfile: '', port: 0 },
+  files: [],
 };
 
-function manifestFor(workerDigest: string, size = 6): Manifest {
+function manifestFor(dockerfileDigest: string, size = 6): Manifest {
   return {
-    kind: 'bundle',
-    worker: { path: '', digest: workerDigest, size },
-    assets: [],
-    cache: [],
+    kind: 'container',
+    build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+    files: [{ path: 'Dockerfile', digest: dockerfileDigest, size }],
   };
 }
 
@@ -321,7 +319,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     };
     const opened = await store.openDeploy(d);
     expect(opened.state).toBe(State.Uploading);
-    expect(opened.manifest.worker.digest).toBe('a'.repeat(64));
+    expect(opened.manifest.files[0]!.digest).toBe('a'.repeat(64));
 
     // fail it, then re-open: state returns to uploading and failure clears
     await store.finishFailed(a.id, 'dep_1', {

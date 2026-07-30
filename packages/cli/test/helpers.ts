@@ -40,22 +40,25 @@ export function tmpHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), '280-home-'));
 }
 
-// A minimal self-consistent bundle: worker + asset with digests derived the way
-// the real bundler and platform do, so the Fake accepts it and reports missing right.
+// testBundle is a minimal, self-consistent container context: a Dockerfile and
+// one source file, digests derived the same way the real bundler and the platform
+// do, so the Fake accepts it and reports the right missing set.
 export function testBundle(): Bundle {
-  const worker = new TextEncoder().encode('export default { fetch() { return new Response("hi"); } };');
-  const wd = digestBytes(worker);
-  const asset = new TextEncoder().encode('<h1>hi</h1>');
-  const ad = digestBytes(asset);
+  const dockerfile = new TextEncoder().encode('FROM node:20\nCMD ["node","server.js"]\n');
+  const dd = digestBytes(dockerfile);
+  const src = new TextEncoder().encode('console.log("hi")');
+  const sd = digestBytes(src);
   const manifest: Manifest = {
-    kind: 'bundle',
-    worker: { path: '', digest: wd, size: worker.length },
-    assets: [{ path: '/index.html', digest: ad, size: asset.length }],
-    cache: [],
+    kind: 'container',
+    build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+    files: [
+      { path: 'Dockerfile', digest: dd, size: dockerfile.length },
+      { path: 'server.js', digest: sd, size: src.length },
+    ],
   };
   const content = new Map<string, Uint8Array>([
-    [wd, worker],
-    [ad, asset],
+    [dd, dockerfile],
+    [sd, src],
   ]);
   return { manifest, content, notes: [] };
 }

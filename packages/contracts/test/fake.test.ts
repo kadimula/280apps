@@ -6,9 +6,10 @@ import { Readable } from 'node:stream';
 import { Fake } from '../src/deploy/fake.js';
 import { asDeployError } from '../src/deploy/error.js';
 import {
-  MANIFEST_KIND_BUNDLE,
+  MANIFEST_KIND_CONTAINER,
   State,
   digestBytes,
+  type BlobInfo,
   type Digest,
   type Identity,
   type Manifest,
@@ -21,25 +22,30 @@ function bodyOf(data: Uint8Array): Readable {
   return Readable.from([Buffer.from(data)]);
 }
 
-function mkBundle(worker: Uint8Array, assets: Record<string, Uint8Array> | null): {
+const DOCKERFILE = bytes('FROM node:20-bookworm-slim\nCMD ["node","server.js"]\n');
+
+function mkBundle(server: Uint8Array, files: Record<string, Uint8Array> | null): {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
 } {
   const content = new Map<Digest, Uint8Array>();
-  const wd = digestBytes(worker);
-  content.set(wd, worker);
-  const manifest: Manifest = {
-    kind: MANIFEST_KIND_BUNDLE,
-    worker: { path: '', digest: wd, size: worker.length },
-    assets: [],
-    cache: [],
-  };
-  for (const [path, data] of Object.entries(assets ?? {})) {
+  const list: BlobInfo[] = [];
+  const add = (path: string, data: Uint8Array): void => {
     const d = digestBytes(data);
     content.set(d, data);
-    manifest.assets.push({ path, digest: d, size: data.length });
-  }
-  return { manifest, content };
+    list.push({ path, digest: d, size: data.length });
+  };
+  add('Dockerfile', DOCKERFILE);
+  add('server.js', server);
+  for (const [path, data] of Object.entries(files ?? {})) add(path, data);
+  return {
+    manifest: {
+      kind: MANIFEST_KIND_CONTAINER,
+      build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+      files: list,
+    },
+    content,
+  };
 }
 
 async function sync(f: Fake, id: Identity, m: Manifest) {
@@ -65,7 +71,7 @@ function id(): Identity {
 describe('Fake fault injection & atomicity', () => {
   it('crash mid-upload then re-run converges to one live app', async () => {
     const f = new Fake();
-    const { manifest, content } = mkBundle(bytes('worker bytes'), { '/a.js': bytes('asset a') });
+    const { manifest, content } = mkBundle(bytes('worker bytes'), { 'public/a.js': bytes('asset a') });
     const identity = id();
 
     const res = await sync(f, identity, manifest);
@@ -117,7 +123,7 @@ describe('Fake fault injection & atomicity', () => {
     identity.appId = r1.app.id;
 
     // v2 partially uploaded: v1 must still be serving.
-    const v2 = mkBundle(bytes('worker v2'), { '/a.js': bytes('a') });
+    const v2 = mkBundle(bytes('worker v2'), { 'public/a.js': bytes('a') });
     const r2 = await sync(f, identity, v2.manifest);
     await put(f, r2.app.id, v2.content, r2.missing.slice(0, 1));
     expect(f.activeDeployId(r1.app.id)).toBe(r1.deployId);

@@ -94,8 +94,9 @@ export class TestRuntime implements Runtime {
       this.order.push(`activate:fail:${act.deployId}`);
       throw new Error('substrate rejected the deploy');
     }
-    // read the worker the way a real runtime would, so a missing blob fails here
-    await act.asset(act.manifest.worker.digest);
+    // Read the Dockerfile the way a real runtime would, so a missing blob fails here.
+    const df = act.manifest.files.find((f) => f.path === act.manifest.build.dockerfile);
+    if (df) await act.asset(df.digest);
     const out: RuntimeResult = { storeId: '' };
     if (act.app.storeId === '') {
       let storeId = this.stores.get(act.app.id) ?? '';

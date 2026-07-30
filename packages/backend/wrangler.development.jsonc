@@ -31,10 +31,10 @@
 	"triggers": { "crons": ["0 3 * * *"] },
 
 	// Secrets are set per environment with `wrangler secret put ... --env` / against
-	// this named worker (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, CF_ACCOUNT_ID,
-	// CF_API_TOKEN, DATABASE_URL) — never committed here. See wrangler.jsonc.
+	// this named worker (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TWO80_BUILD_TOKEN,
+	// DATABASE_URL) — never committed here. See wrangler.jsonc.
 	"vars": {
-		"TWO80_RUNTIME": "cloudflare",
+		"TWO80_RUNTIME": "container",
 		"TWO80_LOG_FORMAT": "json",
 		"TWO80_DB_SCHEMA": "platform",
 		"TWO80_APP_DOMAIN": "280apps.run",
@@ -47,7 +47,7 @@
 		"TWO80_FRONTEND_ORIGIN": "https://www-development.280apps.com",
 		"TWO80_VERIFICATION_URI": "https://280apps.com/activate",
 		"TWO80_COOKIE_DOMAIN": ".280apps.com",
-		"CF_DISPATCH_NAMESPACE": "apps-development",
-		"CF_ISR_CACHE_KV": ""
+		// The self-hosted Docker build host for development deploys.
+		"TWO80_BUILD_HOST": ""
 	}
 }

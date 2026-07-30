@@ -24,9 +24,11 @@ export class MemoryRuntime implements Runtime {
       this.failErr = null;
       throw err;
     }
-    // Read the worker the way a real runtime would, so a manifest naming a blob
-    // nobody uploaded fails here rather than going live empty.
-    await act.asset(act.manifest.worker.digest);
+    // Read the Dockerfile the way a real runtime would when it assembles the build
+    // context, so a manifest naming a blob nobody uploaded fails here rather than
+    // going live empty.
+    const dockerfile = act.manifest.files.find((f) => f.path === act.manifest.build.dockerfile);
+    if (dockerfile) await act.asset(dockerfile.digest);
 
     const out: RuntimeResult = { storeId: '' };
     if (act.app.storeId === '') {

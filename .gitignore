@@ -10,6 +10,9 @@ platform/dispatcher/node_modules/
 node_modules/
 packages/*/dist/
 
+# Local proof: the container build context the buildpack materializes (throwaway)
+platform/appcontainer/proof-context/
+
 # Local-only: editor scratch + private notes
 .lavish/
 docs/

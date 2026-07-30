@@ -4,8 +4,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DeployCode,
-  MANIFEST_KIND_BUNDLE,
-  MAX_WORKER_GZIP_BYTES,
+  MANIFEST_KIND_CONTAINER,
+  MAX_BUILD_CONTEXT_BYTES,
   Resolution,
   State,
   digestBytes,
@@ -15,26 +15,26 @@ import {
 import { DeployErr, bodyOf, bytesOf, newPlatform, portFor, type Harness } from './helpers/harness.js';
 import type { Service } from '../src/deploysvc.js';
 
+// mkBundle builds a container context: the Dockerfile is manifest.files[0]; extra
+// source files follow in insertion order.
 function mkBundle(
-  workerContent: string,
-  assets: Record<string, string> = {},
+  dockerfileContent: string,
+  files: Record<string, string> = {},
 ): { manifest: Manifest; content: Map<string, Uint8Array> } {
   const content = new Map<string, Uint8Array>();
-  const worker = bytesOf(workerContent);
-  const workerDigest = digestBytes(worker);
-  content.set(workerDigest, worker);
-  const assetInfos = Object.entries(assets).map(([path, body]) => {
+  const add = (path: string, body: string) => {
     const b = bytesOf(body);
     const d = digestBytes(b);
     content.set(d, b);
     return { path, digest: d, size: b.byteLength };
-  });
+  };
+  const infos = [add('Dockerfile', dockerfileContent)];
+  for (const [path, body] of Object.entries(files)) infos.push(add(path, body));
   return {
     manifest: {
-      kind: MANIFEST_KIND_BUNDLE,
-      worker: { path: '', digest: workerDigest, size: worker.byteLength },
-      assets: assetInfos,
-      cache: [],
+      kind: MANIFEST_KIND_CONTAINER,
+      build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+      files: infos,
     },
     content,
   };
@@ -82,13 +82,13 @@ async function fresh(): Promise<{ h: Harness; port: Service }> {
 }
 
 describe('sync + activation', () => {
-  it('creates on first sync and reports the worker as missing', async () => {
+  it('creates on first sync and reports the Dockerfile as missing', async () => {
     const { port } = await fresh();
     const { manifest } = mkBundle('worker');
     const res = await port.sync({ identity: ident(), manifest });
     expect(res.resolution).toBe(Resolution.Created);
     expect(res.state).toBe(State.Uploading);
-    expect(res.missing).toEqual([manifest.worker.digest]);
+    expect(res.missing).toEqual([manifest.files[0]!.digest]);
     expect(res.app.url).toContain('280apps.run');
   });
 
@@ -102,7 +102,7 @@ describe('sync + activation', () => {
 
   it('goes live when every blob has landed', async () => {
     const { port } = await fresh();
-    const { manifest, content } = mkBundle('worker', { '/a.txt': 'A' });
+    const { manifest, content } = mkBundle('worker', { 'app/a.txt': 'A' });
     const res = await port.sync({ identity: ident(), manifest });
     await uploadAll(port, res.app.id, res.missing, content);
     const st = await port.status(res.app.id, res.deployId);
@@ -112,24 +112,24 @@ describe('sync + activation', () => {
 
   it('missing shrinks as blobs land', async () => {
     const { port } = await fresh();
-    const { manifest, content } = mkBundle('worker', { '/a.txt': 'A' });
+    const { manifest, content } = mkBundle('worker', { 'app/a.txt': 'A' });
     const res = await port.sync({ identity: ident({ clientRef: 'r' }), manifest });
-    const workerDigest = manifest.worker.digest;
+    const workerDigest = manifest.files[0]!.digest;
     await port.putBlob(res.app.id, workerDigest, content.get(workerDigest)!.byteLength, bodyOf(content.get(workerDigest)!));
     const again = await port.sync({ identity: ident({ clientRef: 'r' }), manifest });
-    expect(again.missing).toEqual([manifest.assets[0]!.digest]);
+    expect(again.missing).toEqual([manifest.files[1]!.digest]);
   });
 
   it('a redeploy uploads only changed blobs', async () => {
     const { port } = await fresh();
-    const first = mkBundle('worker', { '/shared.txt': 'S', '/a.txt': 'A' });
+    const first = mkBundle('worker', { 'app/shared.txt': 'S', 'app/a.txt': 'A' });
     const r1 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest: first.manifest });
     await uploadAll(port, r1.app.id, r1.missing, first.content);
 
-    const second = mkBundle('worker', { '/shared.txt': 'S', '/b.txt': 'B' });
+    const second = mkBundle('worker', { 'app/shared.txt': 'S', 'app/b.txt': 'B' });
     const r2 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest: second.manifest });
-    // shared.txt and the unchanged worker are already present; only b.txt is new
-    expect(r2.missing).toEqual([second.manifest.assets[1]!.digest]);
+    // shared.txt and the (unchanged) Dockerfile are already present; only b.txt is new.
+    expect(r2.missing).toEqual([second.manifest.files[2]!.digest]);
   });
 });
 
@@ -179,10 +179,10 @@ describe('resolution', () => {
 });
 
 describe('preflight + blobs', () => {
-  it('rejects an oversize worker', async () => {
+  it('rejects an oversize context', async () => {
     const { port } = await fresh();
     const { manifest } = mkBundle('worker');
-    manifest.worker.size = MAX_WORKER_GZIP_BYTES + 1;
+    manifest.files[0]!.size = MAX_BUILD_CONTEXT_BYTES + 1;
     await expectCode(() => port.sync({ identity: ident(), manifest }), DeployCode.PreflightRejected);
   });
 
@@ -190,7 +190,7 @@ describe('preflight + blobs', () => {
     const { port } = await fresh();
     const { manifest, content } = mkBundle('worker');
     const res = await port.sync({ identity: ident(), manifest });
-    const digest = manifest.worker.digest;
+    const digest = manifest.files[0]!.digest;
     await expectCode(
       () => port.putBlob(res.app.id, digest, 5, bodyOf(bytesOf('wrong'))),
       DeployCode.DigestMismatch,

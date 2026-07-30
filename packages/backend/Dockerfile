@@ -44,7 +44,7 @@ WORKDIR /app
 # depot is a static binary from its install script (pinned via ARG); wrangler is
 # the same version platform/appcontainer pins. curl is used only to fetch depot and
 # is removed after; ca-certificates stays for the CLIs' outbound HTTPS.
-ARG DEPOT_CLI_VERSION=2.76.4
+ARG DEPOT_CLI_VERSION=2.101.76
 ARG WRANGLER_VERSION=4.116.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \

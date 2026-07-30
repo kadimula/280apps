@@ -4,6 +4,7 @@
 export * from './errors.js';
 export * from './types.js';
 export * from './port.js';
+export * from './identity.js';
 export * as version from './version.js';
 
 // Runtime carriers and executable contract layered on the frozen wire types

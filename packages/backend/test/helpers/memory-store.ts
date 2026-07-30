@@ -4,9 +4,17 @@
 // open-deploy reopen, and FinishLive superseding the prior live row. The real
 // Postgres Store (W4) implements the same seam.
 
-import { State, stateTerminal, type DeployError } from '@280/contracts';
+import {
+  State,
+  stateTerminal,
+  appPolicyFromManifest,
+  tenantFromEmail,
+  type AppPolicy,
+  type DeployError,
+} from '@280/contracts';
 import {
   DeviceStatus,
+  EventKind,
   type Account,
   type App,
   type Deploy,
@@ -32,11 +40,29 @@ export class MemoryStore implements Store {
   private readonly sessions = new Map<string, Session>(); // tokenHash -> session
   private readonly loginRate = new Map<string, { count: number; expiresAt: number }>();
   private readonly grants = new Map<string, Grant>(); // `${appId}/${principal}`
+  private readonly policies = new Map<string, AppPolicy>(); // appId -> policy
+  private readonly events: Event[] = [];
 
   async close(): Promise<void> {}
 
-  async recentEvents(): Promise<Event[]> {
-    return [];
+  async recentEvents(limit = 200): Promise<Event[]> {
+    return [...this.events].reverse().slice(0, limit).map((e) => ({ ...e }));
+  }
+
+  private record(e: { accountId?: string; appId?: string; kind: string; detail?: string }): void {
+    this.events.push({
+      id: ++this.seq,
+      accountId: e.accountId ?? '',
+      appId: e.appId ?? '',
+      deployId: '',
+      kind: e.kind,
+      detail: e.detail ?? '',
+      createdAt: 0,
+    });
+  }
+
+  private accountIdFor(appId: string): string {
+    return this.apps.get(appId)?.accountId ?? '';
   }
 
   async accountByToken(tokenHash: string): Promise<Account | null> {
@@ -300,6 +326,63 @@ export class MemoryStore implements Store {
     }
     const a = this.apps.get(appId);
     if (a) a.activeDeploy = deployId;
+    this.registerPolicy(appId, d);
+  }
+
+  // Mirrors PgStore.registerPolicy: persist the live manifest's policy, seed the
+  // owner's grant, and record the audit event. Owner resolves through
+  // account.subject = user.id like the real store.
+  private registerPolicy(appId: string, d: StoredDeploy): void {
+    let policy;
+    try {
+      policy = appPolicyFromManifest(d.manifest);
+    } catch {
+      return;
+    }
+    const account = this.accounts.get(this.accountIdFor(appId));
+    const ownerEmail = account && account.subject !== '' ? (this.users.get(account.subject)?.email ?? '') : '';
+    const ownerTenant = ownerEmail !== '' ? tenantFromEmail(ownerEmail) : '';
+    const existing = this.policies.get(appId);
+    this.policies.set(appId, {
+      appId,
+      access: policy.access,
+      roles: policy.roles,
+      routes: policy.routes,
+      secrets: policy.secrets,
+      ownerTenant: ownerTenant !== '' ? ownerTenant : (existing?.ownerTenant ?? ''),
+      updatedAt: 0,
+    });
+    if (ownerEmail !== '' && !this.grants.has(grantKey(appId, ownerEmail))) {
+      this.grants.set(grantKey(appId, ownerEmail), {
+        appId,
+        principal: ownerEmail,
+        appRole: 'owner',
+        featureRole: '',
+        dataScope: null,
+        grantedBy: 'platform',
+        grantedAt: 0,
+      });
+    }
+    this.record({
+      accountId: this.accountIdFor(appId),
+      appId,
+      kind: EventKind.PolicyRegistered,
+      detail: JSON.stringify({ access: policy.access, roles: String(policy.roles.length), routes: String(policy.routes.length) }),
+    });
+  }
+
+  async appPolicy(appId: string): Promise<AppPolicy | null> {
+    const p = this.policies.get(appId);
+    return p ? { ...p, roles: [...p.roles], routes: [...p.routes], secrets: [...p.secrets] } : null;
+  }
+
+  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void> {
+    this.record({
+      accountId: this.accountIdFor(e.appId),
+      appId: e.appId,
+      kind: e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied,
+      detail: e.detail ?? JSON.stringify({ principal: e.principal }),
+    });
   }
 
   async finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void> {
@@ -312,6 +395,12 @@ export class MemoryStore implements Store {
   async putGrant(g: Grant): Promise<void> {
     // Upsert on (appId, principal): re-granting replaces the role in place.
     this.grants.set(grantKey(g.appId, g.principal), cloneGrant(g));
+    this.record({
+      accountId: this.accountIdFor(g.appId),
+      appId: g.appId,
+      kind: EventKind.GrantAdded,
+      detail: JSON.stringify({ principal: g.principal, appRole: g.appRole, featureRole: g.featureRole, by: g.grantedBy }),
+    });
   }
 
   async grant(appId: string, principal: string): Promise<Grant | null> {
@@ -326,9 +415,18 @@ export class MemoryStore implements Store {
       .map(cloneGrant);
   }
 
-  async revokeGrant(appId: string, principal: string): Promise<boolean> {
+  async revokeGrant(appId: string, principal: string, revokedBy = ''): Promise<boolean> {
     // Reports whether a row was there, so revoking twice is not a failure.
-    return this.grants.delete(grantKey(appId, principal));
+    const removed = this.grants.delete(grantKey(appId, principal));
+    if (removed) {
+      this.record({
+        accountId: this.accountIdFor(appId),
+        appId,
+        kind: EventKind.GrantRevoked,
+        detail: JSON.stringify({ principal, by: revokedBy }),
+      });
+    }
+    return removed;
   }
 }
 

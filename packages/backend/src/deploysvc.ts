@@ -4,6 +4,7 @@
 // are idempotent and safe to re-invoke: nothing here holds state between calls.
 
 import {
+  APP_ROLE_ORDER,
   DeployCode,
   DeployErr,
   MANIFEST_KIND_CONTAINER,
@@ -12,6 +13,7 @@ import {
   State,
   canonicalDigest,
   digestBytes,
+  isAppAccess,
   manifestBlobs,
   stateTerminal,
   type App as PublicApp,
@@ -409,6 +411,39 @@ export function preflight(m: Manifest): void {
   // the budget can never fit, and rejecting here avoids uploading it at all.
   if (total > MAX_BUILD_CONTEXT_BYTES) {
     reject(`build context is ${total} bytes; the limit is ${MAX_BUILD_CONTEXT_BYTES}`);
+  }
+
+  // The access policy is enforced, so a malformed one must fail closed here rather
+  // than register a policy the gateway would misread. The CLI validates the human
+  // 280.json too; this is the server-side backstop that does not trust the client.
+  preflightPolicy(m.access ?? '', m.roles ?? [], m.routes ?? [], reject);
+}
+
+// preflightPolicy rejects an access mode the platform does not enforce, a route with
+// no path or an incoherent requirement, or a route that gates on a feature role the
+// manifest never declared (a typo that would otherwise silently fail closed).
+function preflightPolicy(
+  access: string,
+  roles: string[],
+  routes: Array<{ path: string; appRole: string; role: string }>,
+  reject: (why: string) => never,
+): void {
+  if (access !== '' && !isAppAccess(access)) {
+    reject(`access "${access}" is not one of invited, anyone-at-tenant, link`);
+  }
+  const known = new Set(roles.filter((r) => r !== ''));
+  for (const g of routes) {
+    if (g.path === '') reject('a route gate has an empty path');
+    const hasAppRole = g.appRole !== '';
+    const hasRole = g.role !== '';
+    if (!hasAppRole && !hasRole) reject(`route "${g.path}" declares no requirement (need an app_role or role)`);
+    if (hasAppRole && hasRole) reject(`route "${g.path}" sets both app_role and role; pick one`);
+    if (hasAppRole && !(APP_ROLE_ORDER as readonly string[]).includes(g.appRole)) {
+      reject(`route "${g.path}" app_role "${g.appRole}" is not one of ${APP_ROLE_ORDER.join(', ')}`);
+    }
+    if (hasRole && !known.has(g.role)) {
+      reject(`route "${g.path}" requires role "${g.role}", which is not in this app's declared roles`);
+    }
   }
 }
 

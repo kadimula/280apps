@@ -62,6 +62,8 @@ async function run(log: Logger): Promise<void> {
     openSignup: config.openSignup,
     verificationUri: config.verificationUri,
     minCliVersion: config.minCliVersion,
+    appDomain: config.appDomain,
+    viewAsOrigin: `https://auth.${config.appDomain}`,
   };
 
   const app = new Server({ buildDeps: () => deps, logger: log }).handler();

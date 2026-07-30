@@ -5,8 +5,8 @@
 
 import { Auth } from '@280/backend/authsvc';
 import type { OidcIdentity, OidcProvider } from '@280/backend/auth/oidc';
-import type { Grant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
-import { GrantsAccess } from '../src/access.js';
+import type { AppPolicy, Grant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
+import { Authorizer } from '../src/access.js';
 import { confineRedirect, Gateway, type GatewayOptions } from '../src/gateway.js';
 import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '../src/identity.js';
 import { ContainerUpstream, type AppContainers } from '../src/upstream.js';
@@ -47,26 +47,43 @@ export class FakeProvider implements OidcProvider {
 
 // FakeStore is the auth + access slice of Store; the deploy methods the gateway
 // never calls are absent (the value is cast to Store where needed).
-class FakeStore {
+export class FakeStore {
   private readonly users = new Map<string, User>();
   private readonly oauth = new Map<string, OAuthAccount>();
   private readonly sessions = new Map<string, Session>();
   private readonly rate = new Map<string, { count: number; expiresAt: number }>();
   private readonly apps = new Map<string, { id: string }>();
   private readonly grants = new Map<string, Grant>();
+  private readonly policies = new Map<string, AppPolicy>();
+  readonly accessLog: Array<{ appId: string; principal: string; allowed: boolean; detail: string }> = [];
 
   seedApp(script: string, id: string): void {
     this.apps.set(script, { id });
   }
-  seedGrant(appId: string, principal: string): void {
+  seedGrant(
+    appId: string,
+    principal: string,
+    over: { appRole?: string; featureRole?: string; dataScope?: Record<string, unknown> | null } = {},
+  ): void {
     this.grants.set(`${appId} ${principal}`, {
       appId,
       principal,
-      appRole: 'viewer',
-      featureRole: '',
-      dataScope: null,
+      appRole: over.appRole ?? 'viewer',
+      featureRole: over.featureRole ?? '',
+      dataScope: over.dataScope ?? null,
       grantedBy: 'test',
       grantedAt: 0,
+    });
+  }
+  seedPolicy(appId: string, over: Partial<AppPolicy> = {}): void {
+    this.policies.set(appId, {
+      appId,
+      access: over.access ?? 'invited',
+      roles: over.roles ?? [],
+      routes: over.routes ?? [],
+      secrets: over.secrets ?? [],
+      ownerTenant: over.ownerTenant ?? '',
+      updatedAt: over.updatedAt ?? 0,
     });
   }
 
@@ -114,6 +131,12 @@ class FakeStore {
   }
   async grant(appId: string, principal: string): Promise<Grant | null> {
     return this.grants.get(`${appId} ${principal}`) ?? null;
+  }
+  async appPolicy(appId: string): Promise<AppPolicy | null> {
+    return this.policies.get(appId) ?? null;
+  }
+  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void> {
+    this.accessLog.push({ appId: e.appId, principal: e.principal, allowed: e.allowed, detail: e.detail ?? '' });
   }
 }
 
@@ -166,18 +189,33 @@ export interface GatewayHarness {
   verifier: IdentityVerifier;
   publicJwks: Record<string, JsonWebKey>;
   containers: FakeContainers;
+  store: FakeStore;
 }
 
 export async function newGateway(
   over: {
     rateMax?: number;
     apps?: Array<{ script: string; id: string }>;
-    grants?: Array<{ appId: string; principal: string }>;
+    grants?: Array<{
+      appId: string;
+      principal: string;
+      appRole?: string;
+      featureRole?: string;
+      dataScope?: Record<string, unknown> | null;
+    }>;
+    policies?: Array<{ appId: string } & Partial<AppPolicy>>;
   } = {},
 ): Promise<GatewayHarness> {
   const store = new FakeStore();
   for (const a of over.apps ?? DEFAULT_APPS) store.seedApp(a.script, a.id);
-  for (const g of over.grants ?? DEFAULT_GRANTS) store.seedGrant(g.appId, g.principal);
+  for (const g of over.grants ?? DEFAULT_GRANTS) {
+    store.seedGrant(g.appId, g.principal, {
+      appRole: g.appRole,
+      featureRole: g.featureRole,
+      dataScope: g.dataScope,
+    });
+  }
+  for (const p of over.policies ?? []) store.seedPolicy(p.appId, p);
   const { privateJwk, publicJwks, kid } = await genSigningKey();
 
   const hosts = { appDomain: APP_DOMAIN, authHost: AUTH_HOST, hostSuffix: '' };
@@ -203,7 +241,8 @@ export async function newGateway(
   const opts: GatewayOptions = {
     auth,
     signer,
-    access: new GrantsAccess(store),
+    authz: new Authorizer(store),
+    audit: store,
     upstream: new ContainerUpstream(containers),
     hosts,
     authOrigin: AUTH_ORIGIN,
@@ -215,7 +254,7 @@ export async function newGateway(
   };
 
   const verifier = new IdentityVerifier({ publicJwks, issuer: ISSUER });
-  return { gateway: new Gateway(opts), verifier, publicJwks, containers };
+  return { gateway: new Gateway(opts), verifier, publicJwks, containers, store };
 }
 
 // cookiePair extracts a "name=value" from the response's Set-Cookie headers.

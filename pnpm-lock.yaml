@@ -92,6 +92,9 @@ importers:
       '@280/backend':
         specifier: workspace:*
         version: link:../backend
+      '@280/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260729.1
@@ -99,6 +102,15 @@ importers:
       wrangler:
         specifier: 4.113.0
         version: 4.113.0(@cloudflare/workers-types@5.20260729.1)
+
+  packages/sdk:
+    devDependencies:
+      '@280/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(postcss@8.5.23)(typescript@5.9.3)
 
 packages:
 

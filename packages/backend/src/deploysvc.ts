@@ -6,8 +6,8 @@
 import {
   DeployCode,
   DeployErr,
-  MANIFEST_KIND_BUNDLE,
-  MAX_WORKER_GZIP_BYTES,
+  MANIFEST_KIND_CONTAINER,
+  MAX_BUILD_CONTEXT_BYTES,
   Resolution,
   State,
   canonicalDigest,
@@ -376,72 +376,53 @@ export class Service implements Port {
   }
 }
 
-// preflight rejects manifests the substrate cannot run, before any state changes: a
-// push that cannot work must not produce a broken app.
+// ---- preflight ----
+
+// preflight rejects manifests the substrate cannot build, before any state
+// changes. Failing here rather than at request time is the whole point: a push
+// that cannot work must not produce a broken app.
 export function preflight(m: Manifest): void {
-  if (m.kind !== MANIFEST_KIND_BUNDLE) {
+  const reject = (message: string): never => {
     throw new DeployErr({
       code: DeployCode.PreflightRejected,
-      message: `manifest kind "${m.kind}" is not supported; this platform serves "${MANIFEST_KIND_BUNDLE}"`,
-      fix: 'upgrade the 280 CLI, then run 280 push again',
-    });
-  }
-  // Only the coarse half of the envelope check: manifest sizes are raw, and raw over
-  // the limit can never compress under it. The exact gzipped limit is at activation.
-  if (m.worker.size > MAX_WORKER_GZIP_BYTES) {
-    throw new DeployErr({
-      code: DeployCode.PreflightRejected,
-      message: `worker is ${m.worker.size} raw bytes; the limit is ${MAX_WORKER_GZIP_BYTES}`,
-      fix: 'shrink the server bundle, then run 280 push again',
-    });
-  }
-  for (const a of m.assets) {
-    if (!a.path.startsWith('/')) {
-      throw new DeployErr({
-        code: DeployCode.PreflightRejected,
-        message: `asset path "${a.path}" is not absolute`,
-        fix: 'upgrade the 280 CLI, then run 280 push again',
-      });
-    }
-  }
-  for (const c of m.cache) {
-    checkCacheKey(c.path);
-  }
-  // Every digest reaches the blob store, which builds a filesystem path out of it.
-  // Unchecked, a short digest panics on the fan-out slice and a crafted one escapes
-  // the app's directory. The manifest is the other way in besides PutBlob.
-  for (const b of manifestBlobs(m)) {
-    if (!validDigest(b.digest)) {
-      throw new DeployErr({
-        code: DeployCode.PreflightRejected,
-        message: `"${b.digest}" is not a sha-256 digest`,
-        fix: 'upgrade the 280 CLI, then run 280 push again',
-      });
-    }
-  }
-}
-
-// The KV key limit the cache seed is written under.
-const MAX_CACHE_KEY_BYTES = 512;
-
-// checkCacheKey rejects what the cache namespace would. A cache path is a KV key,
-// not a URL; what is required is that the key survive the bulk write at activation.
-function checkCacheKey(key: string): void {
-  const reject = (why: string): never => {
-    throw new DeployErr({
-      code: DeployCode.PreflightRejected,
-      message: 'cache key ' + why,
+      message,
       fix: 'upgrade the 280 CLI, then run 280 push again',
     });
   };
-  if (key === '') reject('is empty');
-  // Length in bytes, matching Go len() over UTF-8.
-  const bytes = Buffer.byteLength(key, 'utf8');
-  if (bytes > MAX_CACHE_KEY_BYTES) {
-    reject(`is ${bytes} bytes; the limit is ${MAX_CACHE_KEY_BYTES}`);
+  if (m.kind !== MANIFEST_KIND_CONTAINER) {
+    reject(`manifest kind "${m.kind}" is not supported; this platform serves "${MANIFEST_KIND_CONTAINER}"`);
   }
-  if (key.includes('\u0000') || key.includes('\n') || key.includes('\r')) {
-    reject(`"${key}" contains a control character`);
+  if (m.build.dockerfile === '' || !m.files.some((f) => f.path === m.build.dockerfile)) {
+    reject('the build context does not include its Dockerfile');
+  }
+  let total = 0;
+  for (const f of m.files) {
+    checkContextPath(f.path, reject);
+    // Every digest reaches the blob store, which builds a filesystem path out of
+    // it. Unchecked, a short digest panics on the fan-out slice and a crafted one
+    // escapes the app's directory. PutBlob already rejects these; the manifest is
+    // the other way in.
+    if (!validDigest(f.digest)) reject(`"${f.digest}" is not a sha-256 digest`);
+    total += f.size;
+  }
+  // Raw sizes, so this is the coarse guard: a context whose declared bytes exceed
+  // the budget can never fit, and rejecting here avoids uploading it at all.
+  if (total > MAX_BUILD_CONTEXT_BYTES) {
+    reject(`build context is ${total} bytes; the limit is ${MAX_BUILD_CONTEXT_BYTES}`);
+  }
+}
+
+// checkContextPath refuses a build-context path the runtime could not safely
+// materialize: it must be relative and stay inside the context root, so a leading
+// slash or a ".." segment (which would escape the build directory) is rejected —
+// a path-traversal guard, not a style rule.
+function checkContextPath(path: string, reject: (why: string) => never): void {
+  if (path === '') reject('a build-context file has an empty path');
+  if (path.startsWith('/') || /^[A-Za-z]:/.test(path)) {
+    reject(`context path "${path}" is not relative`);
+  }
+  for (const seg of path.split(/[\\/]/)) {
+    if (seg === '..') reject(`context path "${path}" escapes the build context`);
   }
 }
 

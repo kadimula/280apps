@@ -9,7 +9,7 @@ import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { newPgStore } from './store/store.js';
 import { R2BlobStore } from './blobstore/r2.js';
-import { MemoryRuntime, cloudflare } from './runtime/index.js';
+import { MemoryRuntime, container } from './runtime/index.js';
 import type { ExpiryCounts, Runtime, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
@@ -43,33 +43,25 @@ export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
   };
 }
 
-// selectRuntime picks where apps run. Misconfiguration throws rather than degrading:
-// a platform that accepts pushes and hosts nothing has no honest error for the agent.
+// selectRuntime picks where apps run. Misconfiguration is a request failure
+// rather than a degraded mode: a platform that accepts pushes and hosts nothing
+// is the one outcome with no honest error message for the agent. The control
+// plane runs on Workers, so it never builds images itself — it hands each build
+// context to the self-hosted Docker build host over HTTP (HttpBuilder).
 export function selectRuntime(config: Config, log: Logger): Runtime {
   if (config.runtime === 'memory') {
     log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
     return new MemoryRuntime();
   }
-  for (const [name, v] of [
-    ['CF_ACCOUNT_ID', config.cf.accountId],
-    ['CF_API_TOKEN', config.cf.apiToken],
-    ['CF_DISPATCH_NAMESPACE', config.cf.namespace],
-  ] as const) {
-    if (v === '') {
-      throw new Error(`${name} is required (or set TWO80_RUNTIME=memory)`);
-    }
+  if (config.build.host === '') {
+    throw new Error('TWO80_BUILD_HOST is required (or set TWO80_RUNTIME=memory)');
   }
-  if (config.cf.isrCacheKV === '') {
-    log.warn('CF_ISR_CACHE_KV unset: Next.js ISR will not persist between requests');
+  if (config.build.token === '') {
+    log.warn('TWO80_BUILD_TOKEN unset: the build host is reached without authentication');
   }
-  return new cloudflare.Runtime({
-    accountId: config.cf.accountId,
-    apiToken: config.cf.apiToken,
-    namespace: config.cf.namespace,
-    isrCacheKV: config.cf.isrCacheKV,
-    compatibilityDate: config.cf.compatibilityDate,
-    d1Location: config.cf.d1Location,
-  });
+  return new container.ContainerRuntime(
+    new container.HttpBuilder({ baseUrl: config.build.host, token: config.build.token }),
+  );
 }
 
 // buildAuth wires the browser-login flow, or returns undefined when no provider is

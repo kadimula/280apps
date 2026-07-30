@@ -7,8 +7,9 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { errorSchema } from './errors.js';
 
-// The User Worker envelope limit.
-export const MAX_WORKER_GZIP_BYTES = 10 << 20; // 10 MiB
+// MaxBuildContextBytes caps the total size of an uploaded container build
+// context, the coarse guard preflight applies before any state changes.
+export const MAX_BUILD_CONTEXT_BYTES = 512 << 20; // 512 MiB
 
 // Hex-encoded SHA-256 of blob content.
 export type Digest = string;
@@ -49,23 +50,37 @@ export type Identity = z.infer<typeof identitySchema>;
 
 export const blobInfoSchema = z
   .object({
-    path: str(), // URL path for assets; KV key for cache; empty for the worker
+    path: str(), // context-relative path of a build-context file
     digest: str(),
     size: num(),
   })
   .passthrough();
 export type BlobInfo = z.infer<typeof blobInfoSchema>;
 
-const ZERO_BLOB: BlobInfo = { path: '', digest: '', size: 0 };
+export const MANIFEST_KIND_CONTAINER = 'container';
 
-export const MANIFEST_KIND_BUNDLE = 'bundle';
+// BuildSpec is how the runtime turns the uploaded build context into a runnable
+// image: which Dockerfile to build, the port the app listens on, and a builder
+// tag for diagnostics ('next' | 'static' | 'dockerfile').
+export const buildSpecSchema = z
+  .object({
+    builder: str(),
+    dockerfile: str(), // context-relative path, e.g. "Dockerfile"
+    port: num(),
+  })
+  .passthrough();
+export type BuildSpec = z.infer<typeof buildSpecSchema>;
 
+const ZERO_BUILD: BuildSpec = { builder: '', dockerfile: '', port: 0 };
+
+// Manifest is a container build-context descriptor: the build recipe plus every
+// file in the context, each content-addressed so the deploy loop transfers only
+// what the server lacks. Replaces the retired Workers-for-Platforms bundle shape.
 export const manifestSchema = z
   .object({
     kind: str(),
-    worker: blobInfoSchema.nullish().transform((v) => v ?? ZERO_BLOB),
-    assets: arr(blobInfoSchema),
-    cache: arr(blobInfoSchema),
+    build: buildSpecSchema.nullish().transform((v) => v ?? ZERO_BUILD),
+    files: arr(blobInfoSchema),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
@@ -225,21 +240,21 @@ function sortedByPath(items: BlobInfo[]): BlobInfo[] {
   return [...items].sort((x, y) => byteCompare(x.path, y.path));
 }
 
-// The manifest's content digest. Each list hashes in its own labeled section,
-// sorted by path, so the digest is order-independent and no entry can move between lists unnoticed.
+// canonicalDigest is the manifest's content digest: the build recipe followed by
+// every file sorted by path. Order-independent, and no field can change without
+// changing it, so the derived deploy id is a pure function of what is deployed.
 export function canonicalDigest(m: Manifest): Digest {
   const h = createHash('sha256');
-  h.update(`kind:${m.kind}\nworker:${m.worker.digest}:${m.worker.size}\n`);
-  for (const a of sortedByPath(m.assets)) {
-    h.update(`asset:${a.path}:${a.digest}:${a.size}\n`);
-  }
-  for (const c of sortedByPath(m.cache)) {
-    h.update(`cache:${c.path}:${c.digest}:${c.size}\n`);
+  h.update(`kind:${m.kind}\n`);
+  h.update(`build:${m.build.builder}:${m.build.dockerfile}:${m.build.port}\n`);
+  for (const f of sortedByPath(m.files)) {
+    h.update(`file:${f.path}:${f.digest}:${f.size}\n`);
   }
   return h.digest('hex');
 }
 
-// Every blob a manifest names, in stable order (worker, assets, cache); callers derive Missing from it.
+// manifestBlobs returns every blob a manifest names. Callers derive Missing from
+// it; duplicate digests (identical bytes at different paths) are deduped there.
 export function manifestBlobs(m: Manifest): BlobInfo[] {
-  return [m.worker, ...m.assets, ...m.cache];
+  return [...m.files];
 }

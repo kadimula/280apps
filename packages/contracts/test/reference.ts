@@ -30,37 +30,6 @@ export function urlToken(appId: string): string {
   return tok;
 }
 
-// cloudflare.go:218. First 16 raw bytes of the sum, hex-encoded => 32 hex chars.
-export function cfHash(salt: string, digest: string): string {
-  const sum = createHash('sha256').update(Buffer.from(salt + ':' + digest, 'utf8')).digest();
-  return sum.subarray(0, 16).toString('hex');
-}
-
-// next.go:529.
-export function collapseSlashes(s: string): string {
-  while (s.includes('//')) s = s.replaceAll('//', '/');
-  return s;
-}
-
-const cachePrefix = 'incremental-cache';
-// next.go cacheKey (successful shapes only).
-export function cacheKey(rel: string): string {
-  let route: string, buildId: string, cacheType: string;
-  if (rel.startsWith('__fetch')) {
-    const parts = rel.split('/');
-    buildId = parts[1]!;
-    route = '/' + parts.slice(2).join('/');
-    cacheType = 'fetch';
-  } else {
-    const parts = rel.replace(/\.cache$/, '').split('/');
-    buildId = parts[0]!;
-    route = '/' + parts.slice(1).join('/');
-    cacheType = 'cache';
-  }
-  const h = sha256hex(route);
-  return collapseSlashes(`${cachePrefix}/${buildId}/${h}.${cacheType}`);
-}
-
 // deploysvc.go:614.
 function trimDashes(s: string): string {
   return s.replace(/^-+/, '').replace(/-+$/, '');

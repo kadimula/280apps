@@ -9,7 +9,7 @@
 
 import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DeployCode, MANIFEST_KIND_BUNDLE, State, digestBytes, type Manifest } from '@280/contracts';
+import { DeployCode, MANIFEST_KIND_CONTAINER, State, digestBytes, type Manifest } from '@280/contracts';
 import { MemoryBlobStore } from '../helpers/memory-blobs.js';
 import { InstrumentedStore, TestRuntime } from '../helpers/activator-doubles.js';
 import { AppActivator, __setActivatorTestConfig } from '../../src/app-activator.js';
@@ -43,15 +43,14 @@ const ACCOUNT = 'acct_test';
 // creates a fresh app and an uploading deploy whose only blob (the worker) is
 // already stored: the state settle hands the object. Each call uses a unique app
 // id, so every case runs against its own Durable Object instance and storage.
-async function seed(content = 'worker'): Promise<{ app: App; deployId: string }> {
+async function seed(content = 'FROM scratch\n'): Promise<{ app: App; deployId: string }> {
   const appId = `app_${counter++}`;
   const worker = new TextEncoder().encode(content);
   const digest = digestBytes(worker);
   const manifest: Manifest = {
-    kind: MANIFEST_KIND_BUNDLE,
-    worker: { path: '', digest, size: worker.byteLength },
-    assets: [],
-    cache: [],
+    kind: MANIFEST_KIND_CONTAINER,
+    build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+    files: [{ path: 'Dockerfile', digest, size: worker.byteLength }],
   };
   const app: App = {
     id: appId,

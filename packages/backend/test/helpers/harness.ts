@@ -11,7 +11,7 @@ import type { Hono } from 'hono';
 import {
   DeployErr,
   digestBytes,
-  MANIFEST_KIND_BUNDLE,
+  MANIFEST_KIND_CONTAINER,
   type Digest,
   type Manifest,
   type SyncRequest,
@@ -119,15 +119,16 @@ export async function newServer(
   return { server, app: server.handler(), harness };
 }
 
-// a well-formed minimal bundle whose only blob is the worker.
-export function testManifest(content = 'worker'): { manifest: Manifest; worker: Uint8Array; digest: Digest } {
+// testManifest is a well-formed minimal container context whose only file is the
+// Dockerfile. The returned worker/digest name that one blob, so callers upload it
+// as the deploy's single content.
+export function testManifest(content = 'FROM scratch\n'): { manifest: Manifest; worker: Uint8Array; digest: Digest } {
   const worker = new TextEncoder().encode(content);
   const digest = digestBytes(worker);
   const manifest: Manifest = {
-    kind: MANIFEST_KIND_BUNDLE,
-    worker: { path: '', digest, size: worker.byteLength },
-    assets: [],
-    cache: [],
+    kind: MANIFEST_KIND_CONTAINER,
+    build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
+    files: [{ path: 'Dockerfile', digest, size: worker.byteLength }],
   };
   return { manifest, worker, digest };
 }

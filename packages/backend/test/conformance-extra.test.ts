@@ -4,7 +4,7 @@
 // deploy Service (in-process) and the HTTP router.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { DeployCode, DeployErr, MANIFEST_KIND_BUNDLE, State, digestBytes, type SyncResult } from '@280/contracts';
+import { DeployCode, DeployErr, MANIFEST_KIND_CONTAINER, State, digestBytes, type SyncResult } from '@280/contracts';
 import { HttpClient, bodyOf, newPlatform, newServer, portFor, testManifest, type Harness } from './helpers/harness.js';
 
 const live: Harness[] = [];
@@ -153,7 +153,7 @@ describe('Unauthorized', () => {
     try {
       await client.sync({
         identity: { slug: 'demo', framework: 'static' } as never,
-        manifest: { kind: MANIFEST_KIND_BUNDLE, worker: { path: '', digest: '', size: 0 }, assets: [], cache: [] },
+        manifest: { kind: MANIFEST_KIND_CONTAINER, build: { builder: '', dockerfile: '', port: 0 }, files: [] },
       });
       throw new Error('expected unauthorized');
     } catch (err) {

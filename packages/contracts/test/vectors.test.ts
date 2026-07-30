@@ -58,32 +58,6 @@ describe('urlToken (deploysvc.urlToken)', () => {
   });
 });
 
-describe('cfHash (cloudflare.cfHash)', () => {
-  it('matches every vector and is 32 hex chars', () => {
-    for (const v of V.cfHash) {
-      const h = ref.cfHash(v.salt, v.digest);
-      expect(h).toBe(v.hash);
-      expect(h).toMatch(/^[0-9a-f]{32}$/);
-    }
-  });
-});
-
-describe('cacheKey (next.cacheKey)', () => {
-  it('matches every vector', () => {
-    for (const v of V.cacheKey) {
-      expect(ref.cacheKey(v.rel)).toBe(v.key);
-    }
-  });
-});
-
-describe('collapseSlashes (next.collapseSlashes)', () => {
-  it('matches every vector', () => {
-    for (const v of V.collapseSlashes) {
-      expect(ref.collapseSlashes(v.in)).toBe(v.out);
-    }
-  });
-});
-
 describe('slug sanitize (deploysvc.sanitizeSlug)', () => {
   it('matches every vector', () => {
     for (const v of V.slug) {

@@ -1,5 +1,6 @@
-// Shared bundle primitives: the preflight error, filesystem predicates, and
-// walkAssets (the asset shaping both frameworks share). Spec: bundle.go, normative.
+// Shared bundle primitives: the preflight error the whole package raises, small
+// filesystem predicates, and walkContext — the build-context shaping both
+// frameworks share.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,18 +62,21 @@ function byteCompare(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }
 
-// Yields every file under dir, pre-order and lexically sorted by basename within
-// each directory, exactly as Go's filepath.WalkDir does. Each yield carries the
-// absolute path and the "/"-joined path relative to dir.
+// walkFiles yields every file under dir, pre-order and lexically sorted by
+// basename within each directory, exactly as Go's filepath.WalkDir does. Each
+// yield carries the absolute path and the "/"-joined path relative to dir. An
+// optional skip(rel, isDir) prunes a subtree or a file before it is visited.
 export function* walkFiles(
   dir: string,
+  skip?: (rel: string, isDir: boolean) => boolean,
 ): Generator<{ abs: string; rel: string }> {
-  yield* walkFrom(dir, '');
+  yield* walkFrom(dir, '', skip);
 }
 
 function* walkFrom(
   dir: string,
   prefix: string,
+  skip?: (rel: string, isDir: boolean) => boolean,
 ): Generator<{ abs: string; rel: string }> {
   const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     byteCompare(a.name, b.name),
@@ -80,27 +84,34 @@ function* walkFrom(
   for (const e of entries) {
     const abs = join(dir, e.name);
     const rel = prefix === '' ? e.name : prefix + '/' + e.name;
-    if (e.isDirectory()) {
-      yield* walkFrom(abs, rel);
+    const isDir = e.isDirectory();
+    if (skip?.(rel, isDir)) continue;
+    if (isDir) {
+      yield* walkFrom(abs, rel, skip);
     } else {
       yield { abs, rel };
     }
   }
 }
 
-// Content-addresses every file under dir into content, returning one BlobInfo per
-// file keyed by its serving URL path ("/" + relative path). Shared because both
-// frameworks treat their tree as the site root.
-export function walkAssets(
+// walkContext content-addresses every file under dir into content, returning one
+// BlobInfo per file keyed by its context-relative path (no leading slash), under
+// an optional path prefix so a subtree can be placed elsewhere in the build
+// context. skip(rel) drops a whole subtree (a directory) or a single file before
+// it is read — used to keep node_modules, VCS metadata, and secrets out of the
+// context.
+export function walkContext(
   dir: string,
   content: Map<Digest, Uint8Array>,
+  opts: { prefix?: string; skip?: (rel: string, isDir: boolean) => boolean } = {},
 ): BlobInfo[] {
+  const prefix = opts.prefix ? opts.prefix.replace(/\/+$/, '') + '/' : '';
   const out: BlobInfo[] = [];
-  for (const { abs, rel } of walkFiles(dir)) {
+  for (const { abs, rel } of walkFiles(dir, opts.skip)) {
     const data = readFileSync(abs);
     const dig = digestBytes(data);
     content.set(dig, data);
-    out.push({ path: '/' + rel, digest: dig, size: data.length });
+    out.push({ path: prefix + rel, digest: dig, size: data.length });
   }
   return out;
 }

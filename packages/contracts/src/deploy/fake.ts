@@ -5,7 +5,8 @@
 
 import {
   DeployCode,
-  MAX_WORKER_GZIP_BYTES,
+  MANIFEST_KIND_CONTAINER,
+  MAX_BUILD_CONTEXT_BYTES,
   Resolution,
   State,
   stateTerminal,
@@ -208,14 +209,8 @@ export class Fake implements Port {
   async sync(req: SyncRequest): Promise<SyncResult> {
     const fault = this.fault();
     if (fault) throw fault;
+    preflight(req.manifest);
     const { app, resolution } = this.resolve(req.identity);
-    if (req.manifest.worker.size > MAX_WORKER_GZIP_BYTES) {
-      throw new DeployErr({
-        code: DeployCode.PreflightRejected,
-        message: `worker is ${req.manifest.worker.size} raw bytes; the limit is ${MAX_WORKER_GZIP_BYTES}`,
-        fix: 'shrink the server bundle, then run 280 push again',
-      });
-    }
     const deployId = deriveDeployId(app.id, req.manifest);
     const key = app.id + '/' + deployId;
     let d = this.deploys.get(key);
@@ -366,7 +361,33 @@ export class Fake implements Port {
   }
 }
 
-// Mirrors Go's %q: a plain double-quote wrap for the ASCII identifiers here.
+// preflight rejects a manifest the substrate cannot build, before any state
+// changes — the fake's copy of deploysvc.preflight, kept in sync so the executable
+// contract matches the service on the checks conformance exercises.
+function preflight(m: Manifest): void {
+  const reject = (message: string): never => {
+    throw new DeployErr({
+      code: DeployCode.PreflightRejected,
+      message,
+      fix: 'upgrade the 280 CLI, then run 280 push again',
+    });
+  };
+  if (m.kind !== MANIFEST_KIND_CONTAINER) {
+    reject(`manifest kind ${quote(m.kind)} is not supported; this platform serves "container"`);
+  }
+  if (m.build.dockerfile === '' || !m.files.some((f) => f.path === m.build.dockerfile)) {
+    reject('the build context does not include its Dockerfile');
+  }
+  let total = 0;
+  for (const f of m.files) total += f.size;
+  if (total > MAX_BUILD_CONTEXT_BYTES) {
+    reject(`build context is ${total} bytes; the limit is ${MAX_BUILD_CONTEXT_BYTES}`);
+  }
+}
+
+// quote mirrors Go's %q on a string: double-quoted, with the escaping Go's
+// strconv.Quote applies to the inputs this seam carries (app ids, slugs, user
+// input). For the ASCII identifiers here it is a plain double-quote wrap.
 function quote(s: string): string {
   return JSON.stringify(s);
 }

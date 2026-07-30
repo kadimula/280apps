@@ -151,7 +151,6 @@ export class Gateway {
     const viewer = await this.resolveViewer(request);
     if (viewer === null) return this.loginBounce(request.url);
 
-    // SEAM (280-p2-gateway): the grants-based access check slots in here.
     const decision = await this.o.access.check({ viewer, appScript: script, host: url.hostname });
     if (!decision.allow) return html(denyPage(decision.reason), 403);
 

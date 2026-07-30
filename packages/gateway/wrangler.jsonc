@@ -10,16 +10,20 @@
 	"placement": { "mode": "smart" },
 
 	// The only public entry to apps. SUPERSEDES platform/dispatcher on this route
-	// (only one Worker may own it); cutting over is a deploy-time step. Until the
-	// container substrate lands the gateway forwards to a stub upstream.
+	// (only one Worker may own it); cutting over is a deploy-time step.
 	"routes": [{ "pattern": "*.280apps.run/*", "zone_name": "280apps.run" }],
 
 	// Same Hyperdrive config the control plane uses (same platform Postgres).
 	// From packages/backend/scripts/bootstrap-resources.sh; query caching DISABLED.
 	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_PROD_HYPERDRIVE_ID" }],
 
-	// SEAM (container phase): the real proxy target. On WfP that is:
-	// "dispatch_namespaces": [{ "binding": "DISPATCHER", "namespace": "apps" }],
+	// The proxy target: the App280Container Durable Object namespace, one instance
+	// per app script. The gateway forwards an allowed, identity-stamped request to
+	// the instance named by the host's script label (deps.ts NamespaceContainers).
+	// "durable_objects": {
+	//   "bindings": [{ "binding": "APP_CONTAINER", "class_name": "App280Container",
+	//     "script_name": "280-appcontainer" }]
+	// },
 
 	// Secrets via `wrangler secret put`: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
 	// ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ID_SIGNING_JWK (ECDSA P-256 private

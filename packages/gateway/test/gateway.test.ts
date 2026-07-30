@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { APP_DOMAIN, AUTH_ORIGIN, cookiePair, newGateway, signIn } from './helpers.js';
+import { APP_DOMAIN, AUTH_ORIGIN, cookiePair, newGateway, signIn, type UpstreamEcho } from './helpers.js';
 
 const APP_ORIGIN = `https://renewals.${APP_DOMAIN}`;
 
-async function stubBody(res: Response): Promise<{ upstream: string; script: string; identity: string; path: string }> {
-  return (await res.json()) as { upstream: string; script: string; identity: string; path: string };
+async function echoBody(res: Response): Promise<UpstreamEcho> {
+  return (await res.json()) as UpstreamEcho;
 }
 
 describe('gateway request flow', () => {
@@ -18,20 +18,54 @@ describe('gateway request flow', () => {
     expect(loc.searchParams.get('return')).toBe(`${APP_ORIGIN}/renewals?q=1`);
   });
 
-  it('reaches the stub upstream with a valid signed identity after Google sign-in', async () => {
-    const { gateway, verifier } = await newGateway();
+  it('proxies an invited viewer to the app container with a valid signed identity', async () => {
+    const { gateway, verifier, containers } = await newGateway();
     const session = await signIn(gateway, 'google', 'alice@evergreen.com');
 
     const res = await gateway.handle(new Request(`${APP_ORIGIN}/`, { headers: { cookie: session } }));
     expect(res.status).toBe(200);
-    const body = await stubBody(res);
-    expect(body.upstream).toBe('stub');
-    expect(body.script).toBe('renewals');
+    const body = await echoBody(res);
+    expect(body.upstream).toBe('container');
+    expect(body.host).toBe(`renewals.${APP_DOMAIN}`);
+    expect(containers.calls).toEqual(['renewals']);
 
-    const { user, claims } = await verifier.verify(body.identity, { audience: `renewals.${APP_DOMAIN}` });
+    // The container received the header; it verifies offline, exactly as an app would.
+    const { user, claims } = await verifier.verify(body.identity!, { audience: `renewals.${APP_DOMAIN}` });
     expect(user.email).toBe('alice@evergreen.com');
     expect(user.tenant).toBe('evergreen.com');
     expect(claims.aud).toBe(`renewals.${APP_DOMAIN}`);
+  });
+
+  it('lets an invited viewer in on a direct email grant (not only a domain grant)', async () => {
+    const { gateway, verifier, containers } = await newGateway({
+      grants: [{ appId: 'app_renewals', principal: 'carol@outside.com' }],
+    });
+    const session = await signIn(gateway, 'google', 'carol@outside.com');
+
+    const res = await gateway.handle(new Request(`${APP_ORIGIN}/`, { headers: { cookie: session } }));
+    expect(res.status).toBe(200);
+    expect(containers.calls).toEqual(['renewals']);
+    const { user } = await verifier.verify((await echoBody(res)).identity!, { audience: `renewals.${APP_DOMAIN}` });
+    expect(user.email).toBe('carol@outside.com');
+  });
+
+  it('denies a signed-in viewer with no grant and never proxies to the container', async () => {
+    const { gateway, containers } = await newGateway({ grants: [] });
+    const session = await signIn(gateway, 'google', 'mallory@outsider.com');
+
+    const res = await gateway.handle(new Request(`${APP_ORIGIN}/`, { headers: { cookie: session } }));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain('access');
+    expect(containers.calls).toEqual([]);
+  });
+
+  it('denies identically when the app does not exist, so existence is not probeable', async () => {
+    const { gateway, containers } = await newGateway();
+    const session = await signIn(gateway, 'google', 'alice@evergreen.com', `https://ghost.${APP_DOMAIN}/`);
+
+    const res = await gateway.handle(new Request(`https://ghost.${APP_DOMAIN}/`, { headers: { cookie: session } }));
+    expect(res.status).toBe(403);
+    expect(containers.calls).toEqual([]);
   });
 
   it('works identically through Microsoft Entra (one code path)', async () => {
@@ -40,7 +74,7 @@ describe('gateway request flow', () => {
 
     const res = await gateway.handle(new Request(`${APP_ORIGIN}/`, { headers: { cookie: session } }));
     expect(res.status).toBe(200);
-    const { user } = await verifier.verify((await stubBody(res)).identity, { audience: `renewals.${APP_DOMAIN}` });
+    const { user } = await verifier.verify((await echoBody(res)).identity!, { audience: `renewals.${APP_DOMAIN}` });
     expect(user.email).toBe('bob@contoso.com');
     expect(user.tenant).toBe('contoso.com');
   });
@@ -54,10 +88,10 @@ describe('gateway request flow', () => {
         headers: { cookie: session, 'x-280-identity': 'forged', 'x-280-user': 'admin@evergreen.com' },
       }),
     );
-    const body = await stubBody(res);
+    const body = await echoBody(res);
     expect(body.identity).not.toBe('forged');
     // The forwarded header is the gateway's genuine one.
-    const { user } = await verifier.verify(body.identity, { audience: `renewals.${APP_DOMAIN}` });
+    const { user } = await verifier.verify(body.identity!, { audience: `renewals.${APP_DOMAIN}` });
     expect(user.email).toBe('alice@evergreen.com');
   });
 
@@ -65,12 +99,12 @@ describe('gateway request flow', () => {
     const { gateway, verifier } = await newGateway();
     const session = await signIn(gateway, 'google', 'alice@evergreen.com', `https://sales.${APP_DOMAIN}/`);
     const res = await gateway.handle(new Request(`https://sales.${APP_DOMAIN}/`, { headers: { cookie: session } }));
-    const body = await stubBody(res);
+    const body = await echoBody(res);
     // A header minted for sales.* must not verify as sales' neighbour.
     await expect(
-      verifier.verify(body.identity, { audience: `renewals.${APP_DOMAIN}` }),
+      verifier.verify(body.identity!, { audience: `renewals.${APP_DOMAIN}` }),
     ).rejects.toThrow(/audience/);
-    await expect(verifier.verify(body.identity, { audience: `sales.${APP_DOMAIN}` })).resolves.toBeTruthy();
+    await expect(verifier.verify(body.identity!, { audience: `sales.${APP_DOMAIN}` })).resolves.toBeTruthy();
   });
 
   it('lists both providers on the login page', async () => {

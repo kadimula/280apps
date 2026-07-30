@@ -1,20 +1,33 @@
-// Test support: an in-memory Store (auth subset), fake OIDC providers, a fresh
-// signing keypair, and a wired Gateway with a matching verifier. Nothing here
-// reaches the network; a login "code" is the email the fake signs in as.
+// Test support: an in-memory Store (auth + apps + grants), fake OIDC providers, a
+// fresh signing keypair, fake app containers, and a wired Gateway with a matching
+// verifier. Nothing here reaches the network; a login "code" is the email the fake
+// signs in as, and a "container" echoes the request it was proxied.
 
 import { Auth } from '@280/backend/authsvc';
 import type { OidcIdentity, OidcProvider } from '@280/backend/auth/oidc';
-import type { Session, Store, User, OAuthAccount } from '@280/backend/seams';
-import { AllowAllAccess } from '../src/access.js';
+import type { Grant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
+import { GrantsAccess } from '../src/access.js';
 import { confineRedirect, Gateway, type GatewayOptions } from '../src/gateway.js';
 import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '../src/identity.js';
-import { StubUpstream } from '../src/upstream.js';
+import { ContainerUpstream, type AppContainers } from '../src/upstream.js';
 import type { ProviderLink } from '../src/pages.js';
 
 const APP_DOMAIN = '280apps.run';
 const AUTH_HOST = 'auth.280apps.run';
 const AUTH_ORIGIN = `https://${AUTH_HOST}`;
 const ISSUER = AUTH_ORIGIN;
+
+// Apps and grants the default harness seeds so the request-flow tests have someone
+// to let in: alice's org and bob's org each hold a grant on the apps they open.
+const DEFAULT_APPS: Array<{ script: string; id: string }> = [
+  { script: 'renewals', id: 'app_renewals' },
+  { script: 'sales', id: 'app_sales' },
+];
+const DEFAULT_GRANTS: Array<{ appId: string; principal: string }> = [
+  { appId: 'app_renewals', principal: 'domain:evergreen.com' },
+  { appId: 'app_renewals', principal: 'domain:contoso.com' },
+  { appId: 'app_sales', principal: 'domain:evergreen.com' },
+];
 
 // FakeProvider maps a login code to an identity: sign in as anyone by passing
 // their email as the code. "boom" fails the exchange.
@@ -32,13 +45,30 @@ export class FakeProvider implements OidcProvider {
   }
 }
 
-// AuthStore is the auth-relevant slice of Store; the deploy methods Auth never
-// calls are absent (the value is cast to Store where Auth needs it).
-class AuthStore {
+// FakeStore is the auth + access slice of Store; the deploy methods the gateway
+// never calls are absent (the value is cast to Store where needed).
+class FakeStore {
   private readonly users = new Map<string, User>();
   private readonly oauth = new Map<string, OAuthAccount>();
   private readonly sessions = new Map<string, Session>();
   private readonly rate = new Map<string, { count: number; expiresAt: number }>();
+  private readonly apps = new Map<string, { id: string }>();
+  private readonly grants = new Map<string, Grant>();
+
+  seedApp(script: string, id: string): void {
+    this.apps.set(script, { id });
+  }
+  seedGrant(appId: string, principal: string): void {
+    this.grants.set(`${appId} ${principal}`, {
+      appId,
+      principal,
+      appRole: 'viewer',
+      featureRole: '',
+      dataScope: null,
+      grantedBy: 'test',
+      grantedAt: 0,
+    });
+  }
 
   async userById(id: string): Promise<User | null> {
     const u = this.users.get(id);
@@ -78,6 +108,50 @@ class AuthStore {
     cur.count += 1;
     return cur.count <= limit;
   }
+
+  async appByScript(script: string): Promise<{ id: string } | null> {
+    return this.apps.get(script) ?? null;
+  }
+  async grant(appId: string, principal: string): Promise<Grant | null> {
+    return this.grants.get(`${appId} ${principal}`) ?? null;
+  }
+}
+
+// FakeContainer echoes the request it was proxied so a test can prove the signed
+// identity header arrived; FakeContainers records which scripts were reached so a
+// deny test can assert no proxy happened.
+export interface UpstreamEcho {
+  upstream: 'container';
+  host: string;
+  path: string;
+  method: string;
+  identity: string | null;
+}
+
+class FakeContainer {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const body: UpstreamEcho = {
+      upstream: 'container',
+      host: url.hostname,
+      path: url.pathname + url.search,
+      method: request.method,
+      identity: request.headers.get('X-280-Identity'),
+    };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  }
+}
+
+export class FakeContainers implements AppContainers {
+  readonly calls: string[] = [];
+
+  forScript(script: string): Fetcher | null {
+    this.calls.push(script);
+    return new FakeContainer() as unknown as Fetcher;
+  }
 }
 
 export async function genSigningKey(): Promise<{ privateJwk: JsonWebKey; publicJwks: Record<string, JsonWebKey>; kid: string }> {
@@ -91,14 +165,23 @@ export interface GatewayHarness {
   gateway: Gateway;
   verifier: IdentityVerifier;
   publicJwks: Record<string, JsonWebKey>;
+  containers: FakeContainers;
 }
 
-export async function newGateway(over: { rateMax?: number } = {}): Promise<GatewayHarness> {
-  const store = new AuthStore() as unknown as Store;
+export async function newGateway(
+  over: {
+    rateMax?: number;
+    apps?: Array<{ script: string; id: string }>;
+    grants?: Array<{ appId: string; principal: string }>;
+  } = {},
+): Promise<GatewayHarness> {
+  const store = new FakeStore();
+  for (const a of over.apps ?? DEFAULT_APPS) store.seedApp(a.script, a.id);
+  for (const g of over.grants ?? DEFAULT_GRANTS) store.seedGrant(g.appId, g.principal);
   const { privateJwk, publicJwks, kid } = await genSigningKey();
 
   const hosts = { appDomain: APP_DOMAIN, authHost: AUTH_HOST, hostSuffix: '' };
-  const auth = new Auth(store, {
+  const auth = new Auth(store as unknown as Store, {
     providers: { google: new FakeProvider('google'), microsoft: new FakeProvider('microsoft') },
     apiOrigin: AUTH_ORIGIN,
     frontendOrigin: 'https://280apps.com',
@@ -116,11 +199,12 @@ export async function newGateway(over: { rateMax?: number } = {}): Promise<Gatew
     { name: 'google', label: 'Continue with Google' },
     { name: 'microsoft', label: 'Continue with Microsoft' },
   ];
+  const containers = new FakeContainers();
   const opts: GatewayOptions = {
     auth,
     signer,
-    access: new AllowAllAccess(),
-    upstream: new StubUpstream(),
+    access: new GrantsAccess(store),
+    upstream: new ContainerUpstream(containers),
     hosts,
     authOrigin: AUTH_ORIGIN,
     cookieDomain: `.${APP_DOMAIN}`,
@@ -131,7 +215,7 @@ export async function newGateway(over: { rateMax?: number } = {}): Promise<Gatew
   };
 
   const verifier = new IdentityVerifier({ publicJwks, issuer: ISSUER });
-  return { gateway: new Gateway(opts), verifier, publicJwks };
+  return { gateway: new Gateway(opts), verifier, publicJwks, containers };
 }
 
 // cookiePair extracts a "name=value" from the response's Set-Cookie headers.

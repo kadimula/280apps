@@ -30,11 +30,30 @@ RUN pnpm --filter @280/contracts build && pnpm --filter @280/backend build
 # flattened into node_modules) plus the platform package's dist.
 RUN pnpm --filter @280/backend deploy --prod --legacy /app
 
-# Distroless nodejs22. Production blobs are on R2 (no host-mounted volume); the
-# filesystem blob store is only the local-dev fallback.
-FROM gcr.io/distroless/nodejs22-debian12
+# Runtime image. node:22-slim (not distroless) so the control plane can shell out
+# to the two build/roll CLIs it now orchestrates (report §5, stage 3):
+#   - depot   : daemonless remote BuildKit; `depot build --push` compiles the app
+#               image and pushes it to registry.cloudflare.com with no Docker here.
+#   - wrangler: rolls the app's container application onto the pre-built image
+#               (`wrangler deploy --containers-rollout immediate`).
+# The depot builder only activates when its env is set (TWO80_BUILDER=depot or
+# DEPOT_TOKEN); with none, the service behaves exactly as before.
+FROM node:22-slim
 WORKDIR /app
+
+# depot is a static binary from its install script (pinned via ARG); wrangler is
+# the same version platform/appcontainer pins. curl is used only to fetch depot and
+# is removed after; ca-certificates stays for the CLIs' outbound HTTPS.
+ARG DEPOT_CLI_VERSION=2.76.4
+ARG WRANGLER_VERSION=4.116.0
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && curl -L https://depot.dev/install-cli.sh | sh -s "$DEPOT_CLI_VERSION" \
+ && npm install -g "wrangler@$WRANGLER_VERSION" \
+ && apt-get purge -y curl && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app /app
 EXPOSE 8080
-# distroless-nodejs entrypoint is node; this runs /app/dist/main.js.
-CMD ["dist/main.js"]
+# node:22-slim has no default entrypoint (unlike distroless-nodejs), so name node.
+CMD ["node", "dist/main.js"]

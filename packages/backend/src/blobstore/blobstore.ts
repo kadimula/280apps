@@ -41,8 +41,9 @@ export class DeployErr extends Error {
 }
 
 // Callers validate digests before here, so a false is an upstream bug; but the
-// blast radius of being wrong is a directory escape, worth one comparison.
-function safeDigest(d: Digest): boolean {
+// blast radius of being wrong is a directory escape (or an attacker-shaped S3
+// key), worth one comparison. Shared with the S3 backing.
+export function safeDigest(d: Digest): boolean {
   if (d.length !== SHA256_HEX_LEN) {
     return false;
   }
@@ -58,8 +59,8 @@ function safeDigest(d: Digest): boolean {
 }
 
 // Like safeDigest, a false is an upstream bug; but this is the sole argument to a
-// recursive delete, so it is checked rather than trusted.
-function safeAppID(appID: string): boolean {
+// recursive delete, so it is checked rather than trusted. Shared with the S3 backing.
+export function safeAppID(appID: string): boolean {
   if (appID === '') {
     return false;
   }

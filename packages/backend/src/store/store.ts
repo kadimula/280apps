@@ -24,6 +24,7 @@ import {
   type DeviceCode,
   type Event,
   type ExpiryCounts,
+  type Grant,
   type OAuthAccount,
   type Session,
   type Store,
@@ -248,8 +249,34 @@ function toNum(v: unknown): number {
 const appCols =
   'id, account_id, slug, framework, url, script, salt, fingerprint, client_ref, store_id, active_deploy';
 
+const grantCols =
+  'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
+
 function encodeFailure(e: DeployError | null): string {
   return e === null ? '' : JSON.stringify(e);
+}
+
+// data_scope is advisory, builder-defined JSON, so it is stored as text and read
+// back with only the shape the seam promises checked: a JSON object, or null
+// when empty. Anything that is not an object (a bare string, an array, malformed
+// text) decodes to null rather than throwing — advisory means a bad scope must
+// not break a read of the row's real permission fields.
+function encodeScope(s: Record<string, unknown> | null): string {
+  return s === null ? '' : JSON.stringify(s);
+}
+
+function decodeScope(raw: string): Record<string, unknown> | null {
+  if (raw === '') {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeFailure(raw: string): DeployError | null {
@@ -331,6 +358,18 @@ function rowToDeploy(r: Row): Deploy {
     manifest,
     state: r.state,
     failure: decodeFailure(r.failure),
+  };
+}
+
+function rowToGrant(r: Row): Grant {
+  return {
+    appId: r.app_id,
+    principal: r.principal,
+    appRole: r.app_role,
+    featureRole: r.feature_role,
+    dataScope: decodeScope(r.data_scope),
+    grantedBy: r.granted_by,
+    grantedAt: toNum(r.granted_at),
   };
 }
 
@@ -690,6 +729,9 @@ class PgStore implements Store {
         return false; // already gone; deleting twice is not a failure
       }
       await tx.query(`DELETE FROM ${this.t('deploys')} WHERE app_id = $1`, [appId]);
+      // Grants are app-scoped rows with no owning app anymore; drop them so a
+      // re-created app id (ids can recur) never inherits another life's access.
+      await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row this statement would read
       // the account from no longer exists.
       await this.insertEvent(tx, {
@@ -802,6 +844,58 @@ class PgStore implements Store {
       const code = failure !== null ? failure.code : '';
       await this.insertAppEvent(tx, appId, deployId, EventKind.DeployFailed, eventDetail({ code }));
     });
+  }
+
+  // ---- grants ----
+
+  // putGrant creates or updates a principal's grant on an app. The upsert targets
+  // the (app_id, principal) primary key: re-sharing to someone already on the
+  // list changes their role in place rather than failing, which is what the share
+  // dialog does when an owner picks a new role. granted_at is supplied by the
+  // caller (like session/device-code expiries) rather than read from the clock
+  // here, so an update also refreshes it to the moment of the change.
+  async putGrant(g: Grant): Promise<void> {
+    await this.db.query(
+      `INSERT INTO ${this.t('grants')} (${grantCols})
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (app_id, principal) DO UPDATE SET
+         app_role     = EXCLUDED.app_role,
+         feature_role = EXCLUDED.feature_role,
+         data_scope   = EXCLUDED.data_scope,
+         granted_by   = EXCLUDED.granted_by,
+         granted_at   = EXCLUDED.granted_at`,
+      [g.appId, g.principal, g.appRole, g.featureRole, encodeScope(g.dataScope), g.grantedBy, g.grantedAt],
+    );
+  }
+
+  // grant returns a principal's grant on an app, or null if they hold none.
+  async grant(appId: string, principal: string): Promise<Grant | null> {
+    const res = await this.db.query(
+      `SELECT ${grantCols} FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
+      [appId, principal],
+    );
+    return res.rows.length ? rowToGrant(res.rows[0]) : null;
+  }
+
+  // grantsByApp lists every grant on an app, oldest share first — the order the
+  // share dialog presents the access list in. The (app_id, principal) primary key
+  // is the scan for the app_id filter, so no separate index backs this read.
+  async grantsByApp(appId: string): Promise<Grant[]> {
+    const res = await this.db.query(
+      `SELECT ${grantCols} FROM ${this.t('grants')} WHERE app_id = $1 ORDER BY granted_at, principal`,
+      [appId],
+    );
+    return res.rows.map(rowToGrant);
+  }
+
+  // revokeGrant removes a principal's grant and reports whether a row was there
+  // to remove, so revoking access twice is not a failure.
+  async revokeGrant(appId: string, principal: string): Promise<boolean> {
+    const res = await this.db.query(
+      `DELETE FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
+      [appId, principal],
+    );
+    return res.rowCount === 1;
   }
 
   // insertEvent appends one event through the pool or a transaction.

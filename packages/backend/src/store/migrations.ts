@@ -124,6 +124,30 @@ export function migrations(schema: string): string[] {
     `CREATE INDEX IF NOT EXISTS events_by_account ON ${t('events')}(account_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS events_by_app ON ${t('events')}(app_id, created_at DESC)`,
 
+    // Sharing grants: the two-tier permission model (design §5.4), flat — one row
+    // per (app, principal), no OpenFGA and no relationship graph. app_role is
+    // tier 1, the app as an object (owner|admin|editor|viewer, plain TEXT like
+    // device_codes.status, no CHECK — the seam's AppRole is the contract).
+    // feature_role is tier 2, a builder-defined role name from the app's 280.json;
+    // custom actions fold into it via can() rather than a separate concept. The
+    // optional text columns default to '' rather than NULL so every read is a
+    // plain equality test, matching the events scoping columns above; data_scope
+    // holds advisory JSON (or ''). The PRIMARY KEY (app_id, principal) is also the
+    // index a per-app listing scans, so no separate index is needed. No tenants
+    // table: a principal is a self-describing email or 'domain:' string, so grants
+    // key on (app_id, principal) alone and need no tenant row to be coherent —
+    // that stays out of this slice until relationships turn graph-shaped.
+    `CREATE TABLE IF NOT EXISTS ${t('grants')} (
+       app_id       TEXT NOT NULL,
+       principal    TEXT NOT NULL,
+       app_role     TEXT NOT NULL,
+       feature_role TEXT NOT NULL DEFAULT '',
+       data_scope   TEXT NOT NULL DEFAULT '',
+       granted_by   TEXT NOT NULL DEFAULT '',
+       granted_at   BIGINT NOT NULL DEFAULT (${epochDefault}),
+       PRIMARY KEY (app_id, principal)
+     )`,
+
     // Identity the backend now owns, since login moved off the frontend. A user's
     // id is the subject the accounts table keys on, so it is assigned once and
     // never changes; email is lowercased and unique so two providers for one

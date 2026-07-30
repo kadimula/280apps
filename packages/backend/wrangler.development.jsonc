@@ -5,15 +5,14 @@
 	"main": "src/worker.ts",
 	"compatibility_date": "2026-07-23",
 	"compatibility_flags": ["nodejs_compat"],
-	"workers_dev": false,
+	// Development is served over the free *.workers.dev URL for now. The custom
+	// api-development.280apps.com route is deferred until 280apps.com is a
+	// Cloudflare zone on this account (today it is only 280apps.run); the route
+	// block below is intentionally omitted until then. See TWO80_API_ORIGIN.
+	"workers_dev": true,
 	"observability": { "enabled": true },
 
 	"placement": { "mode": "smart" },
-
-	// Development serves the API at api-development.280apps.com: the same
-	// -development label convention the dispatcher uses for app hosts
-	// (platform/dispatcher/wrangler.development.jsonc), one level under the zone.
-	"routes": [{ "pattern": "api-development.280apps.com/*", "zone_name": "280apps.com" }],
 
 	// Separate dev bucket / Hyperdrive config so development never touches prod
 	// blobs or shares a connection pool. Both created by scripts/bootstrap-resources.sh.
@@ -22,7 +21,7 @@
 	// Hyperdrive config for development, ALSO created with query caching DISABLED
 	// (the same read-your-writes requirement holds in every environment). The id
 	// is printed by scripts/bootstrap-resources.sh.
-	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_DEVELOPMENT_HYPERDRIVE_ID" }],
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "ee5bd4e10e12434ca2e1162fbbf97c34" }],
 
 	"durable_objects": {
 		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]
@@ -42,7 +41,9 @@
 		// Development apps serve at <script>-development.280apps.run; the suffix
 		// turns on the dispatcher's suffix stripping (see the dispatcher dev config).
 		"TWO80_APP_HOST_SUFFIX": "-development",
-		"TWO80_API_ORIGIN": "https://api-development.280apps.com",
+		// Served over the free *.workers.dev URL until 280apps.com is a Cloudflare
+		// zone and the api-development.280apps.com route can attach.
+		"TWO80_API_ORIGIN": "https://280-backend-development.kishora1997.workers.dev",
 		"TWO80_FRONTEND_ORIGIN": "https://www-development.280apps.com",
 		"TWO80_VERIFICATION_URI": "https://280apps.com/activate",
 		"TWO80_COOKIE_DOMAIN": ".280apps.com",

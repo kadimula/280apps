@@ -10,6 +10,7 @@ import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { newPgStore } from './store/store.js';
 import { R2BlobStore } from './blobstore/r2.js';
 import { MemoryRuntime, container } from './runtime/index.js';
+import { DepotBuilder } from './runtime/container/depot-builder.js';
 import type { ExpiryCounts, Runtime, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
@@ -45,25 +46,52 @@ export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
   };
 }
 
-// selectRuntime picks where apps run. Misconfiguration is a request failure
-// rather than a degraded mode: a platform that accepts pushes and hosts nothing
-// is the one outcome with no honest error message for the agent. The control
-// plane runs on Workers, so it never builds images itself — it hands each build
-// context to the self-hosted Docker build host over HTTP (HttpBuilder).
+// selectRuntime picks where apps run and which build home compiles their images.
+// Misconfiguration is a request failure rather than a degraded mode: a platform
+// that accepts pushes and hosts nothing is the one outcome with no honest error
+// message for the agent. The builder is config-driven (config.builder) so a new
+// build home is a new ContainerBuilder plus one branch here — nothing above this
+// seam changes. Depot only becomes active once its env is set; with none, the http
+// builder is chosen exactly as before.
 export function selectRuntime(config: Config, log: Logger): Runtime {
   if (config.runtime === 'memory') {
     log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
     return new MemoryRuntime();
   }
+  return new container.ContainerRuntime(
+    config.builder === 'depot' ? buildDepotBuilder(config, log) : buildHttpBuilder(config, log),
+  );
+}
+
+function buildHttpBuilder(config: Config, log: Logger): container.ContainerBuilder {
   if (config.build.host === '') {
-    throw new Error('TWO80_BUILD_HOST is required (or set TWO80_RUNTIME=memory)');
+    throw new Error('TWO80_BUILD_HOST is required (or set TWO80_RUNTIME=memory, or TWO80_BUILDER=depot)');
   }
   if (config.build.token === '') {
     log.warn('TWO80_BUILD_TOKEN unset: the build host is reached without authentication');
   }
-  return new container.ContainerRuntime(
-    new container.HttpBuilder({ baseUrl: config.build.host, token: config.build.token }),
-  );
+  return new container.HttpBuilder({ baseUrl: config.build.host, token: config.build.token });
+}
+
+function buildDepotBuilder(config: Config, log: Logger): container.ContainerBuilder {
+  const missing = [
+    ['DEPOT_TOKEN', config.depot.token],
+    ['CLOUDFLARE_ACCOUNT_ID', config.cloudflare.accountId],
+    ['CLOUDFLARE_API_TOKEN', config.cloudflare.apiToken],
+  ].filter(([, v]) => v === '').map(([k]) => k);
+  if (missing.length > 0) {
+    throw new Error(`TWO80_BUILDER=depot requires ${missing.join(', ')}`);
+  }
+  if (config.depot.projectId === '') {
+    log.warn('DEPOT_PROJECT_ID unset: a project is resolved per app via the Depot API');
+  }
+  return new DepotBuilder({
+    accountId: config.cloudflare.accountId,
+    apiToken: config.cloudflare.apiToken,
+    depotToken: config.depot.token,
+    projectId: config.depot.projectId || undefined,
+    workerEntry: config.workerEntry,
+  });
 }
 
 // buildAuth wires the browser-login flow, or returns undefined when no provider is

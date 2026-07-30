@@ -32,12 +32,31 @@ export interface Env {
   // ships build contexts to; the control plane runs on Workers and cannot build
   // images itself. Empty unless TWO80_RUNTIME=memory.
   TWO80_BUILD_HOST?: string;
+  // TWO80_BUILDER selects the build home: 'http' (the self-hosted Docker build
+  // host, the default) or 'depot' (managed remote BuildKit). Unset falls back to
+  // 'depot' only when DEPOT_TOKEN is present, else 'http' — so a host with no Depot
+  // env keeps its current behavior.
+  TWO80_BUILDER?: string;
+  // DEPOT_PROJECT_ID pins every Depot build to one project (isolated layer cache).
+  // Unset resolves a project per app via the Depot API.
+  DEPOT_PROJECT_ID?: string;
+  // CLOUDFLARE_ACCOUNT_ID is the registry.cloudflare.com username and the account
+  // the app's container application rolls under.
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  // TWO80_WORKER_ENTRY is the App280Container harness Worker the generated roll
+  // config points `main` at; supplied by the runtime image, not the app source.
+  TWO80_WORKER_ENTRY?: string;
 
   // Secrets (`wrangler secret put`).
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   // TWO80_BUILD_TOKEN authenticates the control plane to the build host.
   TWO80_BUILD_TOKEN?: string;
+  // DEPOT_TOKEN is the Depot organization token authorizing remote builds.
+  DEPOT_TOKEN?: string;
+  // CLOUDFLARE_API_TOKEN pushes the built image to registry.cloudflare.com and
+  // authorizes the wrangler roll. Required for the depot builder.
+  CLOUDFLARE_API_TOKEN?: string;
   // DATABASE_URL is the Neon origin string Hyperdrive fronts; at runtime the
   // Worker dials the pooled HYPERDRIVE binding, so the store reads
   // connectionString off that, not this. Present for parity — it is the same
@@ -65,8 +84,16 @@ export interface Config {
   sessionTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
-  // build is the self-hosted Docker build host the container runtime calls.
+  // builder selects which ContainerBuilder the runtime constructs.
+  builder: 'http' | 'depot';
+  // build is the self-hosted Docker build host the http builder calls.
   build: { host: string; token: string };
+  // depot is the managed remote BuildKit build home (used when builder='depot').
+  depot: { token: string; projectId: string };
+  // cloudflare authenticates the registry push and the wrangler roll (depot builder).
+  cloudflare: { accountId: string; apiToken: string };
+  // workerEntry is the App280Container harness Worker the roll config references.
+  workerEntry: string;
 }
 
 // ConfigVars is the string-keyed subset of tunables and secrets both hosts share:
@@ -103,8 +130,22 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
     },
     google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
+    builder: selectBuilder(vars),
     build: { host: vars.TWO80_BUILD_HOST ?? '', token: vars.TWO80_BUILD_TOKEN ?? '' },
+    depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
+    cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
+    workerEntry: str(vars.TWO80_WORKER_ENTRY, 'worker.js'),
   };
+}
+
+// selectBuilder resolves the build home. An explicit TWO80_BUILDER wins; otherwise
+// Depot is chosen only when its token is present, so a host with no Depot env (the
+// live Railway service today) keeps the http builder unchanged.
+function selectBuilder(vars: ConfigVars): 'http' | 'depot' {
+  const explicit = vars.TWO80_BUILDER ?? '';
+  if (explicit === 'depot') return 'depot';
+  if (explicit === 'http') return 'http';
+  return (vars.DEPOT_TOKEN ?? '') !== '' ? 'depot' : 'http';
 }
 
 // readConfig resolves the Worker's Env: the pg client dials the pooled Hyperdrive

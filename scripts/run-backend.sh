@@ -172,8 +172,10 @@ assert_development() {
   [[ -f "$DEV_CONFIG" ]] || die "missing dev config: $DEV_CONFIG"
   grep -q '"name": *"280-backend-development"' "$DEV_CONFIG" ||
     die "$DEV_CONFIG is not the development worker (name must be 280-backend-development); refusing"
-  grep -q 'api-development\.280apps\.com/\*' "$DEV_CONFIG" ||
-    die "$DEV_CONFIG does not route api-development.280apps.com; refusing to deploy an unexpected target"
+  # NOTE: development currently serves over the free *.workers.dev URL, so we no
+  # longer require the api-development.280apps.com/* route to be present (it is
+  # deferred until 280apps.com is a Cloudflare zone). The prod-route guard below
+  # is what actually keeps this script from ever deploying the prod target.
   # Belt and suspenders: never proceed if the prod API route leaks into this file.
   if grep -qE '"pattern": *"api\.280apps\.com/\*"' "$DEV_CONFIG"; then
     die "$DEV_CONFIG contains the PROD route api.280apps.com/*; refusing (prod is out of scope for this script)"

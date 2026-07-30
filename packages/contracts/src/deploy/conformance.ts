@@ -103,6 +103,7 @@ function mkContext(files: Record<string, Uint8Array>): Bundle {
       kind: MANIFEST_KIND_CONTAINER,
       build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
       files: list,
+      egress: { allowedHosts: [], credentials: [] },
     },
     content,
   };

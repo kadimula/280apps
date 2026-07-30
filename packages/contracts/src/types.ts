@@ -73,6 +73,51 @@ export type BuildSpec = z.infer<typeof buildSpecSchema>;
 
 const ZERO_BUILD: BuildSpec = { builder: '', dockerfile: '', port: 0 };
 
+// EgressCredential binds one allowed host to a platform-held secret the outbound
+// handler attaches in-flight. Only the secret NAME travels on the wire; its value
+// lives in the Worker vault and never enters the app's container. header defaults
+// to authorization and scheme to Bearer, so `{host, secret}` covers bearer APIs;
+// a raw-value header (e.g. apikey) sets scheme to ''.
+export const egressCredentialSchema = z
+  .object({
+    host: str(),
+    secret: str(), // the secret's name; the value is resolved from the vault at call time
+    header: str('authorization'),
+    scheme: str('Bearer'),
+  })
+  .passthrough();
+export type EgressCredential = z.infer<typeof egressCredentialSchema>;
+
+// EgressPolicy is an app's outbound contract, derived from its 280.json: the hosts
+// it may reach and the credentials the handler attaches per host. Anything not in
+// allowedHosts fails closed (HTTP 520) at the container boundary. Rides in the
+// Manifest so a policy change re-derives the deploy id and redeploys.
+export const egressPolicySchema = z
+  .object({
+    allowedHosts: arr(z.string()),
+    credentials: arr(egressCredentialSchema),
+  })
+  .passthrough();
+export type EgressPolicy = z.infer<typeof egressPolicySchema>;
+
+const ZERO_EGRESS: EgressPolicy = { allowedHosts: [], credentials: [] };
+
+// normalizeEgressPolicy is the one place the allowlist is derived, so the CLI that
+// builds the policy and the runtime that applies it never disagree: a credential's
+// host is implicitly allowed, hosts are lowercased/trimmed, and duplicates drop.
+export function normalizeEgressPolicy(p: EgressPolicy): EgressPolicy {
+  const credentials = p.credentials
+    .map((c) => ({ ...c, host: c.host.trim().toLowerCase() }))
+    .filter((c) => c.host !== '');
+  const hosts = new Set<string>();
+  for (const h of p.allowedHosts) {
+    const host = h.trim().toLowerCase();
+    if (host !== '') hosts.add(host);
+  }
+  for (const c of credentials) hosts.add(c.host);
+  return { allowedHosts: [...hosts].sort(), credentials };
+}
+
 // Manifest is a container build-context descriptor: the build recipe plus every
 // file in the context, each content-addressed so the deploy loop transfers only
 // what the server lacks. Replaces the retired Workers-for-Platforms bundle shape.
@@ -81,6 +126,7 @@ export const manifestSchema = z
     kind: str(),
     build: buildSpecSchema.nullish().transform((v) => v ?? ZERO_BUILD),
     files: arr(blobInfoSchema),
+    egress: egressPolicySchema.nullish().transform((v) => v ?? ZERO_EGRESS),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
@@ -249,6 +295,11 @@ export function canonicalDigest(m: Manifest): Digest {
   h.update(`build:${m.build.builder}:${m.build.dockerfile}:${m.build.port}\n`);
   for (const f of sortedByPath(m.files)) {
     h.update(`file:${f.path}:${f.digest}:${f.size}\n`);
+  }
+  const eg = normalizeEgressPolicy(m.egress ?? ZERO_EGRESS);
+  for (const host of eg.allowedHosts) h.update(`egress-host:${host}\n`);
+  for (const c of [...eg.credentials].sort((a, b) => byteCompare(a.host, b.host))) {
+    h.update(`egress-cred:${c.host}:${c.header}:${c.scheme}:${c.secret}\n`);
   }
   return h.digest('hex');
 }

@@ -7,11 +7,19 @@ DockerBuilder targets; here it also lets you run one app end to end with
 
 - `src/container.js` — `App280Container extends Container`. Locked defaults:
   `enableInternet = false` (default-deny egress; the library default is `true`),
-  `interceptHttps = true`, `defaultPort = 8080`. `registerEgress()` is the only
-  supported way to attach per-host outbound handlers (phase 3), so app authors
-  can't trip the `static outboundByHost` class-field footgun the spike documented.
-- `src/worker.js` — a thin proof front that forwards to the container. NOT the
-  gateway (no OIDC/access/identity; that is phase 2).
+  `interceptHttps = true`, `defaultPort = 8080`. `registerEgress()` installs the
+  single named egress handler via the `outboundHandlers` accessor (assignment, not
+  a class field, so it can't trip the footgun the spike documented). The handler +
+  `applyEgressPolicy()` here mirror the tested `@280/egress` package (packages/
+  egress), which the production gateway imports.
+- `src/worker.js` — a thin proof front that applies the app's egress policy (from
+  `EGRESS_POLICY` in the Worker env, derived from `280.json`) then forwards to the
+  container. NOT the gateway (no OIDC/access/identity; that is phase 2).
+
+The egress data path — default-deny, the fail-closed allowlist, credential
+injection from the Worker vault (the container never sees the secret), and one
+call-log event per outbound request — is unit-proven in `packages/egress`
+(`test/exfil.test.ts` is the CI exfiltration guard).
 
 The defaults, the HTTP-520 fail-closed on unlisted hosts, and the runtime-CA
 mechanism are CONFIRMED on real Cloudflare Containers by the phase-0 egress spike

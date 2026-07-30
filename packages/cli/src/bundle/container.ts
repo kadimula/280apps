@@ -10,16 +10,64 @@
 // (contracts Manifest): kind "container", a BuildSpec, and every context file
 // content-addressed so the deploy loop uploads only what the server lacks.
 
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   MANIFEST_KIND_CONTAINER,
   digestBytes,
+  normalizeEgressPolicy,
   type BlobInfo,
   type Digest,
+  type EgressPolicy,
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
 import { fail, fileExists, walkContext } from './walk.js';
+
+const EMPTY_EGRESS: EgressPolicy = { allowedHosts: [], credentials: [] };
+
+// read280Egress lifts the app's outbound allowlist out of 280.json. The whole
+// egress contract is declarative: `allow` names the hosts the app may reach and
+// `credentials` binds a host to a 280 secret the platform attaches in-flight (the
+// app holds no keys). Absent 280.json or egress block => default-deny (reach
+// nothing). A malformed block fails preflight so the author fixes it before deploy.
+function read280Egress(root: string): EgressPolicy {
+  const path = join(root, '280.json');
+  if (!fileExists(path)) return EMPTY_EGRESS;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    fail('280.json is not valid JSON', 'fix the JSON syntax in 280.json, then run 280 push again');
+  }
+  const egress = (parsed as { egress?: unknown }).egress;
+  if (egress === undefined || egress === null) return EMPTY_EGRESS;
+  if (typeof egress !== 'object') {
+    fail('280.json "egress" must be an object', 'set "egress": { "allow": [...], "credentials": [...] }');
+  }
+  const e = egress as { allow?: unknown; allowedHosts?: unknown; credentials?: unknown };
+  const allow = e.allow ?? e.allowedHosts ?? [];
+  if (!Array.isArray(allow) || allow.some((h) => typeof h !== 'string')) {
+    fail('280.json egress.allow must be a list of host strings', 'e.g. "allow": ["api.stripe.com", "*.supabase.co"]');
+  }
+  const rawCreds = e.credentials ?? [];
+  if (!Array.isArray(rawCreds)) {
+    fail('280.json egress.credentials must be a list', 'e.g. "credentials": [{ "host": "api.stripe.com", "secret": "STRIPE_KEY" }]');
+  }
+  const credentials = rawCreds.map((c, i) => {
+    const cred = c as { host?: unknown; secret?: unknown; header?: unknown; scheme?: unknown };
+    if (typeof cred.host !== 'string' || typeof cred.secret !== 'string') {
+      fail(`280.json egress.credentials[${i}] needs a "host" and a "secret" name`, 'e.g. { "host": "api.stripe.com", "secret": "STRIPE_KEY" }');
+    }
+    return {
+      host: cred.host,
+      secret: cred.secret,
+      header: typeof cred.header === 'string' ? cred.header : 'authorization',
+      scheme: typeof cred.scheme === 'string' ? cred.scheme : 'Bearer',
+    };
+  });
+  return normalizeEgressPolicy({ allowedHosts: allow as string[], credentials });
+}
 
 // APP_PORT is the port the platform routes to and the buildpack makes the app
 // listen on. It is also the container class's defaultPort — the two must agree.
@@ -157,7 +205,13 @@ function addGenerated(
   files.push({ path, digest: dig, size: data.length });
 }
 
-function assemble(files: BlobInfo[], content: Map<Digest, Uint8Array>, builder: string, notes: string[]): Bundle {
+function assemble(
+  files: BlobInfo[],
+  content: Map<Digest, Uint8Array>,
+  builder: string,
+  notes: string[],
+  egress: EgressPolicy = EMPTY_EGRESS,
+): Bundle {
   if (files.length === 0) {
     fail('the build context is empty', 'build your app first, then run 280 push again');
   }
@@ -165,8 +219,12 @@ function assemble(files: BlobInfo[], content: Map<Digest, Uint8Array>, builder: 
     kind: MANIFEST_KIND_CONTAINER,
     build: { builder, dockerfile: 'Dockerfile', port: APP_PORT },
     files,
+    egress,
   };
-  return { manifest, content, notes };
+  const out = egress.allowedHosts.length
+    ? [...notes, `egress allowlist: ${egress.allowedHosts.join(', ')} (everything else is blocked)`]
+    : notes;
+  return { manifest, content, notes: out };
 }
 
 // buildNextContainer assembles the context for a Next.js project.
@@ -178,42 +236,62 @@ export function buildNextContainer(root: string): Bundle {
     );
   }
   const content = new Map<Digest, Uint8Array>();
+  const egress = read280Egress(root);
 
   // Escape hatch: a user Dockerfile at the repo root wins, and 280 generates
   // nothing — the app is built exactly as its Dockerfile says.
   if (fileExists(join(root, 'Dockerfile'))) {
     const files = walkContext(root, content, { skip: skipRepo });
-    return assemble(files, content, 'dockerfile', [
-      'using your Dockerfile; your app must listen on port ' + APP_PORT,
-      'to allow platform HTTPS egress later, install the Cloudflare CA in your entrypoint (' + CA_PATH + ')',
-    ]);
+    return assemble(
+      files,
+      content,
+      'dockerfile',
+      [
+        'using your Dockerfile; your app must listen on port ' + APP_PORT,
+        'to allow platform HTTPS egress, install the Cloudflare CA in your entrypoint (' + CA_PATH + ')',
+      ],
+      egress,
+    );
   }
 
   const files = walkContext(root, content, { skip: skipRepo });
   addGenerated(files, content, 'Dockerfile', NEXT_DOCKERFILE);
   addGenerated(files, content, ENTRYPOINT_PATH, ENTRYPOINT);
-  return assemble(files, content, 'next', [
-    'generated a Dockerfile that builds and runs your Next.js app on port ' + APP_PORT,
-  ]);
+  return assemble(
+    files,
+    content,
+    'next',
+    ['generated a Dockerfile that builds and runs your Next.js app on port ' + APP_PORT],
+    egress,
+  );
 }
 
 // buildStaticContainer assembles the context for a prebuilt static site: the
 // built directory, plus the generated server, Dockerfile, and entrypoint.
 export function buildStaticContainer(root: string, dir: string): Bundle {
   const content = new Map<Digest, Uint8Array>();
+  const egress = read280Egress(root);
 
   if (fileExists(join(dir, 'Dockerfile'))) {
     const files = walkContext(dir, content, { skip: skipRepo });
-    return assemble(files, content, 'dockerfile', [
-      'using your Dockerfile; your app must listen on port ' + APP_PORT,
-    ]);
+    return assemble(
+      files,
+      content,
+      'dockerfile',
+      ['using your Dockerfile; your app must listen on port ' + APP_PORT],
+      egress,
+    );
   }
 
   const files = walkContext(dir, content, { skip: skipRepo });
   addGenerated(files, content, 'server.280.mjs', STATIC_SERVER);
   addGenerated(files, content, 'Dockerfile', STATIC_DOCKERFILE);
   addGenerated(files, content, ENTRYPOINT_PATH, ENTRYPOINT);
-  return assemble(files, content, 'static', [
-    'generated a container that serves your static site on port ' + APP_PORT,
-  ]);
+  return assemble(
+    files,
+    content,
+    'static',
+    ['generated a container that serves your static site on port ' + APP_PORT],
+    egress,
+  );
 }

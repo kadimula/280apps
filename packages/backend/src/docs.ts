@@ -271,7 +271,7 @@ flowchart TD
 | Sign in / user accounts | Nothing. Read the headers | \`x-280-user\`, \`x-280-roles\`, \`x-280-actions\`. See snippets below |
 | Permissions / roles | Declare features in \`280.json\` | Gate nav and pages by role headers. Owner assigns people in 280, not in your app |
 | Custom actions (approve, export, vote) | Declare per feature in \`280.json\` | 280 grants them; you enforce from \`x-280-actions\`. Edge reports, app enforces |
-| Existing DB or service (Supabase, internal API) | Keep calling it | Store its URL and keys as 280 secrets. Nothing moves, no connector to build |
+| Existing DB or service (Supabase, internal API) | Keep calling it over HTTPS | Allowlist the host in \`280.json\` egress; declare its key as a credential. 280 attaches the key in-flight, your code holds none. Nothing moves, no connector to build |
 | Background / scheduled work | Cron in \`280.json\` hitting a route | Keep each run under a minute of CPU; chunk large jobs |
 | Email | Resend under the user's account | API key declared as a secret; the user fills it in 280 once |
 | Charts | Recharts, client side | |
@@ -279,7 +279,7 @@ flowchart TD
 | PDF | Print stylesheet + browser print, or a client side lib | No headless Chrome, no server side rendering to PDF |
 | Image resizing | wasm library (e.g. photon) or CSS | Never sharp |
 | Live updating data | Polling with SWR, 2 to 5s interval | No websockets |
-| Payments, external APIs | The user's own accounts | Every key is a declared secret, read from env |
+| Payments, external APIs | The user's own accounts | Allowlist the host in \`280.json\` egress; declare the key as a credential so 280 attaches it in-flight |
 
 ## Never
 
@@ -298,7 +298,7 @@ flowchart TD
 
 ## Reference code
 
-\`280.json\` at the repo root. The whole contract: app name, features, secrets, crons.
+\`280.json\` at the repo root. The whole contract: app name, features, secrets, crons, egress.
 
 \`\`\`json
 {
@@ -310,9 +310,34 @@ flowchart TD
   "secrets": ["RESEND_API_KEY"],
   "crons": [
     { "schedule": "0 6 * * *", "route": "/jobs/daily-sync" }
-  ]
+  ],
+  "egress": {
+    "allow": ["api.resend.com", "your-project.supabase.co"],
+    "credentials": [
+      { "host": "api.resend.com", "secret": "RESEND_API_KEY" },
+      { "host": "your-project.supabase.co", "secret": "SUPABASE_KEY", "header": "apikey", "scheme": "" }
+    ]
+  }
 }
 \`\`\`
+
+## Outbound calls (egress)
+
+Your app runs default-deny: it can reach ONLY the hosts you list in \`egress.allow\`;
+anything else is blocked. This is why the container surviving bad AI code is a
+platform guarantee, not a hope. Rules:
+
+- List every external host your app calls in \`egress.allow\` (globs allowed, e.g.
+  \`*.supabase.co\`; a glob matches subdomains, not the bare domain).
+- For a host that needs a key, add a \`credentials\` entry naming a 280 secret. 280
+  attaches it to the request in-flight, outside your container: your code makes a
+  plain request with NO auth header, and never holds the key. Default header is
+  \`authorization\` with a \`Bearer\` scheme; set \`header\`/\`scheme\` for APIs that want
+  a raw key header (\`"scheme": ""\`).
+- The provisioned Postgres is reached over its HTTPS endpoint (the neon-http
+  serverless driver), which is allowlisted for you — never a raw \`:5432\` TCP
+  connection, which the egress layer can block but cannot secure. Keep DB and
+  external-service access on HTTPS interfaces.
 
 \`lib/visitor.ts\`. The only identity code the app ever contains.
 

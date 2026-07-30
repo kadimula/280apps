@@ -104,6 +104,10 @@ function mkContext(files: Record<string, Uint8Array>): Bundle {
       build: { builder: 'static', dockerfile: 'Dockerfile', port: 8080 },
       files: list,
       egress: { allowedHosts: [], credentials: [] },
+      access: 'invited',
+      roles: [],
+      routes: [],
+      secrets: [],
     },
     content,
   };

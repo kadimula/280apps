@@ -39,6 +39,8 @@ export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
     openSignup: config.openSignup,
     verificationUri: config.verificationUri,
     minCliVersion: config.minCliVersion,
+    appDomain: config.appDomain,
+    viewAsOrigin: `https://auth.${config.appDomain}`,
     close: () => store.close(),
   };
 }

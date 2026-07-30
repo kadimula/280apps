@@ -6,11 +6,18 @@
 
 import type { Auth } from '@280/backend/authsvc';
 import { AuthError } from '@280/backend/authsvc';
-import type { AccessCheck } from './access.js';
+import { tenantFromEmail } from '@280/contracts';
+import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
 import { ID_HEADER, IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
 import type { Upstream } from './upstream.js';
+
+// The audit seam the gateway writes access decisions through. The pg Store
+// satisfies it; injected so the proxy stays unit-testable and audit stays optional.
+export interface AccessAudit {
+  recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void>;
+}
 
 export interface Logger {
   info(msg: string, attrs?: Record<string, unknown>): void;
@@ -22,16 +29,20 @@ export interface VerifiedViewer {
   id: string;
   email: string;
   name: string;
+  tenant: string;
 }
 
 export const SESSION_COOKIE = '280_session';
 export const STATE_COOKIE = '280_oauth';
+// One live "view as" preview, scoped to its app by the script inside it.
+export const VIEW_COOKIE = '280_view';
 const STATE_TTL_SECS = 600;
+const VIEW_TTL_SECS = 3600;
 
 export interface GatewayOptions {
   auth: Auth;
   signer: IdentitySigner;
-  access: AccessCheck;
+  authz: Authorizer;
   upstream: Upstream;
   hosts: HostConfig;
   authOrigin: string;
@@ -40,6 +51,7 @@ export interface GatewayOptions {
   providers: ProviderLink[];
   publicJwks: Record<string, JsonWebKey>;
   fallbackRedirect: string;
+  audit?: AccessAudit;
   logger?: Logger;
 }
 
@@ -74,6 +86,7 @@ export class Gateway {
     if (path === '/healthz') return text('ok\n');
     if (path === '/.well-known/280-identity.jwks') return this.serveJwks();
     if (path === '/login') return this.handleLogin(url);
+    if (path === '/view-as' && request.method === 'GET') return this.handleViewAs(request, url);
 
     const start = matchProvider(path, '/start');
     if (start !== null && request.method === 'GET') return this.handleStart(request, url, start);
@@ -134,6 +147,37 @@ export class Gateway {
     const dest = this.confineRedirect(url.searchParams.get('return') ?? '');
     const headers = new Headers({ location: dest === '' ? this.o.fallbackRedirect : dest });
     headers.append('set-cookie', this.cookie(SESSION_COOKIE, '', 0));
+    headers.append('set-cookie', this.cookie(VIEW_COOKIE, '', 0));
+    return new Response(null, { status: 303, headers });
+  }
+
+  // handleViewAs is how the share dialog's "View as" button previews the app as a
+  // role. It sets a scoped preview cookie only after confirming the signed-in viewer
+  // is admin or above on the app, then bounces to the app; the app-host path re-checks
+  // that real role before honoring the cookie, so the cookie alone grants nothing.
+  // as = "clear" | "app:<role>" | "role:<featureRole>".
+  private async handleViewAs(request: Request, url: URL): Promise<Response> {
+    const viewer = await this.resolveViewer(request);
+    if (viewer === null) return this.loginBounce(url.toString());
+
+    const script = url.searchParams.get('app') ?? '';
+    const as = url.searchParams.get('as') ?? '';
+    const dest = this.confineRedirect(url.searchParams.get('return') ?? '');
+    const bounce = dest === '' ? this.o.fallbackRedirect : dest;
+
+    if (as === 'clear') {
+      const headers = new Headers({ location: bounce });
+      headers.append('set-cookie', this.cookie(VIEW_COOKIE, '', 0));
+      return new Response(null, { status: 303, headers });
+    }
+
+    const appId = await this.o.authz.viewAsAllowed(script, viewer.email);
+    if (appId === null) return html(denyPage('Only an app admin can preview it as another role.'), 403);
+
+    const view = parseViewTarget(script, as);
+    if (view === null) return html(errorPage(), 400);
+    const headers = new Headers({ location: bounce });
+    headers.append('set-cookie', this.cookie(VIEW_COOKIE, encodeView(view), VIEW_TTL_SECS));
     return new Response(null, { status: 303, headers });
   }
 
@@ -151,22 +195,74 @@ export class Gateway {
     const viewer = await this.resolveViewer(request);
     if (viewer === null) return this.loginBounce(request.url);
 
-    const decision = await this.o.access.check({ viewer, appScript: script, host: url.hostname });
-    if (!decision.allow) return html(denyPage(decision.reason), 403);
+    const viewAs = parseViewCookie(readCookie(request, VIEW_COOKIE));
+    const decision = await this.o.authz.evaluate({
+      viewer,
+      script,
+      host: url.hostname,
+      path: url.pathname,
+      viewAs,
+    });
 
+    if (!decision.allow) {
+      // Every denial is audited: a blocked attempt is the security-relevant event.
+      await this.audit(decision.appId, viewer.email, false, {
+        path: url.pathname,
+        reason: decision.reason,
+      });
+      return html(denyPage(decision.reason), 403);
+    }
+
+    // Allows are audited only for top-level navigations, so one page open is one row,
+    // not one per asset/API the page then fans out.
+    if (isNavigation(request)) {
+      await this.audit(decision.appId, viewer.email, true, {
+        path: url.pathname,
+        appRole: decision.effective.appRole,
+        role: decision.effective.featureRole,
+        viewAs: decision.viewAsApplied ? '1' : '',
+      });
+    }
+
+    const eff: EffectiveGrant = decision.effective;
     const identityHeader = await this.o.signer.sign({
       sub: viewer.id,
       email: viewer.email,
       name: viewer.name,
       aud: url.hostname,
+      app: decision.appId,
+      appRole: eff.appRole,
+      role: eff.featureRole,
+      caps: eff.featureRole !== '' ? [eff.featureRole] : [],
+      scope: eff.dataScope ?? {},
     });
     const forwarded = stampIdentity(request, identityHeader);
     return this.o.upstream.fetch({ request: forwarded, script, identityHeader });
   }
 
+  // Access is audited only for top-level navigations (document requests), not every
+  // asset/API hit a page fans out, so the log answers "who opened this app when"
+  // without one page view becoming dozens of rows. Best-effort: a failed write is
+  // logged and swallowed, never surfaced to the viewer.
+  private async audit(
+    appId: string,
+    principal: string,
+    allowed: boolean,
+    detail: Record<string, string>,
+  ): Promise<void> {
+    if (this.o.audit === undefined || appId === '') return;
+    try {
+      await this.o.audit.recordAppAccess({ appId, principal, allowed, detail: JSON.stringify(detail) });
+    } catch (err) {
+      this.o.logger?.warn('access audit failed', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   private async resolveViewer(request: Request): Promise<VerifiedViewer | null> {
     const user = await this.o.auth.me(readCookie(request, SESSION_COOKIE));
-    return user === null ? null : { id: user.id, email: user.email, name: user.name };
+    return user === null
+      ? null
+      : { id: user.id, email: user.email, name: user.name, tenant: tenantFromEmail(user.email) };
   }
 
   private confineRedirect(raw: string): string {
@@ -223,6 +319,49 @@ function stampIdentity(request: Request, token: string): Request {
   }
   headers.set(ID_HEADER, token);
   return new Request(request, { headers });
+}
+
+// isNavigation reports a top-level document request (a page open), the granularity
+// the access audit records. Sec-Fetch-Dest is the precise signal; the Accept header
+// is the fallback for clients that omit it.
+function isNavigation(request: Request): boolean {
+  if (request.method !== 'GET') return false;
+  const dest = request.headers.get('sec-fetch-dest');
+  if (dest !== null) return dest === 'document';
+  return (request.headers.get('accept') ?? '').includes('text/html');
+}
+
+// The view cookie is a compact url-encoded JSON of {script, appRole, role}. Parsing
+// tolerates any malformed value as "no preview" — a bad cookie must never break
+// serving.
+function parseViewCookie(raw: string): ViewAs | null {
+  if (raw === '') return null;
+  try {
+    const o = JSON.parse(decodeURIComponent(raw)) as Partial<ViewAs>;
+    if (typeof o.script !== 'string' || o.script === '') return null;
+    return { script: o.script, appRole: typeof o.appRole === 'string' ? o.appRole : '', role: typeof o.role === 'string' ? o.role : '' };
+  } catch {
+    return null;
+  }
+}
+
+function encodeView(v: ViewAs): string {
+  return encodeURIComponent(JSON.stringify(v));
+}
+
+// parseViewTarget reads the /view-as `as` param: "app:<role>" previews an app role,
+// "role:<featureRole>" previews a feature role (at viewer app-level). Unknown forms
+// yield null.
+function parseViewTarget(script: string, as: string): ViewAs | null {
+  if (as.startsWith('app:')) {
+    const role = as.slice('app:'.length);
+    return role === '' ? null : { script, appRole: role, role: '' };
+  }
+  if (as.startsWith('role:')) {
+    const role = as.slice('role:'.length);
+    return role === '' ? null : { script, appRole: '', role };
+  }
+  return null;
 }
 
 function matchProvider(path: string, tail: string): string | null {

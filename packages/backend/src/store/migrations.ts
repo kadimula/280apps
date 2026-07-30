@@ -120,6 +120,22 @@ export function migrations(schema: string): string[] {
        PRIMARY KEY (app_id, principal)
      )`,
 
+    // The enforced slice of a live deploy's manifest (design §5.1 "Manifest
+    // registered → D1"): access mode, feature-role vocabulary, route gates, declared
+    // secret names, and the owner's tenant. One row per app, replaced whenever a
+    // deploy goes live. The gateway reads it per request to gate routes; the share
+    // dialog reads roles to offer them. JSON columns default '' so a bad decode is a
+    // safe empty, not a broken row.
+    `CREATE TABLE IF NOT EXISTS ${t('app_policies')} (
+       app_id       TEXT PRIMARY KEY,
+       access       TEXT NOT NULL DEFAULT 'invited',
+       roles        TEXT NOT NULL DEFAULT '',
+       routes       TEXT NOT NULL DEFAULT '',
+       secrets      TEXT NOT NULL DEFAULT '',
+       owner_tenant TEXT NOT NULL DEFAULT '',
+       updated_at   BIGINT NOT NULL DEFAULT (${epochDefault})
+     )`,
+
     // Identity the backend now owns since login moved off the frontend. A user's id
     // is the subject the accounts table keys on (assigned once, never changes);
     // email is lowercased and unique so two providers for one person converge.

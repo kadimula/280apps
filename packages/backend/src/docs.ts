@@ -93,14 +93,14 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'See, rename, delete apps',
     },
     {
-      name: 'Identity headers (x-280-user, x-280-roles, x-280-actions)',
-      status: 'unsupported',
-      note: 'Direction, not shipped',
+      name: 'Injected identity SDK (@280/sdk: user, can, scope)',
+      status: 'supported',
+      note: 'Gateway signs a verified identity header; the app reads it via @280/sdk',
     },
     {
-      name: 'Feature permissions, sharing grants',
-      status: 'unsupported',
-      note: 'Direction, not shipped',
+      name: 'Feature permissions, sharing grants, route gates',
+      status: 'supported',
+      note: 'Two-tier roles in 280.json; owner shares in the dialog; gateway enforces',
     },
     {
       name: 'Per app Postgres and R2',
@@ -252,12 +252,11 @@ flowchart TD
 ## Principles
 
 - You build features. 280 owns deploy, identity, permissions, database, file storage.
-- Never write auth. Identity arrives as request headers. There is no login page in your app.
-- Declare, don't configure. Features, secrets, crons go in \`280.json\`. 280 does the rest.
-- Reads are GETs. Mutations are POSTs. 280 blocks POSTs for readers at the edge.
-- A feature is a route subtree. One folder per feature. Its name appears verbatim in the owner's sharing UI.
-- Features can declare custom actions (approve, export, vote). 280 grants them per person. You read \`x-280-actions\` and enforce. Edge reports, app enforces.
-- Every page must render for role reader. Link visitors arrive as \`x-280-user: anonymous\`, name Guest, reader on every feature; never treat the email as a real address without handling \`anonymous\`.
+- Never write auth. The verified caller arrives from \`@280/sdk\`; there is no login page, no session, no user table in your app.
+- Declare, don't configure. Access mode, feature roles, route gates, secrets go in \`280.json\`. 280 enforces them at the gateway.
+- No unguarded route. Gate sensitive paths in \`280.json routes\`; any route you do not declare defaults to owner-only (fail closed), so a forgotten gate makes a page unreachable, never exposed. The deploy prints each route and its resolved gate.
+- Roles are two tiers. \`app_role\` (owner/admin/editor/viewer) governs the app itself and drives the share dialog; \`roles\` are your app's feature roles, gated at the edge and read via \`can()\`. The owner assigns people in 280, never in your app.
+- Read identity with \`can()\`, not headers. \`const { user, can, scope } = await identity(request)\`. \`can("manager")\` is true when the viewer holds that feature role; a link visitor holds none.
 - If \`280 push\` returns an instruction, do exactly that, then push again. Never work around it.
 
 ## The user wants X, you use Y
@@ -268,9 +267,9 @@ flowchart TD
 | UI | Tailwind CSS + shadcn/ui | Server components by default; client components only for interactivity |
 | Database | Postgres, already provisioned | \`process.env.DATABASE_URL\`. Drizzle + the serverless driver (runs on Workers). Migrations committed, applied on deploy |
 | File uploads / storage | R2 bucket, already provisioned | S3 creds in env. Presigned URLs for browser uploads. Never write to local disk |
-| Sign in / user accounts | Nothing. Read the headers | \`x-280-user\`, \`x-280-roles\`, \`x-280-actions\`. See snippets below |
-| Permissions / roles | Declare features in \`280.json\` | Gate nav and pages by role headers. Owner assigns people in 280, not in your app |
-| Custom actions (approve, export, vote) | Declare per feature in \`280.json\` | 280 grants them; you enforce from \`x-280-actions\`. Edge reports, app enforces |
+| Sign in / user accounts | Nothing. \`@280/sdk\` | \`const { user } = await identity(request)\`. \`user.email\`/\`user.tenant\` are gateway-verified. See snippets below |
+| Permissions / roles | Declare \`roles\` + \`routes\` in \`280.json\` | The gateway gates the routes; you branch on \`can("manager")\`. Owner assigns people in the 280 share dialog, not in your app |
+| Custom actions (approve, export, vote) | A feature role in \`280.json roles\` | Name the role for the action (e.g. \`"approvals.edit"\`), gate its route, and check \`can("approvals.edit")\`. There is no separate actions concept |
 | Existing DB or service (Supabase, internal API) | Keep calling it over HTTPS | Allowlist the host in \`280.json\` egress; declare its key as a credential. 280 attaches the key in-flight, your code holds none. Nothing moves, no connector to build |
 | Background / scheduled work | Cron in \`280.json\` hitting a route | Keep each run under a minute of CPU; chunk large jobs |
 | Email | Resend under the user's account | API key declared as a secret; the user fills it in 280 once |
@@ -285,7 +284,7 @@ flowchart TD
 
 | Forbidden | Instead |
 | --- | --- |
-| NextAuth, Clerk, Auth0, passport, any login code | 280 identity headers |
+| NextAuth, Clerk, Auth0, passport, any login code | \`@280/sdk\` (\`identity\` → \`{ user, can, scope }\`) |
 | \`child_process\`, ffmpeg, puppeteer, worker_threads | Client side work, or a third party API under the user's account |
 | Native modules (sharp, bcrypt, sqlite3, canvas) | wasm or WebCrypto equivalents |
 | Writing to the filesystem | R2 for files, Postgres for data |
@@ -293,24 +292,25 @@ flowchart TD
 | \`setInterval\`, long running processes | Crons in \`280.json\` |
 | Websockets | Polling |
 | Committing \`.env\`, hardcoding keys | Declare in \`280.json\` secrets; owner fills in 280 |
-| Mutating state in a GET handler | POST. Readers are blocked from POST at the edge |
-| Next.js Server Actions | Route handlers. Actions are POSTs the edge cannot tell apart, so the reader block would break them |
+| An admin or mutation route with no gate | Declare it in \`280.json routes\`; undeclared routes are owner-only (fail closed) |
 
 ## Reference code
 
-\`280.json\` at the repo root. The whole contract: app name, features, secrets, crons, egress.
+\`280.json\` at the repo root is the app's trust boundary: access mode, feature
+roles, route gates, secret names, and the egress allowlist. Everything here is
+enforced at the gateway, before any of your code runs.
 
 \`\`\`json
 {
   "name": "expense-tracker",
-  "features": [
-    { "key": "reports", "name": "Reports", "routes": "/reports", "actions": ["approve", "export"] },
-    { "key": "billing", "name": "Billing", "routes": "/billing" }
+  "access": "invited",
+  "roles": ["approvals.edit"],
+  "routes": [
+    { "path": "/admin/*", "require": { "app_role": "admin" } },
+    { "path": "/api/approve", "require": { "role": "approvals.edit" } },
+    { "path": "/*", "require": { "app_role": "viewer" } }
   ],
   "secrets": ["RESEND_API_KEY"],
-  "crons": [
-    { "schedule": "0 6 * * *", "route": "/jobs/daily-sync" }
-  ],
   "egress": {
     "allow": ["api.resend.com", "your-project.supabase.co"],
     "credentials": [
@@ -320,6 +320,14 @@ flowchart TD
   }
 }
 \`\`\`
+
+- \`access\`: \`invited\` (only people the owner shared with), \`anyone-at-tenant\`
+  (anyone in the owner's org), or \`link\` (any signed-in viewer). Default \`invited\`.
+- \`roles\`: your feature roles. A route can require one via \`{ "role": "..." }\`, and
+  you check the same name with \`can("...")\`. Name a role for a custom action.
+- \`routes\`: \`path\` (globs allowed, \`/admin/*\`) → \`require\` an \`app_role\` floor OR a
+  \`role\`. Declare a \`/*\` catch-all for the pages every viewer should reach; any
+  path you leave out is owner-only. The deploy prints the route → gate diff.
 
 ## Outbound calls (egress)
 
@@ -339,49 +347,30 @@ platform guarantee, not a hope. Rules:
   connection, which the egress layer can block but cannot secure. Keep DB and
   external-service access on HTTPS interfaces.
 
-\`lib/visitor.ts\`. The only identity code the app ever contains.
+Identity comes from \`@280/sdk\` (\`npm i @280/sdk\`). It verifies the gateway's
+short-lived signed header offline and hands you one object. That is the only
+identity code your app ever contains: no session, no token, no user table.
 
-\`\`\`ts
-import { headers } from "next/headers";
-
-export type Role = "editor" | "reader";
-
-export async function visitor() {
-  const h = await headers();
-  const roles: Record<string, Role> = {};
-  for (const pair of (h.get("x-280-roles") ?? "").split(";")) {
-    const [feature, role] = pair.trim().split("=");
-    if (feature && role) roles[feature] = role as Role;
-  }
-  const actions: Record<string, string[]> = {};
-  for (const pair of (h.get("x-280-actions") ?? "").split(";")) {
-    const [feature, list] = pair.trim().split("=");
-    if (feature && list) actions[feature] = list.split(",");
-  }
-  return {
-    email: h.get("x-280-user") ?? "", // "anonymous" for link visitors (GET only)
-    name: h.get("x-280-name") ?? "",
-    roles,
-    actions,
-  };
-}
-\`\`\`
-
-\`app/reports/page.tsx\`. Gate every feature page: no role, no page. Same check hides the nav link. Actions gate buttons inside the page.
+\`app/reports/page.tsx\`. Read the caller, then branch on \`can()\`. The route gate in
+\`280.json\` is the real enforcement; \`can()\` is for showing the right UI.
 
 \`\`\`tsx
-import { notFound } from "next/navigation";
-import { visitor } from "@/lib/visitor";
+import { headers } from "next/headers";
+import { identity } from "@280/sdk";
 
 export default async function ReportsPage() {
-  const { roles, actions } = await visitor();
-  if (!roles.reports) notFound(); // feature invisible without a role
-  const canEdit = roles.reports === "editor";
-  const canExport = actions.reports?.includes("export") ?? false;
+  const { user, can, scope } = await identity(await headers());
 
-  return <Reports readOnly={!canEdit} canExport={canExport} />;
+  const canApprove = can("approvals.edit"); // holds the feature role?
+  const team = scope("salaries");           // advisory data scope, or null
+
+  return <Reports viewer={user.email} canApprove={canApprove} team={team} />;
 }
 \`\`\`
+
+For a mutation, gate the route in \`280.json\` (\`{ "path": "/api/approve", "require":
+{ "role": "approvals.edit" } }\`); the gateway blocks anyone without the role before
+your handler runs, so the handler can trust \`can("approvals.edit")\`.
 
 \`lib/db.ts\`. The entire database setup.
 

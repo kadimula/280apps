@@ -6,7 +6,7 @@ import { Auth } from '@280/backend/authsvc';
 import { GoogleProvider, EntraProvider, type OidcProvider } from '@280/backend/auth/oidc';
 import { newPgStore } from '@280/backend/store';
 import type { Store } from '@280/backend/seams';
-import { GrantsAccess } from './access.js';
+import { Authorizer } from './access.js';
 import { confineRedirect, Gateway, type Logger } from './gateway.js';
 import { IdentitySigner, publicJwkFromPrivate } from './identity.js';
 import type { ProviderLink } from './pages.js';
@@ -128,7 +128,8 @@ export function requestGateway(s: GatewayStatics): { gateway: Gateway; close: ()
   const gateway = new Gateway({
     auth,
     signer: s.signer,
-    access: new GrantsAccess(store),
+    authz: new Authorizer(store),
+    audit: store,
     upstream: new ContainerUpstream(s.containers),
     hosts: { appDomain: s.config.appDomain, authHost: s.config.authHost, hostSuffix: s.config.hostSuffix },
     authOrigin: s.config.authOrigin,

@@ -1,7 +1,8 @@
 {
-  "name": "@280/gateway",
+  "name": "@280/sdk",
   "version": "0.0.0",
-  "private": true,
+  "description": "The only identity code a 280 app contains: read the gateway-verified user, check capabilities, and resolve scopes.",
+  "license": "UNLICENSED",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -15,20 +16,18 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+  "publishConfig": {
+    "access": "public"
   },
-  "dependencies": {
-    "@280/backend": "workspace:*",
-    "@280/contracts": "workspace:*"
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260729.1",
-    "wrangler": "4.113.0"
+    "@280/contracts": "workspace:*",
+    "tsup": "^8.3.0"
   }
 }

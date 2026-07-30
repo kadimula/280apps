@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
+  APP_ROLE_ORDER,
   DeployCode,
   DeployErr,
   AuthCode,
@@ -25,10 +26,11 @@ import {
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
 import { docsRoutes } from './docs.js';
+import { sharePage } from './sharepage.js';
 import { Auth, AuthError } from './authsvc.js';
 import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
 import type { RequestDeps } from './config.js';
-import { DeviceStatus, type User } from './seams.js';
+import { DeviceStatus, type App as StoreApp, type AppRole, type User } from './seams.js';
 
 const SESSION_COOKIE = '280_session';
 // STATE_COOKIE is the short-lived CSRF binding for one in-flight OIDC login.
@@ -107,6 +109,14 @@ export class Server {
     app.post('/internal/device/approve', this.route((c) => this.handleDeviceApprove(c)));
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
+
+    // The share dialog and its data: list/grant/revoke access (both tiers) and the
+    // server-rendered dialog page. All authenticated by the browser session and
+    // scoped to an app the caller's account owns.
+    app.get('/internal/apps/:app/grants', this.route((c) => this.handleGrantsList(c)));
+    app.post('/internal/apps/:app/grants', this.route((c) => this.handleGrantPut(c)));
+    app.post('/internal/apps/:app/grants/revoke', this.route((c) => this.handleGrantRevoke(c)));
+    app.get('/internal/apps/:app/share', this.route((c) => this.handleShareDialog(c)));
 
     app.get('/healthz', (c) => c.text('ok\n'));
 
@@ -397,6 +407,146 @@ export class Server {
     return c.json(encodeDeleteResult(res));
   }
 
+  // ownedApp resolves the app named in the path, scoped to the caller's account, so
+  // a builder can only ever manage sharing for their own apps. Same not-found answer
+  // for "no account", "no app", and "another account's app": ownership is not
+  // probeable.
+  private async ownedApp(c: Context<HonoEnv>): Promise<{ user: User; app: StoreApp }> {
+    const user = await this.sessionUser(c);
+    const appId = c.req.param('app') ?? '';
+    let acct;
+    try {
+      acct = await this.deps(c).platform.store.accountBySubject(user.id);
+    } catch {
+      throw unavailable('could not resolve the account');
+    }
+    if (acct !== null) {
+      let app;
+      try {
+        app = await this.deps(c).platform.store.app(acct.id, appId);
+      } catch {
+        throw unavailable('could not look up the app');
+      }
+      if (app !== null) return { user, app };
+    }
+    throw new DeployErr({ code: DeployCode.NoSuchApp, message: 'that app does not exist on this account' });
+  }
+
+  private async handleGrantsList(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    let grants, policy;
+    try {
+      [grants, policy] = await Promise.all([
+        this.deps(c).platform.store.grantsByApp(app.id),
+        this.deps(c).platform.store.appPolicy(app.id),
+      ]);
+    } catch {
+      throw unavailable('could not read the access list');
+    }
+    return c.json({
+      app: { id: app.id, slug: app.slug, url: app.url },
+      script: app.script,
+      access: policy?.access ?? 'invited',
+      roles: policy?.roles ?? [],
+      viewAsOrigin: this.deps(c).viewAsOrigin,
+      grants: grants.map((g) => ({
+        principal: g.principal,
+        appRole: g.appRole,
+        featureRole: g.featureRole,
+        grantedBy: g.grantedBy,
+        grantedAt: g.grantedAt,
+      })),
+    });
+  }
+
+  private async handleGrantPut(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, grantPutSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the grant',
+      appendReason: false,
+    });
+
+    const principal = normalizePrincipal(req.principal);
+    if (principal === '') {
+      throw badRequest('name a person by email, or a domain like domain:firm.com');
+    }
+    if (!(APP_ROLE_ORDER as readonly string[]).includes(req.appRole)) {
+      throw badRequest(`app role must be one of ${APP_ROLE_ORDER.join(', ')}`);
+    }
+    const featureRole = req.featureRole.trim();
+    if (featureRole !== '') {
+      const policy = await this.deps(c).platform.store.appPolicy(app.id).catch(() => null);
+      const roles = policy?.roles ?? [];
+      if (!roles.includes(featureRole)) {
+        throw badRequest(`"${featureRole}" is not a feature role this app declares in 280.json`);
+      }
+    }
+    // Never let the dialog remove the app's last owner: a builder who demotes
+    // themselves by mistake would lock everyone out of managing it.
+    await this.guardLastOwner(c, app.id, principal, req.appRole);
+
+    try {
+      await this.deps(c).platform.store.putGrant({
+        appId: app.id,
+        principal,
+        appRole: req.appRole as AppRole,
+        featureRole,
+        dataScope: null,
+        grantedBy: user.email,
+        grantedAt: nowSecs(),
+      });
+    } catch {
+      throw unavailable('could not save the grant');
+    }
+    return c.body(null, 204);
+  }
+
+  private async handleGrantRevoke(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, grantRevokeSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the request',
+      appendReason: false,
+    });
+    const principal = normalizePrincipal(req.principal);
+    await this.guardLastOwner(c, app.id, principal, null);
+    try {
+      await this.deps(c).platform.store.revokeGrant(app.id, principal, user.email);
+    } catch {
+      throw unavailable('could not update the access list');
+    }
+    return c.body(null, 204);
+  }
+
+  // guardLastOwner refuses a change that would leave an app with no owner: revoking
+  // an owner (newRole null) or demoting the sole owner below owner.
+  private async guardLastOwner(
+    c: Context<HonoEnv>,
+    appId: string,
+    principal: string,
+    newRole: string | null,
+  ): Promise<void> {
+    const grants = await this.deps(c).platform.store.grantsByApp(appId).catch(() => []);
+    const owners = grants.filter((g) => g.appRole === 'owner');
+    const targetIsOwner = owners.some((o) => o.principal === principal);
+    if (targetIsOwner && owners.length <= 1 && newRole !== 'owner') {
+      throw badRequest('this is the app\'s only owner; make someone else an owner first');
+    }
+  }
+
+  private async handleShareDialog(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const policy = await this.deps(c).platform.store.appPolicy(app.id).catch(() => null);
+    const html = sharePage({
+      app: { id: app.id, slug: app.slug, url: app.url, script: app.script },
+      access: policy?.access ?? 'invited',
+      roles: policy?.roles ?? [],
+      viewAsOrigin: this.deps(c).viewAsOrigin,
+    });
+    return c.html(html);
+  }
+
   // handleAuthStart sends the browser to the provider's consent screen. A failure
   // bounces back to the frontend login page rather than showing a bare error.
   private async handleAuthStart(c: Context<HonoEnv>): Promise<Response> {
@@ -683,6 +833,48 @@ function isSecureRequest(c: Context<HonoEnv>): boolean {
 
 function noAccount(): DeployErr {
   return new DeployErr({ code: DeployCode.Unauthorized, message: 'not logged in to 280', fix: 'run 280 login' });
+}
+
+function badRequest(message: string): DeployErr {
+  return new DeployErr({ code: DeployCode.PreflightRejected, message });
+}
+
+// normalizePrincipal canonicalizes a grant principal so it matches what the gateway
+// compares against: a "domain:firm.com" org grant or a lowercased email (addresses
+// are case-insensitive; OIDC hands the gateway a lowercased address).
+function normalizePrincipal(raw: string): string {
+  const p = raw.trim();
+  if (p === '') return '';
+  if (p.toLowerCase().startsWith('domain:')) {
+    const host = p.slice('domain:'.length).trim().toLowerCase();
+    return host === '' ? '' : 'domain:' + host;
+  }
+  return p.toLowerCase();
+}
+
+// The share-dialog write bodies, parsed with tiny hand-written validators (no zod
+// dependency in the backend). appRole is required; featureRole is optional and the
+// handler validates it against the app's declared roles.
+const grantPutSchema = {
+  parse(u: unknown): { principal: string; appRole: string; featureRole: string } {
+    const o = asObject(u);
+    return { principal: str(o.principal), appRole: str(o.appRole), featureRole: str(o.featureRole) };
+  },
+};
+
+const grantRevokeSchema = {
+  parse(u: unknown): { principal: string } {
+    return { principal: str(asObject(u).principal) };
+  },
+};
+
+function asObject(u: unknown): Record<string, unknown> {
+  if (u === null || typeof u !== 'object' || Array.isArray(u)) throw new Error('expected a JSON object');
+  return u as Record<string, unknown>;
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
 }
 
 function unavailable(msg: string): DeployErr {

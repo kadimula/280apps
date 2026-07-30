@@ -5,8 +5,16 @@
 // nothing relies on being the sole writer: every racy transition is a conditional
 // UPDATE whose row count names the winner, and every uniqueness rule is an index.
 
-import type { Manifest, DeployError } from '@280/contracts';
-import { manifestSchema, errorSchema, State } from '@280/contracts';
+import type { AppPolicy, Manifest, DeployError, RouteGate } from '@280/contracts';
+import {
+  APP_ACCESS,
+  appPolicyFromManifest,
+  isAppAccess,
+  manifestSchema,
+  errorSchema,
+  tenantFromEmail,
+  State,
+} from '@280/contracts';
 import pg from 'pg';
 import type { QueryResult } from 'pg';
 import {
@@ -218,6 +226,42 @@ const appCols =
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
 
+const policyCols = 'app_id, access, roles, routes, secrets, owner_tenant, updated_at';
+
+// Seconds since the epoch, for columns the store writes rather than defaults (it
+// holds no clock of its own). Mirrors migrations' epochDefault.
+const epochNow = `EXTRACT(EPOCH FROM now())::bigint`;
+
+// A JSON column that decodes to [] on anything unexpected: a policy row can never
+// throw a request that only wants to read its access mode or route gates.
+function decodeStringArray(raw: string): string[] {
+  if (raw === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function decodeRoutes(raw: string): RouteGate[] {
+  if (raw === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object')
+      .map((r) => ({
+        path: typeof r.path === 'string' ? r.path : '',
+        appRole: typeof r.appRole === 'string' ? r.appRole : '',
+        role: typeof r.role === 'string' ? r.role : '',
+      }))
+      .filter((r) => r.path !== '');
+  } catch {
+    return [];
+  }
+}
+
 function encodeFailure(e: DeployError | null): string {
   return e === null ? '' : JSON.stringify(e);
 }
@@ -333,6 +377,18 @@ function rowToGrant(r: Row): Grant {
     dataScope: decodeScope(r.data_scope),
     grantedBy: r.granted_by,
     grantedAt: toNum(r.granted_at),
+  };
+}
+
+function rowToAppPolicy(r: Row): AppPolicy {
+  return {
+    appId: r.app_id,
+    access: isAppAccess(r.access) ? r.access : APP_ACCESS.Invited,
+    roles: decodeStringArray(r.roles),
+    routes: decodeRoutes(r.routes),
+    secrets: decodeStringArray(r.secrets),
+    ownerTenant: r.owner_tenant,
+    updatedAt: toNum(r.updated_at),
   };
 }
 
@@ -666,9 +722,10 @@ class PgStore implements Store {
         return false; // already gone; deleting twice is not a failure
       }
       await tx.query(`DELETE FROM ${this.t('deploys')} WHERE app_id = $1`, [appId]);
-      // Drop the app's grants so a re-created app id (ids can recur) never
-      // inherits another life's access.
+      // Drop the app's grants and policy so a re-created app id (ids can recur) never
+      // inherits another life's access or route gates.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('app_policies')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row it would read the account
       // from no longer exists.
       await this.insertEvent(tx, {
@@ -745,8 +802,9 @@ class PgStore implements Store {
   // (the revert-and-push bug). With the row gone, the re-push opens fresh.
   async finishLive(appId: string, deployId: string): Promise<void> {
     await this.inTx(async (tx) => {
-      await tx.query(
-        `UPDATE ${this.t('deploys')} SET state = $1, failure = '' WHERE app_id = $2 AND id = $3`,
+      const deployRow = await tx.query(
+        `UPDATE ${this.t('deploys')} SET state = $1, failure = '' WHERE app_id = $2 AND id = $3
+         RETURNING manifest`,
         [State.Live, appId, deployId],
       );
       await tx.query(
@@ -755,7 +813,88 @@ class PgStore implements Store {
       );
       await tx.query(`UPDATE ${this.t('apps')} SET active_deploy = $1 WHERE id = $2`, [deployId, appId]);
       await this.insertAppEvent(tx, appId, deployId, EventKind.DeployLive, '');
+
+      // Register the live deploy's enforced policy in the same transaction that makes
+      // it live, so the gateway never gates against a stale or missing policy. A
+      // manifest that fails to parse leaves the app live with no policy, which the
+      // gateway reads as fail-closed (owner-only) rather than open.
+      if (deployRow.rows.length > 0) {
+        await this.registerPolicy(tx, appId, deployId, deployRow.rows[0].manifest as string);
+      }
     });
+  }
+
+  // registerPolicy persists the live manifest's enforced sections and seeds the
+  // owner's grant, both idempotent. The owner is resolved through account.subject =
+  // user.id (the OIDC sub); an open-signup account with no user has no email, so no
+  // owner grant is seeded and ownerTenant stays empty (anyone-at-tenant fails closed
+  // until the builder shares in the dialog).
+  private async registerPolicy(
+    tx: Queryable,
+    appId: string,
+    deployId: string,
+    rawManifest: string,
+  ): Promise<void> {
+    let policy: ReturnType<typeof appPolicyFromManifest>;
+    try {
+      policy = appPolicyFromManifest(manifestSchema.parse(JSON.parse(rawManifest)) as Manifest);
+    } catch {
+      return; // unparseable manifest → no policy row → gateway stays owner-only
+    }
+
+    const ownerRes = await tx.query(
+      `SELECT u.email AS email FROM ${this.t('apps')} ap
+       JOIN ${this.t('accounts')} a ON a.id = ap.account_id
+       JOIN ${this.t('users')} u ON u.id = a.subject
+       WHERE ap.id = $1`,
+      [appId],
+    );
+    const ownerEmail: string = ownerRes.rows.length ? (ownerRes.rows[0].email ?? '') : '';
+    const ownerTenant = ownerEmail !== '' ? tenantFromEmail(ownerEmail) : '';
+
+    await tx.query(
+      `INSERT INTO ${this.t('app_policies')} (${policyCols})
+       VALUES ($1,$2,$3,$4,$5,$6, ${epochNow})
+       ON CONFLICT (app_id) DO UPDATE SET
+         access       = EXCLUDED.access,
+         roles        = EXCLUDED.roles,
+         routes       = EXCLUDED.routes,
+         secrets      = EXCLUDED.secrets,
+         owner_tenant = CASE WHEN EXCLUDED.owner_tenant <> '' THEN EXCLUDED.owner_tenant
+                             ELSE ${this.t('app_policies')}.owner_tenant END,
+         updated_at   = ${epochNow}`,
+      [
+        appId,
+        policy.access,
+        JSON.stringify(policy.roles),
+        JSON.stringify(policy.routes),
+        JSON.stringify(policy.secrets),
+        ownerTenant,
+      ],
+    );
+
+    // Seed the owner's grant so the builder can open and fully use their own app on
+    // the gateway from the first deploy. DO NOTHING preserves a role the owner may
+    // have changed later; it never demotes them below owner here.
+    if (ownerEmail !== '') {
+      await tx.query(
+        `INSERT INTO ${this.t('grants')} (app_id, principal, app_role, feature_role, granted_by)
+         VALUES ($1,$2,'owner','','platform') ON CONFLICT (app_id, principal) DO NOTHING`,
+        [appId, ownerEmail],
+      );
+    }
+
+    await this.insertAppEvent(
+      tx,
+      appId,
+      deployId,
+      EventKind.PolicyRegistered,
+      eventDetail({
+        access: policy.access,
+        roles: String(policy.roles.length),
+        routes: String(policy.routes.length),
+      }),
+    );
   }
 
   // Marks a deploy failed, leaving the previously live deploy served.
@@ -776,17 +915,31 @@ class PgStore implements Store {
   // already listed changes their role in place. granted_at comes from the caller,
   // so an update also refreshes it to the moment of the change.
   async putGrant(g: Grant): Promise<void> {
-    await this.db.query(
-      `INSERT INTO ${this.t('grants')} (${grantCols})
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (app_id, principal) DO UPDATE SET
-         app_role     = EXCLUDED.app_role,
-         feature_role = EXCLUDED.feature_role,
-         data_scope   = EXCLUDED.data_scope,
-         granted_by   = EXCLUDED.granted_by,
-         granted_at   = EXCLUDED.granted_at`,
-      [g.appId, g.principal, g.appRole, g.featureRole, encodeScope(g.dataScope), g.grantedBy, g.grantedAt],
-    );
+    await this.inTx(async (tx) => {
+      await tx.query(
+        `INSERT INTO ${this.t('grants')} (${grantCols})
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (app_id, principal) DO UPDATE SET
+           app_role     = EXCLUDED.app_role,
+           feature_role = EXCLUDED.feature_role,
+           data_scope   = EXCLUDED.data_scope,
+           granted_by   = EXCLUDED.granted_by,
+           granted_at   = EXCLUDED.granted_at`,
+        [g.appId, g.principal, g.appRole, g.featureRole, encodeScope(g.dataScope), g.grantedBy, g.grantedAt],
+      );
+      await this.insertAppEvent(
+        tx,
+        g.appId,
+        '',
+        EventKind.GrantAdded,
+        eventDetail({
+          principal: g.principal,
+          appRole: g.appRole,
+          featureRole: g.featureRole,
+          by: g.grantedBy,
+        }),
+      );
+    });
   }
 
   async grant(appId: string, principal: string): Promise<Grant | null> {
@@ -808,12 +961,49 @@ class PgStore implements Store {
   }
 
   // Reports whether a row was there to remove, so revoking twice is not a failure.
-  async revokeGrant(appId: string, principal: string): Promise<boolean> {
+  // A real removal writes a GrantRevoked audit event naming who revoked it.
+  async revokeGrant(appId: string, principal: string, revokedBy = ''): Promise<boolean> {
+    return this.inTx(async (tx) => {
+      const res = await tx.query(
+        `DELETE FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
+        [appId, principal],
+      );
+      if (res.rowCount !== 1) return false;
+      await this.insertAppEvent(
+        tx,
+        appId,
+        '',
+        EventKind.GrantRevoked,
+        eventDetail({ principal, by: revokedBy }),
+      );
+      return true;
+    });
+  }
+
+  async appPolicy(appId: string): Promise<AppPolicy | null> {
     const res = await this.db.query(
-      `DELETE FROM ${this.t('grants')} WHERE app_id = $1 AND principal = $2`,
-      [appId, principal],
+      `SELECT ${policyCols} FROM ${this.t('app_policies')} WHERE app_id = $1`,
+      [appId],
     );
-    return res.rowCount === 1;
+    return res.rows.length ? rowToAppPolicy(res.rows[0]) : null;
+  }
+
+  // A single append to the events table, denormalizing the account from the app row.
+  // Callers treat this as best-effort (they swallow its error), so a slow or failed
+  // audit write never turns a served request into an error.
+  async recordAppAccess(e: {
+    appId: string;
+    principal: string;
+    allowed: boolean;
+    detail?: string;
+  }): Promise<void> {
+    const kind = e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied;
+    const detail = e.detail ?? eventDetail({ principal: e.principal });
+    await this.db.query(
+      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail)
+       SELECT account_id, id, '', $1, $2 FROM ${this.t('apps')} WHERE id = $3`,
+      [kind, detail, e.appId],
+    );
   }
 
   private async insertEvent(

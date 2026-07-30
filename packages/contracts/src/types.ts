@@ -102,6 +102,54 @@ export type EgressPolicy = z.infer<typeof egressPolicySchema>;
 
 const ZERO_EGRESS: EgressPolicy = { allowedHosts: [], credentials: [] };
 
+// The three ways an app decides who may open it at all, before any route gate:
+// invited (only principals with a grant), anyone-at-tenant (any signed-in viewer
+// whose email domain matches the owner's), link (any signed-in viewer). Absent or
+// unknown means invited, the fail-closed default.
+export const APP_ACCESS = {
+  Invited: 'invited',
+  AnyoneAtTenant: 'anyone-at-tenant',
+  Link: 'link',
+} as const;
+export type AppAccess = (typeof APP_ACCESS)[keyof typeof APP_ACCESS];
+
+export function isAppAccess(v: string): v is AppAccess {
+  return v === APP_ACCESS.Invited || v === APP_ACCESS.AnyoneAtTenant || v === APP_ACCESS.Link;
+}
+
+// The four app roles (tier 1), highest first. Ranked so a gate "at least admin" is
+// a single comparison and the owner-only default is the top of the ladder.
+export const APP_ROLE_ORDER = ['owner', 'admin', 'editor', 'viewer'] as const;
+
+export function appRoleRank(role: string): number {
+  const i = (APP_ROLE_ORDER as readonly string[]).indexOf(role);
+  return i < 0 ? -1 : APP_ROLE_ORDER.length - i; // owner=4 … viewer=1, unknown=0
+}
+
+// appRoleAtLeast reports whether `have` meets or exceeds `need` on the app-role
+// ladder. An unknown/empty `have` never satisfies a gate (fail closed).
+export function appRoleAtLeast(have: string, need: string): boolean {
+  const h = appRoleRank(have);
+  return h > 0 && h >= appRoleRank(need);
+}
+
+// RouteGate is the normalized (CLI-produced) form of one 280.json route rule: a
+// path glob and exactly one requirement — an app_role floor OR a feature role. The
+// human 280.json nests these under `require`; the CLI flattens to this wire shape.
+export const routeGateSchema = z
+  .object({
+    path: str(),
+    appRole: str(), // '' or an app role the viewer must meet or exceed
+    role: str(), // '' or a feature role the viewer must hold
+  })
+  .passthrough();
+export type RouteGate = z.infer<typeof routeGateSchema>;
+
+// The gate an undeclared route resolves to: app Owner only. This is the
+// no-unguarded-route rule (design §07) — manifest drift makes a route unreachable,
+// never open.
+export const OWNER_ONLY_GATE: RouteGate = { path: '', appRole: 'owner', role: '' };
+
 // normalizeEgressPolicy is the one place the allowlist is derived, so the CLI that
 // builds the policy and the runtime that applies it never disagree: a credential's
 // host is implicitly allowed, hosts are lowercased/trimmed, and duplicates drop.
@@ -120,16 +168,109 @@ export function normalizeEgressPolicy(p: EgressPolicy): EgressPolicy {
 
 // Manifest is a container build-context descriptor: the build recipe plus every
 // file in the context, each content-addressed so the deploy loop transfers only
-// what the server lacks. Replaces the retired Workers-for-Platforms bundle shape.
+// what the server lacks. It also carries the app's trust boundary from 280.json —
+// egress (5.6), access mode, feature roles, route gates, and declared secret names —
+// so a change to any of them re-derives the deploy id (see canonicalDigest) and the
+// platform re-registers the policy on the next push. Replaces the retired
+// Workers-for-Platforms bundle shape.
 export const manifestSchema = z
   .object({
     kind: str(),
     build: buildSpecSchema.nullish().transform((v) => v ?? ZERO_BUILD),
     files: arr(blobInfoSchema),
     egress: egressPolicySchema.nullish().transform((v) => v ?? ZERO_EGRESS),
+    access: str(APP_ACCESS.Invited),
+    roles: arr(z.string()),
+    routes: arr(routeGateSchema),
+    secrets: arr(z.string()),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
+
+// AppPolicy is the enforced slice of a manifest the gateway reads per request and
+// the share dialog reads to offer roles: the access mode, the feature-role
+// vocabulary, the route gates, the declared secret names, and the owner's tenant
+// (for anyone-at-tenant). Persisted when a deploy goes live.
+export interface AppPolicy {
+  appId: string;
+  access: AppAccess;
+  roles: string[];
+  routes: RouteGate[];
+  secrets: string[];
+  ownerTenant: string; // '' until the owner is known; anyone-at-tenant fails closed while empty
+  updatedAt: number;
+}
+
+// appPolicyFromManifest lifts the enforced sections out of a manifest into the
+// shape the store persists. ownerTenant/updatedAt are filled by the caller.
+export function appPolicyFromManifest(m: Manifest): Omit<AppPolicy, 'appId' | 'ownerTenant' | 'updatedAt'> {
+  return {
+    access: isAppAccess(m.access ?? '') ? (m.access as AppAccess) : APP_ACCESS.Invited,
+    roles: [...(m.roles ?? [])],
+    routes: [...(m.routes ?? [])],
+    secrets: [...(m.secrets ?? [])],
+  };
+}
+
+// pathMatches tests a request path against a route glob. `*` matches any run of
+// characters (so "/admin/*" covers "/admin/users"); everything else is literal.
+// A bare "/admin/*" also matches "/admin" itself, the intuitive reading of "the
+// admin area". Anchored at both ends.
+export function pathMatches(glob: string, path: string): boolean {
+  if (glob === path) return true;
+  if (glob.endsWith('/*') && path === glob.slice(0, -2)) return true;
+  const re = new RegExp('^' + glob.split('*').map(escapeRegex).join('.*') + '$');
+  return re.test(path);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// resolveRouteGate picks the gate a request path must clear: the most specific
+// declared route that matches (longest literal glob wins), or the owner-only
+// default when none matches. `declared` distinguishes an explicit gate from the
+// fail-closed default so the deploy diff can flag undeclared routes.
+export function resolveRouteGate(routes: RouteGate[], path: string): { gate: RouteGate; declared: boolean } {
+  let best: RouteGate | null = null;
+  let bestScore = -1;
+  for (const r of routes) {
+    if (r.path === '' || !pathMatches(r.path, path)) continue;
+    const score = r.path.replace(/\*/g, '').length;
+    if (score > bestScore) {
+      best = r;
+      bestScore = score;
+    }
+  }
+  if (best === null) return { gate: OWNER_ONLY_GATE, declared: false };
+  return { gate: best, declared: true };
+}
+
+// The access the gateway resolved for one viewer on one app: their effective app
+// role and feature role. Empty appRole means no grant at all.
+export interface EffectiveAccess {
+  appRole: string;
+  featureRole: string;
+}
+
+// routeGateSatisfied is the single gate decision, shared by the gateway (enforce)
+// and the CLI diff (explain). An app Owner reaches their whole app; otherwise the
+// gate's one requirement — an app-role floor or an exact feature role — must hold.
+export function routeGateSatisfied(gate: RouteGate, eff: EffectiveAccess): boolean {
+  if (eff.appRole === 'owner') return true;
+  if (gate.appRole !== '') return appRoleAtLeast(eff.appRole, gate.appRole);
+  if (gate.role !== '') return eff.featureRole === gate.role;
+  return false;
+}
+
+// describeGate renders a gate for the deploy diff and share UI: "app admin+",
+// "role: manager", or "Owner-only (undeclared)" for the fail-closed default.
+export function describeGate(gate: RouteGate, declared: boolean): string {
+  if (!declared) return 'Owner-only (undeclared)';
+  if (gate.appRole !== '') return `app ${gate.appRole}+`;
+  if (gate.role !== '') return `role: ${gate.role}`;
+  return 'Owner-only';
+}
 
 // Callers treat unknown states as "in progress".
 export const State = {
@@ -301,6 +442,20 @@ export function canonicalDigest(m: Manifest): Digest {
   for (const c of [...eg.credentials].sort((a, b) => byteCompare(a.host, b.host))) {
     h.update(`egress-cred:${c.host}:${c.header}:${c.scheme}:${c.secret}\n`);
   }
+  // Access mode, feature roles, route gates, and secret names are the app's trust
+  // boundary, so a change to any must produce a new deploy id (and re-register the
+  // policy). Each is emitted only when it departs from the empty/default value, so a
+  // manifest that declares no policy hashes exactly as it did before these fields
+  // existed (the same backward-compatible discipline egress follows). Roles/secrets
+  // are sorted (order-independent); routes are sorted by path since matching is by
+  // specificity, not declaration order.
+  const access = m.access ?? '';
+  if (access !== '' && access !== APP_ACCESS.Invited) h.update(`access:${access}\n`);
+  for (const role of [...(m.roles ?? [])].sort(byteCompare)) h.update(`role:${role}\n`);
+  for (const g of [...(m.routes ?? [])].sort((a, b) => byteCompare(a.path, b.path))) {
+    h.update(`route:${g.path}:${g.appRole}:${g.role}\n`);
+  }
+  for (const s of [...(m.secrets ?? [])].sort(byteCompare)) h.update(`secret:${s}\n`);
   return h.digest('hex');
 }
 

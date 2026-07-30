@@ -69,34 +69,48 @@ export interface Config {
   build: { host: string; token: string };
 }
 
-// readConfig resolves Env into Config. Defaults mirror the deleted main.ts env()
-// fallbacks byte for byte, so an unset var behaves exactly as it did on Node.
-export function readConfig(env: Env): Config {
+// ConfigVars is the string-keyed subset of tunables and secrets both hosts share:
+// the Worker reads them off Env, the Node entrypoint off process.env (which
+// satisfies this structurally). Only the bindings (BLOBS/HYPERDRIVE/APP_ACTIVATOR)
+// and the source of dbConnectionString differ between the two.
+export type ConfigVars = Omit<Env, 'BLOBS' | 'HYPERDRIVE' | 'APP_ACTIVATOR'>;
+
+// resolveConfig turns raw vars into typed Config. Defaults mirror the deleted
+// main.ts env() fallbacks byte for byte, so an unset var behaves exactly as it did
+// on Node. dbConnectionString is injected because its source differs: the Worker
+// dials the pooled Hyperdrive endpoint, Node dials DATABASE_URL directly.
+export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Config {
   const str = (v: string | undefined, fallback: string): string =>
     v !== undefined && v !== '' ? v : fallback;
   const num = (v: string | undefined, fallback: number): number => Number(str(v, String(fallback))) || fallback;
 
   return {
-    runtime: str(env.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
-    logFormat: str(env.TWO80_LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
-    dbSchema: str(env.TWO80_DB_SCHEMA, 'platform'),
-    dbConnectionString: env.HYPERDRIVE.connectionString,
-    appDomain: str(env.TWO80_APP_DOMAIN, '280apps.run'),
-    hostSuffix: env.TWO80_APP_HOST_SUFFIX ?? '',
-    apiOrigin: str(env.TWO80_API_ORIGIN, 'https://api.280apps.com'),
-    frontendOrigin: str(env.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
-    verificationUri: str(env.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
-    cookieDomain: env.TWO80_COOKIE_DOMAIN ?? '',
-    openSignup: env.TWO80_OPEN_SIGNUP === '1',
-    minCliVersion: env.TWO80_MIN_CLI_VERSION ?? '',
-    sessionTtlDays: num(env.TWO80_SESSION_TTL_DAYS, 30),
+    runtime: str(vars.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
+    logFormat: str(vars.TWO80_LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
+    dbSchema: str(vars.TWO80_DB_SCHEMA, 'platform'),
+    dbConnectionString,
+    appDomain: str(vars.TWO80_APP_DOMAIN, '280apps.run'),
+    hostSuffix: vars.TWO80_APP_HOST_SUFFIX ?? '',
+    apiOrigin: str(vars.TWO80_API_ORIGIN, 'https://api.280apps.com'),
+    frontendOrigin: str(vars.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
+    verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
+    cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
+    openSignup: vars.TWO80_OPEN_SIGNUP === '1',
+    minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',
+    sessionTtlDays: num(vars.TWO80_SESSION_TTL_DAYS, 30),
     loginRate: {
-      windowSecs: num(env.TWO80_LOGIN_RATE_WINDOW_SECS, 600),
-      max: num(env.TWO80_LOGIN_RATE_MAX, 30),
+      windowSecs: num(vars.TWO80_LOGIN_RATE_WINDOW_SECS, 600),
+      max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
     },
-    google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
-    build: { host: env.TWO80_BUILD_HOST ?? '', token: env.TWO80_BUILD_TOKEN ?? '' },
+    google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
+    build: { host: vars.TWO80_BUILD_HOST ?? '', token: vars.TWO80_BUILD_TOKEN ?? '' },
   };
+}
+
+// readConfig resolves the Worker's Env: the pg client dials the pooled Hyperdrive
+// endpoint, not the raw Neon origin.
+export function readConfig(env: Env): Config {
+  return resolveConfig(env, env.HYPERDRIVE.connectionString);
 }
 
 // RequestDeps is the per-request I/O container the deps middleware builds from Env

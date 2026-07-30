@@ -5,8 +5,10 @@
 #
 #   docker build -f packages/backend/Dockerfile -t 280-platform .
 #
-# This is the cutover target (plan Gate E): the same Railway service swaps the
-# Go image for this one, inheriting the blob volume, the env, and DATABASE_URL.
+# This is the Railway cutover target: it runs the Node control plane
+# (src/main.ts) directly. Blobs live on R2 over its S3 API (TWO80_S3_*), Postgres
+# is dialed directly via DATABASE_URL, and activation runs in-process. See
+# .env.example for the full env set.
 
 FROM node:22-slim AS build
 WORKDIR /repo
@@ -28,9 +30,8 @@ RUN pnpm --filter @280/contracts build && pnpm --filter @280/backend build
 # flattened into node_modules) plus the platform package's dist.
 RUN pnpm --filter @280/backend deploy --prod --legacy /app
 
-# Distroless nodejs22. Root, not :nonroot: the blob volume is host-mounted and
-# blobstore.open must mkdir under it; a uid mismatch fails at first push rather
-# than at boot, which mirrors the Go image's reasoning.
+# Distroless nodejs22. Production blobs are on R2 (no host-mounted volume); the
+# filesystem blob store is only the local-dev fallback.
 FROM gcr.io/distroless/nodejs22-debian12
 WORKDIR /app
 COPY --from=build /app /app

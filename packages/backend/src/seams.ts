@@ -181,15 +181,8 @@ export interface Store {
   finishLive(appId: string, deployId: string): Promise<void>;
   finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void>;
 
-  // grants: the two-tier sharing model, flat — one row per (app, principal)
-  // (design §5.4). This is the data surface only; route gating and the share
-  // dialog that drive these rows come later. putGrant upserts on
-  // (appId, principal), so re-sharing to someone already on the list changes
-  // their role in place rather than erroring — exactly what the dialog does when
-  // an owner picks a new role. grant reads one principal's grant; grantsByApp
-  // lists an app's grants; revokeGrant removes one and reports whether a row was
-  // there, so revoking twice is not a failure. An app's grants are deleted with
-  // the app (deleteApp), so a re-created app id never inherits stale access.
+  // The two-tier sharing model, flat (one row per (app, principal)): the data
+  // surface only, route gating and the share dialog come later. putGrant upserts.
   putGrant(g: Grant): Promise<void>;
   grant(appId: string, principal: string): Promise<Grant | null>;
   grantsByApp(appId: string): Promise<Grant[]>;

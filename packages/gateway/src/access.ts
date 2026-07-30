@@ -1,4 +1,4 @@
-// The app-access seam (design §5.4 tier 1: "may this viewer open this app?").
+// The app-access seam: "may this viewer open this app?"
 // SEAM (280-p2-gateway): swap AllowAllAccess for a grants-backed check here;
 // nothing else on the request path moves.
 

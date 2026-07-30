@@ -309,8 +309,6 @@ export class MemoryStore implements Store {
     d.failure = failure;
   }
 
-  // ---- grants ----
-
   async putGrant(g: Grant): Promise<void> {
     // Upsert on (appId, principal): re-granting replaces the role in place.
     this.grants.set(grantKey(g.appId, g.principal), cloneGrant(g));

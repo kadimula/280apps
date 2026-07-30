@@ -1,9 +1,6 @@
-// Grants tests: the two-tier sharing model (design §5.4). One suite, run against
-// both stores that implement the seam — the in-memory store (always, so the
-// coverage holds without a database) and the real Postgres store (when
-// TEST_DATABASE_URL is set, which is the authority on the DDL, the
-// (app_id, principal) upsert, ORDER BY, the data_scope JSON round-trip, and the
-// deleteApp cascade). The behavior asserted here must hold whatever backs it.
+// One grants suite run against both stores behind the seam: the in-memory store
+// always (so coverage holds without a database) and the real Postgres store when
+// TEST_DATABASE_URL is set. The asserted behavior must hold whatever backs it.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppRole, type App, type Grant, type Store } from '../src/seams.js';

@@ -222,11 +222,8 @@ function encodeFailure(e: DeployError | null): string {
   return e === null ? '' : JSON.stringify(e);
 }
 
-// data_scope is advisory, builder-defined JSON, so it is stored as text and read
-// back with only the shape the seam promises checked: a JSON object, or null
-// when empty. Anything that is not an object (a bare string, an array, malformed
-// text) decodes to null rather than throwing — advisory means a bad scope must
-// not break a read of the row's real permission fields.
+// data_scope is advisory JSON stored as text: anything that is not an object
+// decodes to null rather than throwing, so a bad scope cannot break a row read.
 function encodeScope(s: Record<string, unknown> | null): string {
   return s === null ? '' : JSON.stringify(s);
 }

@@ -79,3 +79,76 @@ describe('buildNextContainer', () => {
     expect(() => buildNextContainer(root)).toThrow(PreflightError);
   });
 });
+
+describe('buildpack CA-trust (intercepted-HTTPS validates inside the container)', () => {
+  function dockerfileOf(root: string): string {
+    const b = buildNextContainer(root);
+    const df = b.manifest.files.find((f) => f.path === 'Dockerfile')!;
+    return new TextDecoder().decode(b.content.get(df.digest)!);
+  }
+  function entrypointOf(root: string): string {
+    const b = buildNextContainer(root);
+    const e = b.manifest.files.find((f) => f.path === 'entrypoint.280.sh')!;
+    return new TextDecoder().decode(b.content.get(e.digest)!);
+  }
+
+  it('the generated Dockerfile installs ca-certificates and runs through the 280 entrypoint', () => {
+    const df = dockerfileOf(nextProject());
+    expect(df).toContain('ca-certificates');
+    expect(df).toContain('ENTRYPOINT ["/280-entrypoint.sh"]');
+  });
+
+  it('the entrypoint installs the ephemeral Cloudflare CA and points NODE_EXTRA_CA_CERTS at it', () => {
+    const e = entrypointOf(nextProject());
+    expect(e).toContain('/etc/cloudflare/certs/cloudflare-containers-ca.crt');
+    expect(e).toContain('update-ca-certificates');
+    expect(e).toContain('NODE_EXTRA_CA_CERTS');
+    expect(e).toContain('exec "$@"'); // then hands off to the app unchanged
+  });
+});
+
+describe('280.json egress allowlist', () => {
+  it('defaults to an empty (default-deny) policy when there is no 280.json', () => {
+    const b = buildNextContainer(nextProject());
+    expect(b.manifest.egress).toEqual({ allowedHosts: [], credentials: [] });
+  });
+
+  it('lifts allow + credentials into the manifest and folds credential hosts into the allowlist', () => {
+    const root = nextProject({
+      '280.json': JSON.stringify({
+        name: 'demo',
+        egress: {
+          allow: ['data.example.com'],
+          credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }],
+        },
+      }),
+    });
+    const b = buildNextContainer(root);
+    expect(b.manifest.egress.allowedHosts).toEqual(['api.stripe.com', 'data.example.com']);
+    expect(b.manifest.egress.credentials[0]).toMatchObject({
+      host: 'api.stripe.com',
+      secret: 'STRIPE_KEY',
+      header: 'authorization',
+      scheme: 'Bearer',
+    });
+    // The allowlist is surfaced to the author in the push notes.
+    expect(b.notes.some((n) => n.includes('egress allowlist') && n.includes('api.stripe.com'))).toBe(true);
+  });
+
+  it('a 280.json without an egress block stays default-deny', () => {
+    const root = nextProject({ '280.json': JSON.stringify({ name: 'demo', features: [] }) });
+    expect(buildNextContainer(root).manifest.egress.allowedHosts).toEqual([]);
+  });
+
+  it('rejects a malformed egress block at preflight', () => {
+    const root = nextProject({
+      '280.json': JSON.stringify({ egress: { allow: [{ not: 'a string' }] } }),
+    });
+    expect(() => buildNextContainer(root)).toThrow(PreflightError);
+  });
+
+  it('rejects invalid 280.json before deploy', () => {
+    const root = nextProject({ '280.json': '{ not json' });
+    expect(() => buildNextContainer(root)).toThrow(PreflightError);
+  });
+});

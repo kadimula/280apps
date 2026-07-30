@@ -6,18 +6,18 @@
 //                           class defaults this to TRUE, so leaving it unset would
 //                           silently give every app open outbound internet. 280
 //                           forces it off; unlisted hosts fail closed with 520.
-//   interceptHttps = true   Outbound HTTPS is intercepted so the platform can (in
-//                           phase 3) attach credentials the container never sees.
-//                           This needs the container to trust Cloudflare's runtime
-//                           CA, which the buildpack's entrypoint installs.
+//   interceptHttps = true   Outbound HTTPS is intercepted so the platform attaches
+//                           credentials the container never sees. This needs the
+//                           container to trust Cloudflare's runtime CA, which the
+//                           buildpack's entrypoint installs.
 //   defaultPort = 8080      The port the buildpack makes every app listen on and
 //                           the gateway routes to; the two must agree.
 //
-// Per-app egress policy (allow/deny lists, credentialed outbound handlers) is
-// phase 3; registerEgress below is the ONLY supported way to attach it, because a
-// `static outboundByHost = {...}` class field silently no-ops (JS define-semantics
-// shadow the base accessor — the footgun the spike documented). Nothing here opens
-// egress; a hello-world app needs none.
+// The egress DATA PATH — the credential-injecting outbound handler, the vault
+// read, the call-log, the fail-closed allowlist wiring — is the tested @280/egress
+// package (packages/egress), which the production gateway imports. This proof front
+// mirrors that same wiring inline so it runs standalone under `wrangler dev` with
+// only @cloudflare/containers; keep the two in step.
 
 import { Container } from '@cloudflare/containers';
 
@@ -32,11 +32,71 @@ export class App280Container extends Container {
   interceptHttps = true; // intercept HTTPS; the buildpack installs the runtime CA
 }
 
-// registerEgress attaches per-host outbound handlers via the base-class accessor
-// (assignment, not a class field), so the registration actually runs instead of
-// silently shadowing it. This is the encapsulation that keeps app authors from
-// tripping the class-field footgun. Phase 3 calls this with the app's allowlist
-// and credentialed handlers; phase 1 does not call it at all.
-export function registerEgress(handlersByHost) {
-  App280Container.outboundByHost = handlersByHost;
+// The single named handler every allowlisted host is routed through. Registering a
+// NAMED handler (not a per-host function map) is what lets the front bind hosts at
+// runtime via setOutboundByHost(host, EGRESS_HANDLER, params) — only strings and
+// JSON cross the Durable Object boundary, so the secret's NAME travels while its
+// VALUE stays Worker-side. Mirrors @280/egress EGRESS_HANDLER_NAME.
+export const EGRESS_HANDLER = 'egress';
+
+// The outbound handler runs in the Workers runtime, outside the container sandbox.
+// `env` is the Worker env (the vault); it reads the secret by name and attaches it
+// in-flight, so the container's image/env/code never hold the credential. Every
+// call is logged (destination + whether a credential was attached, never its value).
+function egressHandler(req, env, ctx) {
+  const p = ctx.params || {};
+  const url = new URL(req.url);
+  const host = p.host || url.hostname;
+  const event = { appId: p.appId || '', host, method: req.method, path: url.pathname, at: Date.now() };
+
+  if (p.secret) {
+    const value = env && typeof env[p.secret] === 'string' ? env[p.secret] : undefined;
+    if (!value) {
+      // Fail closed: a credentialed host with no provisioned secret is not forwarded.
+      console.log('[280-egress] ' + JSON.stringify({ ...event, status: 0, credentialAttached: false, secret: p.secret, outcome: 'denied', reason: 'missing-secret' }));
+      return new Response('Origin is disallowed', { status: 520 });
+    }
+    const headers = new Headers(req.headers);
+    headers.set(p.header || 'authorization', p.scheme ? `${p.scheme} ${value}` : value);
+    return fetch(new Request(req, { headers })).then((res) => {
+      console.log('[280-egress] ' + JSON.stringify({ ...event, status: res.status, credentialAttached: true, secret: p.secret, outcome: 'forwarded' }));
+      return res;
+    });
+  }
+  return fetch(req).then((res) => {
+    console.log('[280-egress] ' + JSON.stringify({ ...event, status: res.status, credentialAttached: false, secret: '', outcome: 'forwarded' }));
+    return res;
+  });
+}
+
+// registerEgress installs the handler on the class via the `outboundHandlers`
+// accessor (assignment, NOT a class field): a `static outboundHandlers = {...}`
+// class field shadows the base setter and silently no-ops (the footgun the spike
+// documented, OQ5). Call once at the front worker's module load.
+export function registerEgress() {
+  App280Container.outboundHandlers = { [EGRESS_HANDLER]: egressHandler };
+}
+
+// applyEgressPolicy pushes one app's 280.json-derived policy onto a running
+// instance: setAllowedHosts is the fail-closed security boundary (anything not
+// listed → 520 at the container gate), and every allowed host is routed through the
+// egress handler so each call is logged and its credential (if any) attached.
+export async function applyEgressPolicy(stub, policy, appId) {
+  const hosts = (policy?.allowedHosts || []).map((h) => String(h).trim().toLowerCase()).filter(Boolean);
+  await stub.setAllowedHosts(hosts);
+  const byHost = {};
+  for (const host of hosts) {
+    const cred = (policy.credentials || []).find((c) => c.host === host);
+    byHost[host] = {
+      method: EGRESS_HANDLER,
+      params: {
+        appId: appId || '',
+        host,
+        secret: cred?.secret || '',
+        header: cred?.header || 'authorization',
+        scheme: cred?.scheme ?? 'Bearer',
+      },
+    };
+  }
+  await stub.setOutboundByHosts(byHost);
 }

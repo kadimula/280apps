@@ -74,6 +74,16 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
 
+  packages/egress:
+    dependencies:
+      '@280/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260729.1
+        version: 5.20260729.1
+
   packages/gateway:
     dependencies:
       '@280/backend':

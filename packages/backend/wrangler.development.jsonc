@@ -22,7 +22,7 @@
 	// Hyperdrive config for development, ALSO created with query caching DISABLED
 	// (the same read-your-writes requirement holds in every environment). The id
 	// is printed by scripts/bootstrap-resources.sh.
-	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_DEVELOPMENT_HYPERDRIVE_ID" }],
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "ee5bd4e10e12434ca2e1162fbbf97c34" }],
 
 	"durable_objects": {
 		"bindings": [{ "name": "APP_ACTIVATOR", "class_name": "AppActivator" }]

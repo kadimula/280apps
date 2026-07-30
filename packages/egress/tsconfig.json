@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // The egress handler runs on the Workers runtime alongside the container it
+    // fronts: Request/Response/Headers, the global fetch, and the container stub
+    // surface come from @cloudflare/workers-types next to node (same pattern as
+    // packages/gateway). The tests exercise it under node with in-memory doubles.
+    "types": ["node", "@cloudflare/workers-types"]
+  },
+  "include": ["src"]
+}

@@ -10,6 +10,26 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./authsvc": {
+      "types": "./dist/authsvc.d.ts",
+      "import": "./dist/authsvc.js"
+    },
+    "./auth/oidc": {
+      "types": "./dist/auth/oidc.d.ts",
+      "import": "./dist/auth/oidc.js"
+    },
+    "./store": {
+      "types": "./dist/store/store.d.ts",
+      "import": "./dist/store/store.js"
+    },
+    "./seams": {
+      "types": "./dist/seams.d.ts",
+      "import": "./dist/seams.js"
+    },
+    "./logger": {
+      "types": "./dist/logger.d.ts",
+      "import": "./dist/logger.js"
     }
   },
   "main": "./dist/index.js",

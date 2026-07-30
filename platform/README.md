@@ -5,7 +5,9 @@ directory holds only the edge dispatcher.
 
 - `dispatcher/` : the Cloudflare Worker in front of every app. Routes hostname to
   the app's script (Workers for Platforms). `wrangler.jsonc` is prod,
-  `wrangler.development.jsonc` is development.
+  `wrangler.development.jsonc` is development. Being **superseded** on
+  `*.280apps.run` by the identity gateway (`packages/gateway/`), which grows this
+  hostname pipe into a front door (OIDC + sessions + signed identity header).
 
 The control plane itself now also deploys as a Cloudflare Worker, alongside the
 dispatcher, from `packages/backend/` — its `wrangler.jsonc` (prod) and

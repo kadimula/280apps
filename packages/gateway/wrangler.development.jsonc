@@ -1,0 +1,33 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-gateway-development",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-07-23",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"observability": { "enabled": true },
+	"placement": { "mode": "smart" },
+
+	// Dev apps live at <script>-development.280apps.run (one label under the zone,
+	// covered by the free wildcard cert). SUPERSEDES the dev dispatcher on this
+	// route. TWO80_APP_HOST_SUFFIX strips "-development" back to the script name.
+	"routes": [{ "pattern": "*-development.280apps.run/*", "zone_name": "280apps.run" }],
+
+	// Same dev Hyperdrive config the control plane uses.
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_DEV_HYPERDRIVE_ID" }],
+
+	// Secrets via `wrangler secret put --env development` (or the plain form when
+	// deploying this config): GOOGLE_*, ENTRA_*, ID_SIGNING_JWK.
+	"vars": {
+		"TWO80_DB_SCHEMA": "platform",
+		"TWO80_APP_DOMAIN": "280apps.run",
+		"TWO80_APP_HOST_SUFFIX": "-development",
+		"TWO80_AUTH_HOST": "auth-development.280apps.run",
+		"TWO80_COOKIE_DOMAIN": ".280apps.run",
+		"TWO80_ID_ISSUER": "https://auth-development.280apps.run",
+		"TWO80_ID_TTL_SECS": "120",
+		"TWO80_ID_SIGNING_KID": "k1",
+		"TWO80_ENTRA_TENANT": "organizations",
+		"TWO80_FALLBACK_REDIRECT": "https://280apps.com"
+	}
+}

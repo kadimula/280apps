@@ -1,0 +1,38 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "280-gateway",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-07-23",
+	// Reuses the control plane's Auth (node:crypto) and pg store over Hyperdrive.
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"observability": { "enabled": true },
+	"placement": { "mode": "smart" },
+
+	// The only public entry to apps. SUPERSEDES platform/dispatcher on this route
+	// (only one Worker may own it); cutting over is a deploy-time step. Until the
+	// container substrate lands the gateway forwards to a stub upstream.
+	"routes": [{ "pattern": "*.280apps.run/*", "zone_name": "280apps.run" }],
+
+	// Same Hyperdrive config the control plane uses (same platform Postgres).
+	// From packages/backend/scripts/bootstrap-resources.sh; query caching DISABLED.
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_PROD_HYPERDRIVE_ID" }],
+
+	// SEAM (container phase): the real proxy target. On WfP that is:
+	// "dispatch_namespaces": [{ "binding": "DISPATCHER", "namespace": "apps" }],
+
+	// Secrets via `wrangler secret put`: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+	// ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ID_SIGNING_JWK (ECDSA P-256 private
+	// JWK; generate with `node scripts/gen-signing-key.mjs`).
+	"vars": {
+		"TWO80_DB_SCHEMA": "platform",
+		"TWO80_APP_DOMAIN": "280apps.run",
+		"TWO80_AUTH_HOST": "auth.280apps.run",
+		"TWO80_COOKIE_DOMAIN": ".280apps.run",
+		"TWO80_ID_ISSUER": "https://auth.280apps.run",
+		"TWO80_ID_TTL_SECS": "120",
+		"TWO80_ID_SIGNING_KID": "k1",
+		"TWO80_ENTRA_TENANT": "organizations",
+		"TWO80_FALLBACK_REDIRECT": "https://280apps.com"
+	}
+}

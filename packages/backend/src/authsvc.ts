@@ -33,8 +33,12 @@ export interface AuthConfig {
   // callback URL. It must match what the provider console has registered.
   apiOrigin: string;
   // frontendOrigin is the only origin a post-login redirect may land on. It is
-  // the open-redirect whitelist.
+  // the open-redirect whitelist the default guard enforces.
   frontendOrigin: string;
+  // resolveRedirect optionally overrides that guard. The gateway sets it (its
+  // valid destinations are the whole *.280apps.run space, not one origin); the
+  // control plane leaves it unset for the single-origin default below.
+  resolveRedirect?: (raw: string) => string;
   // cookieDomain scopes the session cookie. Empty is host-only (localhost dev);
   // ".280apps.com" lets api and www share it in production.
   cookieDomain: string;
@@ -212,10 +216,13 @@ export class Auth {
     return `${this.cfg.apiOrigin}/auth/${provider}/callback`;
   }
 
-  // resolveRedirect confines the post-login destination to the frontend origin.
-  // A bare path is resolved against it; a full URL must already be on it;
-  // anything else falls back to the dashboard. This is the open-redirect guard.
+  // resolveRedirect confines the post-login destination. When the config
+  // supplies its own guard (the gateway's *.280apps.run policy) it wins;
+  // otherwise the default confines to the single frontend origin: a bare path is
+  // resolved against it, a full URL must already be on it, anything else falls
+  // back to the dashboard. This is the open-redirect guard.
   private resolveRedirect(raw: string): string {
+    if (this.cfg.resolveRedirect !== undefined) return this.cfg.resolveRedirect(raw);
     const origin = this.cfg.frontendOrigin;
     const fallback = origin + '/dashboard';
     if (raw === '') return fallback;

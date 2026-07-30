@@ -32,14 +32,15 @@ import {
   type BlobBody,
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
-import type { App, BlobStore, Deploy, Runtime, RuntimeApp, Store } from './seams.js';
+import type { App, BlobStore, Deploy, Store } from './seams.js';
+import type { Activator } from './activator.js';
 
 // The throwable is the contract's canonical DeployErr, so the HTTP adapter, the
 // conformance suite, and every caller share one error type. deployShaped
 // duck-types a caught value into the seam's plain error fields: the blob store
 // (W4) throws its own DeployErr subclass with the same shape but a different
 // identity, so `instanceof` alone would miss it.
-function deployShaped(err: unknown): DeployError | null {
+export function deployShaped(err: unknown): DeployError | null {
   if (err instanceof DeployErr) {
     return { code: err.code, message: err.message, fix: err.fix, retryable: err.retryable, candidates: err.candidates };
   }
@@ -58,16 +59,21 @@ function deployShaped(err: unknown): DeployError | null {
 
 // asDeployErr returns a canonical DeployErr for a deploy-shaped caught value, so
 // a seam error thrown by a different workstream's class rethrows as our type.
-function asDeployErr(err: unknown): DeployErr | null {
+export function asDeployErr(err: unknown): DeployErr | null {
   const s = deployShaped(err);
   return s === null ? null : new DeployErr(s);
 }
 
-// Platform is the account-independent half: storage, runtime, and config.
+// Platform is the account-independent half: storage, config, and the activator.
 export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
-  runtime: Runtime;
+  // activator serializes one app's activation and delete and executes them. In
+  // production it hands the work to the app's AppActivator Durable Object, which
+  // provides cross-isolate per-app serialization (the real replacement for the
+  // retired in-isolate withAppLock); in tests it runs activation inline. The
+  // runtime lives behind it, so the Platform no longer holds one directly.
+  activator: Activator;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
   // hostSuffix is appended to an app's URL host label (not its script name), so a
@@ -77,42 +83,21 @@ export interface PlatformDeps {
   // so the dispatcher recovers it by stripping the suffix (HOST_SUFFIX). Empty is
   // the default and reproduces Go byte for byte; the divergence is a new env.
   hostSuffix?: string;
-  // locks is the per-app activation lock registry. The Platform is now built per
-  // request (it captures the request's store), but activation serialization must
-  // outlive one request, so the Worker passes a single isolate-scoped map that
-  // every per-request Platform shares. Omitted ⇒ a fresh map (the tests, whose
-  // Platform lives for the whole case). This is a coordination primitive, not an
-  // I/O object, so sharing it across requests is safe.
-  //
-  // Phase-1a limit: this only serializes within one isolate. Cross-isolate
-  // per-app serialization is the real AppActivator DO's job, a later wave; until
-  // then two isolates can still race one app's activation.
-  locks?: Map<string, Promise<unknown>>;
 }
 
 export class Platform {
   readonly store: Store;
   readonly blobs: BlobStore;
-  readonly runtime: Runtime;
+  readonly activator: Activator;
   readonly appDomain: string;
   readonly hostSuffix: string;
-
-  // locks serializes activation per app. The store's claim already makes exactly
-  // one caller responsible for a given deploy; this additionally keeps two
-  // different deploys of one app from racing each other into the runtime, where
-  // the loser would silently become the served version. A per-app promise chain
-  // is the single-isolate equivalent of the Go sync.Mutex. Shared across
-  // per-request Platforms when the caller passes one (the Worker), so the guard
-  // survives beyond a single request.
-  private readonly locks: Map<string, Promise<unknown>>;
 
   constructor(deps: PlatformDeps) {
     this.store = deps.store;
     this.blobs = deps.blobs;
-    this.runtime = deps.runtime;
+    this.activator = deps.activator;
     this.appDomain = deps.appDomain;
     this.hostSuffix = deps.hostSuffix ?? '';
-    this.locks = deps.locks ?? new Map<string, Promise<unknown>>();
   }
 
   // for returns the Port scoped to an account. Created per request so the
@@ -120,27 +105,6 @@ export class Platform {
   // forgets to scope by account is then not expressible.
   for(accountId: string): Service {
     return new Service(this, accountId);
-  }
-
-  // withAppLock serializes fn against every other activation or delete of the
-  // same app. Mirrors deploysvc.go's per-app activation mutex: a per-app promise
-  // chain where each caller waits on the previous one before running.
-  withAppLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {
-    // prev is always a settled-or-pending tail that never rejects, so the next
-    // waiter proceeds whatever fn did.
-    const prev = this.locks.get(appId) ?? Promise.resolve();
-    const result = prev.then(() => fn());
-    const tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.locks.set(appId, tail);
-    // Drop the entry once nothing is queued behind it, so the map does not grow
-    // one slot per app forever.
-    void tail.then(() => {
-      if (this.locks.get(appId) === tail) this.locks.delete(appId);
-    });
-    return result;
   }
 }
 
@@ -358,8 +322,23 @@ export class Service implements Port {
 
   // ---- activation ----
 
-  // settle activates a deploy if it is content-complete, and returns its state
-  // afterwards. It is the single place serving state changes.
+  // settle hands a content-complete deploy to the app's activator and returns the
+  // deploy's current state. It is the request-side half of activation: it checks
+  // that the deploy is not already terminal and that its content is complete, then
+  // enqueues the activation and reads back whatever the store now says.
+  //
+  // It does NOT claim the deploy. The claim (uploading -> activating) happens
+  // inside the activator, so nothing can wedge in activating from a lost handoff:
+  // if the enqueue is lost — this call throws, the handler dies, the isolate
+  // evicts — the deploy is still uploading, and the existing self-heal loop
+  // recovers it (the CLI re-syncs, this runs again, the activator is asked again).
+  // Deploy ids are content-derived and the CLI's poll loop has no attempt cap, so
+  // a deploy stuck in activating with no owner would be unrecoverable; keeping the
+  // claim on the activator's side of a durable handoff is what rules that out.
+  //
+  // In production the enqueue returns before the runtime activation completes, so
+  // the last blob's 204 ships ahead of the app going live; the CLI polls Status to
+  // a terminal state as it always has.
   private async settle(app: App, dep: Deploy): Promise<Deploy> {
     if (stateTerminal(dep.state)) return dep;
     const missing = await this.wrapInternal('list missing blobs', () =>
@@ -367,61 +346,23 @@ export class Service implements Port {
     );
     if (missing.length > 0) return dep;
 
-    return this.p.withAppLock(app.id, async () => {
-      const won = await this.wrapInternal('claim activation', () =>
-        this.p.store.claimActivation(app.id, dep.id),
-      );
-      if (!won) {
-        // Someone else finished it (or is mid-flight under a different process).
-        // Report whatever the store now says rather than guessing.
-        const got = await this.wrapInternal('read deploy', () =>
-          this.p.store.deploy(app.id, dep.id),
-        );
-        return got ?? dep;
-      }
+    await this.wrapInternal('enqueue activation', () => this.p.activator.activate(app, dep.id));
 
-      let actErr: unknown = null;
-      let res: { storeId: string } = { storeId: '' };
-      try {
-        res = await this.p.runtime.activate({
-          app: runtimeApp(app),
-          deployId: dep.id,
-          manifest: dep.manifest,
-          asset: (d: Digest) => this.p.blobs.get(app.id, d),
-        });
-      } catch (err) {
-        actErr = err;
-      }
-
-      if (res.storeId !== '' && res.storeId !== app.storeId) {
-        // Persist before reporting the deploy's outcome: a store the runtime
-        // created but the control plane forgot would be re-created on the next
-        // push, and the app's data would vanish.
-        await this.wrapInternal('persist store id', () =>
-          this.p.store.setStoreId(app.id, res.storeId),
-        );
-      }
-
-      if (actErr !== null) {
-        const failure = activationFailure(actErr);
-        await this.wrapInternal('record failure', () =>
-          this.p.store.finishFailed(app.id, dep.id, failure),
-        );
-        return { ...dep, state: State.Failed, failure };
-      }
-
-      await this.wrapInternal('record activation', () => this.p.store.finishLive(app.id, dep.id));
-      return { ...dep, state: State.Live, failure: null };
-    });
+    // Report whatever the store now says: uploading (production, activation still
+    // in flight) or terminal (an inline activator that finished synchronously).
+    const got = await this.wrapInternal('read deploy', () => this.p.store.deploy(app.id, dep.id));
+    return got ?? dep;
   }
 
   // ---- Delete ----
 
-  // The order is the point: the runtime first, then content, then the rows that
-  // name them. Every step is idempotent and each one only makes sense while the
-  // row still exists, so an interruption anywhere leaves an app that running the
-  // same command again finishes off. The reverse order would strand a live
-  // Worker with nothing left that knows its name.
+  // The destructive tail runs through the activator (runtime, then content, then
+  // the row, in that order — every step idempotent, each only meaningful while the
+  // row still exists). Routing it through the same object activation goes through
+  // is what keeps a push already past its last blob from re-uploading the worker
+  // after this removes it: both serialize through one per-app object, and the
+  // activation re-checks the app row inside it. Dry-run and confirmation stay here
+  // in the request path.
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const app = await this.wrapInternal('look up app', () =>
       this.p.store.app(this.accountId, req.appId),
@@ -449,19 +390,8 @@ export class Service implements Port {
       });
     }
 
-    // The same lock activation takes. Without it a push already past its last
-    // blob could re-upload the Worker after this deletes it, leaving something
-    // serving that the control plane no longer has a row for.
-    return this.p.withAppLock(app.id, async () => {
-      try {
-        await this.p.runtime.delete(runtimeApp(app));
-      } catch (err) {
-        throw deleteFailed('remove the app from the runtime', err);
-      }
-      await this.wrapInternal('delete app content', () => this.p.blobs.deleteApp(app.id));
-      await this.wrapInternal('delete app', () => this.p.store.deleteApp(this.accountId, app.id));
-      return { app: publicApp(app), deleted: true };
-    });
+    const deleted = await this.wrapInternal('delete app', () => this.p.activator.delete(app));
+    return { app: publicApp(app), deleted };
   }
 
   // ---- Status ----
@@ -581,47 +511,6 @@ function declaredSize(open: Deploy[], digest: Digest): number | null {
   return null;
 }
 
-// runtimeApp projects the control plane's app onto what a runtime is allowed to
-// know about it.
-function runtimeApp(a: App): RuntimeApp {
-  return {
-    id: a.id,
-    slug: a.slug,
-    framework: a.framework,
-    script: a.script,
-    salt: a.salt,
-    storeId: a.storeId,
-  };
-}
-
-// activationFailure makes a runtime failure agent-actionable, as a plain error
-// object to persist. Activation failures are attempt-scoped: re-running push
-// reopens the deploy, so the fix is always literally that.
-function activationFailure(err: unknown): DeployError {
-  const shaped = deployShaped(err);
-  if (shaped !== null) return shaped;
-  return {
-    code: DeployCode.Unavailable,
-    message: 'activation failed on the platform: ' + errText(err),
-    fix: 'run 280 push again',
-    retryable: false,
-    candidates: [],
-  };
-}
-
-// deleteFailed reports a substrate that would not let go. Nothing is half
-// deleted at this point that re-running would not finish, so it is retryable
-// rather than an error with a fix of its own.
-function deleteFailed(what: string, err: unknown): DeployErr {
-  const de = asDeployErr(err);
-  if (de !== null) return de;
-  return new DeployErr({
-    code: DeployCode.Unavailable,
-    message: `could not ${what}: ${errText(err)}`,
-    retryable: true,
-  });
-}
-
 function notFound(appId: string, deployId: string): DeployErr {
   return new DeployErr({
     code: DeployCode.NotFound,
@@ -694,7 +583,7 @@ function utf8(s: string): Uint8Array {
   return Buffer.from(s, 'utf8');
 }
 
-function errText(err: unknown): string {
+export function errText(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }

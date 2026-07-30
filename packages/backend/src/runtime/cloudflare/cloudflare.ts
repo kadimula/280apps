@@ -48,8 +48,16 @@ const mainModule = 'worker.js';
 // 100MB request; both are held well below because the request is all-or-nothing
 // and a rejected batch fails the whole deploy. The byte budget is counted on raw
 // content, leaving room for base64's 4/3 inflation and the JSON envelope.
+//
+// 16 MiB, not the 60 MiB a Node process could afford: seedCache base64-encodes a
+// batch and then JSON.stringify's it, so the transient peak is several times the
+// raw budget. Activation now runs inside the AppActivator Durable Object, whose
+// isolate is capped at 128 MiB; a 60 MiB batch's encoded peak blows past that,
+// while 16 MiB keeps it comfortably under. (If a real deploy ever needs larger
+// ISR seeds, the escape hatch is to split the bulk writes across successive alarm
+// invocations of the object — designed, not built; see app-activator.ts.)
 const KV_BULK_MAX_PAIRS = 1000;
-const KV_BULK_MAX_BYTES = 60 << 20;
+const KV_BULK_MAX_BYTES = 16 << 20;
 
 // FetchLike is the subset of the global fetch this runtime uses. Injected so
 // tests can stand in for Cloudflare; production defaults to the platform fetch.

@@ -34,6 +34,10 @@ Product and tech vision (direction, not shipped): any app deploys (push instruct
 
 Avoid comments wherever possible; make the code self-explanatory through naming and structure instead. Prefer a clear function or variable name, a named constant, or a small restructure over a comment that explains what the code does. Add a comment (2 lines maximum) only when the code genuinely cannot be made self-explanatory: a non-obvious "why", a subtle invariant, or a workaround rationale. Never restate the code, narrate the next line, or leave section-divider banners or commented-out code. Load-bearing markers (license headers, tooling directives, `eslint-disable` pragmas, machine-read annotations) stay.
 
+## Development environment
+
+Dev mirrors prod on isolated infra: apps deploy to the `apps-development` dispatch namespace at `*-development.280apps.run`, and the CLI targets it with `TWO80_API=https://api-development.280apps.com`. See `docs/dev-environment.md` for the namespace/URL/CLI-targeting details and the Railway dev variable manifest. Every env var the backend and gateway read is documented in the committed `.env.example` (names + shapes only; secrets are placeholders).
+
 ## Local notes
 
 Private/local notes and infra details live in `CLAUDE.local.md` (gitignored, not committed). Never put secrets (connection strings, keys, tokens, passwords) in this committed file; they belong in `CLAUDE.local.md` or a secrets manager.

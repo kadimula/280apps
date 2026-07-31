@@ -18,7 +18,8 @@ data/
 
 # Local-only: editor scratch + private notes
 .lavish/
-docs/
+docs/*
+!docs/dev-environment.md
 *.local.md
 
 # Local env / secrets

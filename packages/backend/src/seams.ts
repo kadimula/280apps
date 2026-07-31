@@ -127,8 +127,7 @@ export type AppRole = (typeof AppRole)[keyof typeof AppRole];
 // One principal's access to one app. The model is flat (one row per (app,
 // principal), no relationship graph) until relationships turn graph-shaped. appRole
 // is tier 1; featureRole is tier 2, a builder-defined role from the app's 280.json
-// into which custom actions fold via can(). Enforcement and the share dialog are a
-// later phase; this seam is only the data surface.
+// into which custom actions fold via can().
 export interface Grant {
   appId: string;
   principal: string; // 'alice@firm.com' or 'domain:firm.com'
@@ -215,9 +214,8 @@ export interface Store {
 // when bytes do not hash to the declared digest.
 export interface BlobStore {
   has(appId: string, digest: Digest): Promise<boolean>;
-  // size is the manifest's declared length (BlobInfo.size), not Content-Length:
-  // the R2 backing frames a FixedLengthStream from it so a short/long body is
-  // rejected as digest_mismatch; the filesystem backing hashes regardless.
+  // size is the manifest's declared length (BlobInfo.size), not Content-Length; the
+  // backing hashes the body as it drains and rejects digest_mismatch on any mismatch.
   put(appId: string, digest: Digest, size: number, body: BlobBody): Promise<void>;
   get(appId: string, digest: Digest): Promise<Uint8Array>;
   deleteApp(appId: string): Promise<void>;

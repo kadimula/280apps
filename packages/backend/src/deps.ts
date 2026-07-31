@@ -1,50 +1,13 @@
-// Request-scoped dependency construction: the Worker's assembly point.
-// buildRequestDeps turns one Env into the per-request I/O container the deps
-// middleware puts on the context. Nothing here is an isolate singleton; per-app
-// activation serialization lives in the AppActivator Durable Object.
+// Dependency construction shared by the host entrypoints: runtime selection,
+// auth wiring, and the scheduled-sweep core.
 
-import { Platform } from './deploysvc.js';
-import { DurableObjectActivator } from './activator.js';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
-import { newPgStore } from './store/store.js';
-import { R2BlobStore } from './blobstore/r2.js';
 import { MemoryRuntime, container } from './runtime/index.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
 import type { ExpiryCounts, Runtime, Store } from './seams.js';
 import type { Logger } from './observe.js';
-import { readConfig, type Config, type Env, type RequestDeps } from './config.js';
-
-// buildRequestDeps constructs the request-scoped I/O container from Env, once per
-// request. The pg client is lazy and closed after the response via close(). No
-// runtime is built here: activation runs in the AppActivator Durable Object, which
-// builds its own from the same Env; the request path only hands it a deploy.
-export function buildRequestDeps(env: Env, log: Logger): RequestDeps {
-  const config = readConfig(env);
-
-  const store = newPgStore(config.dbConnectionString, config.dbSchema);
-  const blobs = new R2BlobStore(env.BLOBS);
-  const auth = buildAuth(store, config, log);
-
-  const platform = new Platform({
-    store,
-    blobs,
-    activator: new DurableObjectActivator(env.APP_ACTIVATOR),
-    appDomain: config.appDomain,
-    hostSuffix: config.hostSuffix,
-  });
-
-  return {
-    platform,
-    auth,
-    openSignup: config.openSignup,
-    verificationUri: config.verificationUri,
-    minCliVersion: config.minCliVersion,
-    appDomain: config.appDomain,
-    viewAsOrigin: `https://auth.${config.appDomain}`,
-    close: () => store.close(),
-  };
-}
+import type { Config } from './config.js';
 
 // selectRuntime picks where apps run and which build home compiles their images.
 // Misconfiguration is a request failure rather than a degraded mode: a platform

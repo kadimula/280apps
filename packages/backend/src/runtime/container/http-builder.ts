@@ -47,7 +47,7 @@ export class HttpBuilder implements ContainerBuilder {
     await this.send('/teardown', JSON.stringify({ app }), 'application/json');
   }
 
-  private async send(path: string, body: BodyInit, contentType?: string): Promise<unknown> {
+  private async send(path: string, body: FormData | string, contentType?: string): Promise<unknown> {
     const headers: Record<string, string> = { Authorization: 'Bearer ' + this.cfg.token };
     if (contentType) headers['Content-Type'] = contentType;
     let resp: Response;

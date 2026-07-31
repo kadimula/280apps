@@ -60,8 +60,7 @@ const USER_CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
 const DASHBOARD_CONFIRM = 'delete';
 
 export interface ServerConfig {
-  // buildDeps constructs the request-scoped I/O container from the Hono context
-  // (c.env for bindings, c.executionCtx for the pg client's close lifetime).
+  // buildDeps constructs the I/O container from the Hono context.
   buildDeps: (c: Context<HonoEnv>) => RequestDeps | Promise<RequestDeps>;
   logger?: Logger;
 }
@@ -127,32 +126,9 @@ export class Server {
     return app;
   }
 
-  // withDeps builds the request-scoped I/O container, puts it on the context, and
-  // schedules its cleanup once the response is on its way.
   private async withDeps(c: Context<HonoEnv>, next: () => Promise<void>): Promise<void> {
-    const deps = await this.buildDeps(c);
-    c.set('deps', deps);
-    const close = deps.close;
-    if (close === undefined) {
-      await next();
-      return;
-    }
-    try {
-      await next();
-    } finally {
-      this.scheduleClose(c, close);
-    }
-  }
-
-  // scheduleClose runs close after the response ships: on Workers via ctx.waitUntil
-  // (reply not delayed); with no execution context (tests) it runs fire-and-forget.
-  private scheduleClose(c: Context<HonoEnv>, close: () => Promise<void>): void {
-    const done = close().catch(() => {});
-    try {
-      c.executionCtx.waitUntil(done);
-    } catch {
-      void done;
-    }
+    c.set('deps', await this.buildDeps(c));
+    await next();
   }
 
   private deps(c: Context<HonoEnv>): RequestDeps {

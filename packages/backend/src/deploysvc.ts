@@ -64,9 +64,7 @@ export function asDeployErr(err: unknown): DeployErr | null {
 export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
-  // activator serializes and executes one app's activation and delete. In
-  // production it hands the work to the app's AppActivator Durable Object (the
-  // cross-isolate per-app serialization point); in tests it runs inline.
+  // activator serializes and executes one app's activation and delete.
   activator: Activator;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
@@ -299,10 +297,8 @@ export class Service implements Port {
 
   // settle hands a content-complete deploy to the app's activator and reads back its
   // current state. It does NOT claim the deploy: the claim (uploading -> activating)
-  // happens inside the activator, past a durable handoff, so a lost enqueue leaves
-  // the deploy uploading for the self-heal loop rather than wedged in activating with
-  // no owner. In production the enqueue returns before activation completes, so the
-  // last blob's 204 ships ahead of the app going live.
+  // happens inside the activator, so a lost enqueue leaves the deploy uploading for
+  // the self-heal loop rather than wedged in activating with no owner.
   private async settle(app: App, dep: Deploy): Promise<Deploy> {
     if (stateTerminal(dep.state)) return dep;
     const missing = await this.wrapInternal('list missing blobs', () =>

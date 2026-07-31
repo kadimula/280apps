@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
-import type { Env, RequestDeps } from './config.js';
+import type { RequestDeps } from './config.js';
 
 // Honored when a caller sends one, minted when not, and echoed on every response so
 // a bug report can quote a value that finds the log line.
@@ -22,10 +22,9 @@ export interface Logger {
   error(msg: string, attrs?: Record<string, unknown>): void;
 }
 
-// HonoEnv carries the Cloudflare bindings (c.env) and the per-request state the log
-// line wants. deps is the request-scoped I/O container the leading middleware builds.
+// HonoEnv carries the per-request state the log line wants. deps is the I/O
+// container the leading middleware builds.
 export type HonoEnv = {
-  Bindings: Env;
   Variables: {
     requestId: string;
     account: string;

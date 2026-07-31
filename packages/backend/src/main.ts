@@ -52,9 +52,8 @@ async function run(log: Logger): Promise<void> {
 
   const auth = buildAuth(store, config, log);
 
-  // A single request-scoped container, reused for every request: the store is a
-  // process-lifetime pool, so there is no per-request close (the Worker's close()
-  // released a per-request pg client; here the pool is torn down once at shutdown).
+  // One container reused for every request: the store is a process-lifetime pool,
+  // torn down once at shutdown rather than per request.
   const deps: RequestDeps = {
     platform,
     auth,

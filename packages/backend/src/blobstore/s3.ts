@@ -1,9 +1,8 @@
 // The per-app content-addressed blob store on an S3-compatible object store
-// (Cloudflare R2 via its S3 API in production), the Node counterpart to the
-// Workers-only R2BlobStore. Keys are `${appId}/${digest}`, so every method is a
-// prefix operation on one app and the cross-tenant dedupe leak is impossible by
-// construction. Unlike the Workers backing there is no FixedLengthStream: put
-// drains the body once, hashing as it goes, and rejects digest_mismatch (storing
+// (Cloudflare R2 via its S3 API in production). Keys are `${appId}/${digest}`, so
+// every method is a prefix operation on one app and the cross-tenant dedupe leak
+// is impossible by construction. put drains the body once, hashing as it goes,
+// and rejects digest_mismatch (storing
 // nothing) before it ever calls PutObject.
 
 import { createHash } from 'node:crypto';

@@ -169,19 +169,19 @@ export function platformSupportMarkdown(): string {
 // /platform-support.md for the matrix.
 export function setupMarkdown(): string {
   return `\
-280apps.com is a platform which allows easy deployment, auth, and permission management of apps in small teams.
+280apps.com deploys apps for small teams and manages their auth and permissions.
 
-The human and agent stay responsible for building features. 280 is built agent first: the vast majority of actions run through the agent's CLI. The only steps the human takes are login, plus secrets and permission controls in the 280 UI. All feature development happens through their coding agent, as it does today.
+You and the human build the features; 280 owns deploy, identity, and permissions. It is agent first: nearly everything runs through the CLI. The human only logs in and sets secrets and permissions in the 280 UI.
 
-## 1. Check app compatibility with 280
+## 1. Check app compatibility
 
-280apps.com supports the majority of CRUD applications an internal team might build, but its support set is limited. First check https://www.280apps.com/platform-support.md to see what 280 supports. Review the stack of the user's current app, and only if it is supported there is it worth installing the CLI. (If they really want to deploy to 280, you can also suggest modifying the unsupported sections of their app.)
+280 supports most CRUD apps an internal team builds, but the support set is limited. Check https://www.280apps.com/platform-support.md first, review the user's stack, and install the CLI only if it is supported. (You can also offer to change the unsupported parts.)
 
-## 2. Install the 280 CLI and push
+## 2. Install the CLI and push
 
     npx -y two80@latest push
 
-Auto inits new projects. Safe to re-run; every step resumes, nothing duplicates.
+Auto-inits new projects. Safe to re-run; every step resumes, nothing duplicates.
 
 ## 3. Login (the user's one action)
 
@@ -331,9 +331,8 @@ enforced at the gateway, before any of your code runs.
 
 ## Outbound calls (egress)
 
-Your app runs default-deny: it can reach ONLY the hosts you list in \`egress.allow\`;
-anything else is blocked. This is why the container surviving bad AI code is a
-platform guarantee, not a hope. Rules:
+Your app runs default-deny: it reaches ONLY the hosts you list in \`egress.allow\`;
+everything else is blocked. Rules:
 
 - List every external host your app calls in \`egress.allow\` (globs allowed, e.g.
   \`*.supabase.co\`; a glob matches subdomains, not the bare domain).
@@ -343,9 +342,8 @@ platform guarantee, not a hope. Rules:
   \`authorization\` with a \`Bearer\` scheme; set \`header\`/\`scheme\` for APIs that want
   a raw key header (\`"scheme": ""\`).
 - The provisioned Postgres is reached over its HTTPS endpoint (the neon-http
-  serverless driver), which is allowlisted for you — never a raw \`:5432\` TCP
-  connection, which the egress layer can block but cannot secure. Keep DB and
-  external-service access on HTTPS interfaces.
+  serverless driver), allowlisted for you — never a raw \`:5432\` TCP connection,
+  which egress can block but not secure. Keep all access on HTTPS interfaces.
 
 Identity comes from \`@280/sdk\` (\`npm i @280/sdk\`). It verifies the gateway's
 short-lived signed header offline and hands you one object. That is the only

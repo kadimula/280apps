@@ -123,8 +123,7 @@ function stackOf(err: unknown): string {
   return err instanceof Error && err.stack ? err.stack : '';
 }
 
-// now is a millisecond clock for request-duration timing. Date.now() is Workers-safe;
-// a coarse duration is all the access log wants.
+// A coarse millisecond clock for request-duration timing, all the access log wants.
 function now(): number {
   return Date.now();
 }

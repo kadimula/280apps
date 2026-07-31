@@ -1,7 +1,7 @@
-// deploysvc is the server side of the deploy seam: the implementation of the
-// contracts deploy Port that the HTTP API is a thin transport over. Go is normative
-// (platform/internal/deploysvc/deploysvc.go), including the invariant that methods
-// are idempotent and safe to re-invoke: nothing here holds state between calls.
+// deploysvc is the server side of the deploy seam: the contracts deploy Port the
+// HTTP API is a thin transport over. Go is normative (deploysvc.go), including the
+// invariant that methods are idempotent and safe to re-invoke — nothing here holds
+// state between calls.
 
 import {
   APP_ROLE_ORDER,
@@ -89,9 +89,8 @@ export class Platform {
     this.hostSuffix = deps.hostSuffix ?? '';
   }
 
-  // for returns the Port scoped to an account. Created per request so the account
-  // is a field, not a parameter: a query that forgets to scope by account is then
-  // not expressible.
+  // The Port scoped to an account: the account is a field, not a parameter, so a
+  // query that forgets to scope by account is not expressible.
   for(accountId: string): Service {
     return new Service(this, accountId);
   }
@@ -198,9 +197,9 @@ export class Service implements Port {
   private async createApp(id: Identity): Promise<App> {
     const slug = sanitizeSlug(id.slug);
     const appId = 'app_' + randomHex(6);
-    // The script name is environment-independent: the app's bare identity in the
-    // dispatch namespace. The host suffix rides only on the URL host label, and the
-    // staging dispatcher strips it back to this bare name for lookup.
+    // The script name is the app's environment-independent identity in the dispatch
+    // namespace; the host suffix rides only on the URL host label, which staging
+    // strips back to this bare name for lookup.
     const script = slug + '-' + urlToken(appId);
 
     const app: App = {
@@ -262,9 +261,8 @@ export class Service implements Port {
     if (has) return;
 
     const open = await this.wrapInternal('list open deploys', () => this.p.store.openDeploys(appId));
-    // The manifest that named this blob also declared its size. An unwanted digest is
-    // rejected here (the upload endpoint is never general storage); a wanted one
-    // carries the declared size the blob store frames the body to.
+    // An unwanted digest is rejected here (the upload endpoint is never general
+    // storage); a wanted one carries the size its manifest declared.
     const declared = declaredSize(open, digest);
     if (declared === null) {
       throw new DeployErr({
@@ -314,8 +312,8 @@ export class Service implements Port {
   }
 
   // The destructive tail runs through the activator (runtime, then content, then the
-  // row, each idempotent and only meaningful while the row exists). Routing it through
-  // the same per-app object activation uses keeps a push past its last blob from
+  // row, each idempotent and meaningful only while the row exists). Routing it
+  // through the same per-app serialization keeps a push past its last blob from
   // re-uploading the worker after this removes it. Dry-run and confirmation stay here.
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const app = await this.wrapInternal('look up app', () =>
@@ -480,19 +478,19 @@ function notFound(appId: string, deployId: string): DeployErr {
 const BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 // deriveDeployId makes the deploy id a pure function of what is being deployed. No
-// client-generated key, and therefore no resume journal (deploysvc.go:586).
+// client-generated key, and therefore no resume journal.
 export function deriveDeployId(appId: string, m: Manifest): string {
   return 'dep_' + digestBytes(utf8(appId + ':' + canonicalDigest(m))).slice(0, 16);
 }
 
 // fingerprint is the project identity used for autolink. The raw git remote never
-// lands in the database (deploysvc.go:592).
+// lands in the database.
 export function fingerprint(gitRemote: string, slug: string): string {
   return digestBytes(utf8('fp:' + gitRemote + ':' + slug));
 }
 
 // urlToken is the unguessable half of an app URL: 10 base36 characters derived from
-// the app id (deploysvc.go:601).
+// the app id.
 export function urlToken(appId: string): string {
   const seed = digestBytes(utf8('token:' + appId));
   let tok = '';
@@ -505,7 +503,7 @@ export function urlToken(appId: string): string {
 const NOT_SLUG_CHAR = /[^a-z0-9]+/g;
 
 // sanitizeSlug reduces a project name to something legal as both a hostname label
-// and a runtime script name (deploysvc.go:614).
+// and a runtime script name.
 export function sanitizeSlug(raw: string): string {
   let s = raw.toLowerCase().replace(NOT_SLUG_CHAR, '-');
   s = trimDash(s);

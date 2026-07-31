@@ -121,8 +121,8 @@ export class FsBlobStore implements BlobStore {
 
   // Streams body to a temp file with an incremental hash and rejects with
   // digest_mismatch (storing nothing) if it does not hash to d, so a corrupt
-  // upload cannot satisfy a manifest entry. size is on the seam for the R2
-  // backing; here the hash over the streamed bytes is the whole verification.
+  // upload cannot satisfy a manifest entry. size is unused here; the hash over the
+  // streamed bytes is the whole verification.
   async put(appID: string, d: Digest, _size: number, body: BlobBody): Promise<void> {
     const dst = this.path(appID, d);
     const dir = dirname(dst);

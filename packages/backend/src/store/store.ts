@@ -1,9 +1,8 @@
-// The platform's control-plane database: accounts, apps, deploys, and the events
-// they produce. Blob bytes live in blobstore (also the authority on which blobs an
-// app has), so no index here drifts out of sync with the bytes. Go (store.go) is
-// normative. Deploys are a state machine that must survive process death, so
-// nothing relies on being the sole writer: every racy transition is a conditional
-// UPDATE whose row count names the winner, and every uniqueness rule is an index.
+// The control-plane database: accounts, apps, deploys, events. Blob bytes live in
+// blobstore, so no index here drifts from them. Go (store.go) is normative. Deploys
+// are a state machine surviving process death with no sole-writer assumption: every
+// racy transition is a conditional UPDATE whose row count names the winner, every
+// uniqueness rule an index.
 
 import type { AppPolicy, Manifest, DeployError, RouteGate } from '@280/contracts';
 import {
@@ -40,8 +39,8 @@ interface Queryable {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
 }
 
-// How PgStore reaches Postgres. Two shapes back it: a Pool (boot and tests) and a
-// single lazily-connected Client (the Worker). The store body is identical either way.
+// How PgStore reaches Postgres: a Pool (boot and tests) or a lazily-connected
+// Client (the gateway's per-request path). The store body is identical either way.
 interface Backend {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
   transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T>;
@@ -79,9 +78,9 @@ class PoolBackend implements Backend {
   }
 }
 
-// One lazily-connected client for the Worker's per-request path: it connects on
-// the first statement (a request that never touches the database opens no
-// connection) and is ended once, after the response, by close().
+// One lazily-connected client for the gateway's per-request path: connects on the
+// first statement (a request that touches no table opens no connection), ended once
+// by close().
 class ClientBackend implements Backend {
   private client: pg.Client | null = null;
   private connecting: Promise<pg.Client> | null = null;
@@ -144,20 +143,16 @@ class ClientBackend implements Backend {
   }
 }
 
-// A container host's private network can take a moment to resolve after the
-// process starts; restart-looping over a DNS lookup that would have succeeded a
-// second later is a slower, noisier version of just waiting for it.
+// A container host's private network can take a moment to resolve at startup;
+// waiting beats restart-looping over a DNS lookup that would soon succeed.
 const connectTimeoutMs = 30_000;
 
-// Caps one read; an unbounded query against an append-only table is a slow way to
-// run out of memory.
+// Caps one read: an unbounded query against an append-only table exhausts memory.
 const maxEventPage = 200;
 
-// Connects to and migrates the Postgres database at dsn (the host's DATABASE_URL).
-// A non-empty schema confines every table to it, so the platform can share a
-// database without sharing a namespace, and is created if missing. Boot migrates
-// with idempotent statements, so the container and rollback paths do not depend on
-// a separate CI runner having gone first.
+// Connects to and migrates Postgres at dsn. A non-empty schema confines every table
+// to it (shared database, separate namespace) and is created if missing. Boot
+// migrates with idempotent statements, so it need not wait on the CI runner.
 export async function open(dsn: string, schema: string): Promise<Store> {
   if (dsn === '') {
     throw new Error('store: empty DATABASE_URL');
@@ -186,9 +181,9 @@ export async function open(dsn: string, schema: string): Promise<Store> {
   return new PgStore(new PoolBackend(pool), schema);
 }
 
-// A store over one lazily-connected client, for the Worker's request scope. It
-// does NOT migrate: DDL runs only through the standalone CI runner (migrate.ts),
-// never at runtime, and it holds no pool, so no I/O object crosses requests.
+// A store over one lazily-connected client, for the gateway's request scope. It
+// does NOT migrate: DDL runs only through the CI runner (migrate.ts), never at
+// runtime; it holds no pool, so no I/O object crosses requests.
 export function newPgStore(connectionString: string, schema: string): Store {
   return new PgStore(new ClientBackend(connectionString), schema);
 }
@@ -742,7 +737,6 @@ class PgStore implements Store {
     await this.db.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
   }
 
-  // Resolves a hostname label to an app, for the serving edge.
   async appByScript(script: string): Promise<App | null> {
     const res = await this.db.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
     return res.rows.length ? rowToApp(res.rows[0]) : null;

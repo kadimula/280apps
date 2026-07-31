@@ -48,20 +48,19 @@ const SYNC_LIMIT = 8 << 20;
 const SMALL_LIMIT = 64 << 10;
 
 // TTL is what a human plausibly takes to notice the message, open a browser, and
-// sign in (api.go:71).
+// sign in.
 const DEVICE_CODE_TTL_SECS = 15 * 60;
 const DEVICE_POLL_SECS = 5;
 
 // Omits characters that are misread when a human copies a code off one screen and
-// types it into another (api.go:447).
+// types it into another.
 const USER_CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
 
-// What a human types into the delete dialog (api.go:372).
+// What a human types into the delete dialog.
 const DASHBOARD_CONFIRM = 'delete';
 
 export interface ServerConfig {
-  // buildDeps constructs the request-scoped I/O container from the Hono context
-  // (c.env for bindings, c.executionCtx for the pg client's close lifetime).
+  // buildDeps constructs the I/O container from the Hono context.
   buildDeps: (c: Context<HonoEnv>) => RequestDeps | Promise<RequestDeps>;
   logger?: Logger;
 }
@@ -75,8 +74,8 @@ export class Server {
     this.log = cfg.logger;
   }
 
-  // handler returns the router, built once per isolate and reused; the leading deps
-  // middleware is what makes reuse safe, building fresh I/O per request.
+  // The router, built once and reused; the leading deps middleware builds fresh I/O
+  // per request so reuse is safe.
   handler(): Hono<HonoEnv> {
     const app = new Hono<HonoEnv>();
 
@@ -84,8 +83,8 @@ export class Server {
     // later without remembering to.
     app.use('*', observe({ logger: () => this.logger(), renderPanic: (e) => this.renderPanic(e) }));
 
-    // Per-request deps on the context, cleanup scheduled after the response. Runs
-    // inside observe so a build failure renders as a seam error, not a dropped conn.
+    // Deps on the context. Runs inside observe so a build failure renders as a
+    // seam error, not a dropped connection.
     app.use('*', (c, next) => this.withDeps(c, next));
 
     app.post('/v1/sync', this.route((c) => this.handleSync(c)));
@@ -97,22 +96,21 @@ export class Server {
     app.post('/v1/device/code', this.route((c) => this.handleDeviceCode(c)));
     app.post('/v1/device/token', this.route((c) => this.handleDeviceToken(c)));
 
-    // Browser login. start/callback are top-level navigations that set cookies; me
-    // and logout serve the frontend's signed-in state and sign-out.
+    // Browser login: start/callback are cookie-setting navigations; me/logout serve
+    // signed-in state and sign-out.
     app.get('/auth/:provider/start', (c) => this.handleAuthStart(c));
     app.get('/auth/:provider/callback', (c) => this.handleAuthCallback(c));
     app.get('/auth/me', (c) => this.handleAuthMe(c));
     app.post('/auth/logout', (c) => this.handleAuthLogout(c));
 
-    // The web surface, authenticated by the browser session rather than a shared
-    // secret: the approving user is whoever the cookie resolves to.
+    // The web surface, authenticated by the browser session: the acting user is
+    // whoever the cookie resolves to.
     app.post('/internal/device/approve', this.route((c) => this.handleDeviceApprove(c)));
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
 
     // The share dialog and its data: list/grant/revoke access (both tiers) and the
-    // server-rendered dialog page. All authenticated by the browser session and
-    // scoped to an app the caller's account owns.
+    // rendered page. Session-authenticated, scoped to an app the caller owns.
     app.get('/internal/apps/:app/grants', this.route((c) => this.handleGrantsList(c)));
     app.post('/internal/apps/:app/grants', this.route((c) => this.handleGrantPut(c)));
     app.post('/internal/apps/:app/grants/revoke', this.route((c) => this.handleGrantRevoke(c)));
@@ -127,32 +125,9 @@ export class Server {
     return app;
   }
 
-  // withDeps builds the request-scoped I/O container, puts it on the context, and
-  // schedules its cleanup once the response is on its way.
   private async withDeps(c: Context<HonoEnv>, next: () => Promise<void>): Promise<void> {
-    const deps = await this.buildDeps(c);
-    c.set('deps', deps);
-    const close = deps.close;
-    if (close === undefined) {
-      await next();
-      return;
-    }
-    try {
-      await next();
-    } finally {
-      this.scheduleClose(c, close);
-    }
-  }
-
-  // scheduleClose runs close after the response ships: on Workers via ctx.waitUntil
-  // (reply not delayed); with no execution context (tests) it runs fire-and-forget.
-  private scheduleClose(c: Context<HonoEnv>, close: () => Promise<void>): void {
-    const done = close().catch(() => {});
-    try {
-      c.executionCtx.waitUntil(done);
-    } catch {
-      void done;
-    }
+    c.set('deps', await this.buildDeps(c));
+    await next();
   }
 
   private deps(c: Context<HonoEnv>): RequestDeps {
@@ -190,7 +165,7 @@ export class Server {
     const svc = await this.authorize(c);
     const appId = (c.req.param('app') ?? '');
     const digest = (c.req.param('digest') ?? '');
-    // The raw request stream, capped, never a buffered body (plan risk register).
+    // The raw request stream, capped, never a buffered body.
     const body = cappedStream(c.req.raw.body, MAX_BLOB_BYTES);
     await svc.putBlob(appId, digest, contentLength(c), body);
     return c.body(null, 204);

@@ -44,6 +44,8 @@ const CONTAINER_BINDING = 'APP';
 const DEFAULT_REGISTRY = 'registry.cloudflare.com';
 const DEFAULT_COMPAT_DATE = '2026-06-01';
 const ROLL_CONFIG_FILE = 'wrangler.roll.json';
+const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+const REGISTRY_CRED_TTL_MINUTES = 60;
 
 export interface RegistryBuilderConfig {
   accountId: string;
@@ -59,6 +61,9 @@ export interface RegistryBuilderConfig {
   workerEntry?: string;
   compatibilityDate?: string; // default DEFAULT_COMPAT_DATE
   exec?: ExecFn;
+  // fetch talks to the Cloudflare API to mint registry credentials; injected so the
+  // credential exchange is unit-testable without a Cloudflare account.
+  fetch?: typeof fetch;
 }
 
 // RegistryContainerBuilder is the template: rollout() runs materialize → buildAndPush
@@ -74,6 +79,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   protected readonly workerEntry: string;
   protected readonly compatibilityDate: string;
   protected readonly exec: ExecFn;
+  protected readonly fetchImpl: typeof fetch;
 
   constructor(cfg: RegistryBuilderConfig) {
     this.accountId = cfg.accountId;
@@ -85,6 +91,14 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
     this.workerEntry = cfg.workerEntry ?? 'worker.js';
     this.compatibilityDate = cfg.compatibilityDate ?? DEFAULT_COMPAT_DATE;
     this.exec = cfg.exec ?? spawnExec;
+    this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  }
+
+  // registryCredentials mints a short-lived push/pull credential for the registry.
+  // registry.cloudflare.com rejects the raw API token as a basic-auth password; the
+  // token is only authorized to exchange it for these scoped, expiring creds.
+  protected registryCredentials(): Promise<{ username: string; password: string }> {
+    return mintRegistryCredentials(this.accountId, this.apiToken, this.registry, this.fetchImpl);
   }
 
   imageRef(app: RuntimeApp, deployId: string): string {
@@ -219,11 +233,36 @@ export async function materialize(dir: string, files: RolloutJob['files']): Prom
   }
 }
 
-// registryAuth is the basic-auth pair every push to registry.cloudflare.com uses:
-// the Cloudflare account id as the username and an API token as the password. Both
-// `docker login` and Depot's docker-config credentials provider consume it.
-export function registryAuth(accountId: string, apiToken: string): { username: string; password: string } {
-  return { username: accountId, password: apiToken };
+// mintRegistryCredentials exchanges the Cloudflare API token for a short-lived
+// basic-auth pair scoped to registry.cloudflare.com. The registry does not accept
+// the raw API token (or the account id) as a password; it requires these minted
+// credentials (username "v1", an expiring JWT). Both `docker login` and Depot's
+// docker-config credentials provider consume the returned pair.
+export async function mintRegistryCredentials(
+  accountId: string,
+  apiToken: string,
+  registry: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ username: string; password: string }> {
+  const url = `${CF_API_BASE}/accounts/${accountId}/containers/registries/${registry}/credentials`;
+  const res = await fetchImpl(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ permissions: ['push', 'pull'], expiration_minutes: REGISTRY_CRED_TTL_MINUTES }),
+  });
+  const body = (await res.json().catch(() => null)) as
+    | { success?: boolean; result?: { username?: string; password?: string } }
+    | null;
+  const username = body?.result?.username;
+  const password = body?.result?.password;
+  if (!res.ok || body?.success !== true || !username || !password) {
+    throw new DeployErr({
+      code: DeployCode.Unavailable,
+      message: `could not obtain registry credentials from Cloudflare (HTTP ${res.status})`,
+      retryable: true,
+    });
+  }
+  return { username, password };
 }
 
 export function tail(s: string, n = 25): string {

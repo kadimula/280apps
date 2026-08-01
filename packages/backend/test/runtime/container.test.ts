@@ -94,10 +94,24 @@ describe('DockerBuilder (injected exec)', () => {
     return { exec, calls };
   }
 
+  // credsFetch fakes the Cloudflare registry-credentials endpoint the login step
+  // exchanges the API token at; the registry never accepts the raw token.
+  function credsFetch(): typeof fetch {
+    return (async (url: unknown) => {
+      if (String(url).includes('/credentials')) {
+        return new Response(JSON.stringify({ success: true, result: { username: 'v1', password: 'reg-jwt' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error('unexpected fetch: ' + String(url));
+    }) as unknown as typeof fetch;
+  }
+
   it('materializes the context, then builds, logs in, pushes, and rolls', async () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     const { exec, calls } = recordingExec();
-    const builder = new DockerBuilder({ accountId: 'acct1', apiToken: 'tok', workdir, exec });
+    const builder = new DockerBuilder({ accountId: 'acct1', apiToken: 'tok', workdir, exec, fetch: credsFetch() });
     const { act } = activation({ Dockerfile: 'FROM node:20', 'app/page.tsx': 'export default 1' });
 
     const res = await builder.rollout({
@@ -131,7 +145,7 @@ describe('DockerBuilder (injected exec)', () => {
       }
       return { code: 0, output: '' };
     };
-    const builder = new DockerBuilder({ accountId: 'acct1', apiToken: 'tok', workdir, workerEntry: 'harness.js', exec });
+    const builder = new DockerBuilder({ accountId: 'acct1', apiToken: 'tok', workdir, workerEntry: 'harness.js', exec, fetch: credsFetch() });
     const { act } = activation({ Dockerfile: 'FROM node:20' });
     await builder.rollout({
       app: act.app,
@@ -155,7 +169,7 @@ describe('DockerBuilder (injected exec)', () => {
   it('surfaces a build failure as a non-retryable fix', async () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     const { exec } = recordingExec({ docker: 1 }); // docker build exits non-zero
-    const builder = new DockerBuilder({ accountId: 'a', apiToken: 't', workdir, exec });
+    const builder = new DockerBuilder({ accountId: 'a', apiToken: 't', workdir, exec, fetch: credsFetch() });
     const { act } = activation({ Dockerfile: 'FROM node:20' });
     await expect(
       builder.rollout({
@@ -189,7 +203,7 @@ describe('DockerBuilder (injected exec)', () => {
       }
       return { code: 0, output: '' };
     };
-    const builder = new DockerBuilder({ accountId: 'a', apiToken: 't', workdir, exec });
+    const builder = new DockerBuilder({ accountId: 'a', apiToken: 't', workdir, exec, fetch: credsFetch() });
     const { act } = activation({ Dockerfile: 'FROM node:20', 'src/index.ts': 'export const x = 1' });
     await builder.rollout({
       app: act.app,

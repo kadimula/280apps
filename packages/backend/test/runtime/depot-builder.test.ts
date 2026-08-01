@@ -64,6 +64,20 @@ function recordingExec(codes: Record<string, number> = {}): { exec: ExecFn; call
   return { exec, calls };
 }
 
+// credsFetch fakes the Cloudflare registry-credentials endpoint: it returns the
+// minted (username, password) the registry actually accepts, never the raw token.
+function credsFetch(username = 'v1', password = 'reg-jwt'): typeof fetch {
+  return (async (url: unknown) => {
+    if (String(url).includes('/credentials')) {
+      return new Response(JSON.stringify({ success: true, result: { username, password } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    throw new Error('unexpected fetch: ' + String(url));
+  }) as unknown as typeof fetch;
+}
+
 function fakeApi(over: Partial<DepotApi> = {}): { api: DepotApi; projects: string[]; builds: string[] } {
   const projects: string[] = [];
   const builds: string[] = [];
@@ -95,6 +109,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       workdir,
       exec,
       api,
+      fetch: credsFetch(),
     });
 
     const res = await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
@@ -116,7 +131,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     await rm(workdir, { recursive: true, force: true });
   });
 
-  it('writes the docker config.json the depot CLI reads, in a per-build DOCKER_CONFIG dir', async () => {
+  it('mints registry creds from the CF API and writes them to the per-build DOCKER_CONFIG dir', async () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     let seenAuth = '';
     let seenDockerConfig = '';
@@ -128,6 +143,16 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       }
       return { code: 0, output: '' };
     };
+    let credUrl = '';
+    let credAuthHeader = '';
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      credUrl = String(url);
+      credAuthHeader = String((init?.headers as Record<string, string>)?.authorization ?? '');
+      return new Response(JSON.stringify({ success: true, result: { username: 'v1', password: 'reg-jwt' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
     const { api } = fakeApi();
     const builder = new DepotBuilder({
       accountId: 'acct1',
@@ -137,11 +162,14 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       workdir,
       exec,
       api,
+      fetch: fetchImpl,
     });
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
 
-    // Basic-auth pair is <accountId>:<apiToken>, base64-encoded; never the host ~/.docker.
-    expect(Buffer.from(seenAuth, 'base64').toString()).toBe('acct1:cf-tok');
+    // The token is exchanged for scoped registry creds; the raw token is never the password.
+    expect(credUrl).toContain('/accounts/acct1/containers/registries/registry.cloudflare.com/credentials');
+    expect(credAuthHeader).toBe('Bearer cf-tok');
+    expect(Buffer.from(seenAuth, 'base64').toString()).toBe('v1:reg-jwt');
     expect(seenDockerConfig.startsWith(workdir)).toBe(true);
     await rm(workdir, { recursive: true, force: true });
   });
@@ -157,6 +185,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       workdir,
       exec,
       api,
+      fetch: credsFetch(),
     });
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     // A project was ensured for this app, and the build ran against it.
@@ -171,7 +200,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     const { exec } = recordingExec();
     const { api, projects } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', workdir, exec, api });
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', workdir, exec, api, fetch: credsFetch() });
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:22' }).act));
     expect(projects).toEqual(['280-app_1']);
@@ -182,7 +211,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     const { exec } = recordingExec({ depot: 1 }); // depot build exits non-zero
     const { api } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api });
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
       builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('280 push') });
@@ -197,7 +226,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
         throw new Error('depot 503');
       },
     });
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api });
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
       builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: true });
@@ -224,6 +253,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       workdir,
       exec,
       api,
+      fetch: credsFetch(),
     });
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     expect(rollConfig.containers).toEqual([

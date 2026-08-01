@@ -56,6 +56,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app /app
+
+# Vendor the App280Container harness Worker (the roll config's `main`) and its one
+# runtime dependency, so `wrangler deploy` can bundle it during the roll. Without
+# this the roll fails "entry-point worker.js not found". TWO80_WORKER_ENTRY points
+# the generated roll config at the vendored entry (absolute, so it resolves from
+# any build-context cwd).
+COPY platform/appcontainer /app/appcontainer
+RUN npm install --omit=dev --prefix /app/appcontainer
+ENV TWO80_WORKER_ENTRY=/app/appcontainer/src/worker.js
+
 EXPOSE 8080
 # node:22-slim has no default entrypoint (unlike distroless-nodejs), so name node.
 CMD ["node", "dist/main.js"]

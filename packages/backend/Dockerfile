@@ -44,11 +44,13 @@ WORKDIR /app
 # depot is a static binary from its install script (pinned via ARG); wrangler is
 # the same version platform/appcontainer pins. curl is used only to fetch depot and
 # is removed after; ca-certificates stays for the CLIs' outbound HTTPS.
+# DEPOT_INSTALL_DIR forces depot onto /usr/local/bin: the script's default
+# $HOME/.depot/bin is off the runtime PATH, so the host would spawn depot ENOENT.
 ARG DEPOT_CLI_VERSION=2.101.76
 ARG WRANGLER_VERSION=4.116.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -L https://depot.dev/install-cli.sh | sh -s "$DEPOT_CLI_VERSION" \
+ && curl -L https://depot.dev/install-cli.sh | DEPOT_INSTALL_DIR=/usr/local/bin sh -s "$DEPOT_CLI_VERSION" \
  && npm install -g "wrangler@$WRANGLER_VERSION" \
  && apt-get purge -y curl && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*

@@ -20,14 +20,14 @@ describe('scheduled cleanup', () => {
     await store.createDeviceCode({
       deviceHash: 'dc_old',
       userCode: 'AAAA1111',
-      accountId: '',
+      userId: '',
       status: DeviceStatus.Pending,
       expiresAt: now - 1,
     });
     await store.createDeviceCode({
       deviceHash: 'dc_new',
       userCode: 'BBBB2222',
-      accountId: '',
+      userId: '',
       status: DeviceStatus.Pending,
       expiresAt: now + 3600,
     });

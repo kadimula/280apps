@@ -17,7 +17,7 @@ let base: string;
 
 beforeAll(async () => {
   harness = await newPlatform();
-  await seedToken(harness, 'acct_http', 'http-smoke-token');
+  await seedToken(harness, 'usr_http', 'http-smoke-token');
   const app = new Server({ buildDeps: () => testDeps(harness) }).handler();
   await new Promise<void>((resolve) => {
     node = serve({ fetch: app.fetch, port: 0 }, () => resolve()) as NodeHttpServer;

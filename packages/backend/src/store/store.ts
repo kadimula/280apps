@@ -1,4 +1,4 @@
-// The control-plane database: accounts, apps, deploys, events. Blob bytes live in
+// The control-plane database: users, apps, deploys, events. Blob bytes live in
 // blobstore, so no index here drifts from them. Go (store.go) is normative. Deploys
 // are a state machine surviving process death with no sole-writer assumption: every
 // racy transition is a conditional UPDATE whose row count names the winner, every
@@ -19,7 +19,6 @@ import type { QueryResult } from 'pg';
 import {
   DeviceStatus,
   EventKind,
-  type Account,
   type App,
   type Deploy,
   type DeviceCode,
@@ -216,7 +215,7 @@ function toNum(v: unknown): number {
 }
 
 const appCols =
-  'id, account_id, slug, framework, url, script, salt, fingerprint, client_ref, store_id, active_deploy';
+  'id, user_id, slug, framework, url, script, salt, fingerprint, client_ref, store_id, active_deploy';
 
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
@@ -298,14 +297,10 @@ function decodeFailure(raw: string): DeployError | null {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 
-function rowToAccount(r: Row): Account {
-  return { id: r.id, subject: r.subject };
-}
-
 function rowToApp(r: Row): App {
   return {
     id: r.id,
-    accountId: r.account_id,
+    userId: r.user_id,
     slug: r.slug,
     framework: r.framework,
     url: r.url,
@@ -334,7 +329,7 @@ function rowToDeviceCode(r: Row): DeviceCode {
   return {
     deviceHash: r.device_hash,
     userCode: r.user_code,
-    accountId: r.account_id,
+    userId: r.user_id,
     status: r.status,
     expiresAt: toNum(r.expires_at),
   };
@@ -343,7 +338,7 @@ function rowToDeviceCode(r: Row): DeviceCode {
 function rowToEvent(r: Row): Event {
   return {
     id: toNum(r.id),
-    accountId: r.account_id,
+    userId: r.user_id,
     appId: r.app_id,
     deployId: r.deploy_id,
     kind: r.kind,
@@ -426,65 +421,27 @@ class PgStore implements Store {
       limit = maxEventPage;
     }
     const res = await this.db.query(
-      `SELECT id, account_id, app_id, deploy_id, kind, detail, created_at
+      `SELECT id, user_id, app_id, deploy_id, kind, detail, created_at
        FROM ${this.t('events')} ORDER BY created_at DESC, id DESC LIMIT $1`,
       [limit],
     );
     return res.rows.map(rowToEvent);
   }
 
-  async accountByToken(tokenHash: string): Promise<Account | null> {
+  async userByToken(tokenHash: string): Promise<User | null> {
     const res = await this.db.query(
-      `SELECT a.id, a.subject FROM ${this.t('accounts')} a
-       JOIN ${this.t('tokens')} t ON t.account_id = a.id
+      `SELECT u.id, u.email, u.name, u.image FROM ${this.t('users')} u
+       JOIN ${this.t('tokens')} t ON t.user_id = u.id
        WHERE t.token_hash = $1`,
       [tokenHash],
     );
-    return res.rows.length ? rowToAccount(res.rows[0]) : null;
+    return res.rows.length ? rowToUser(res.rows[0]) : null;
   }
 
-  async accountBySubject(subject: string): Promise<Account | null> {
-    const res = await this.db.query(
-      `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
-      [subject],
-    );
-    return res.rows.length ? rowToAccount(res.rows[0]) : null;
-  }
-
-  async createAccount(a: Account): Promise<void> {
+  async addToken(userId: string, tokenHash: string): Promise<void> {
     await this.db.query(
-      `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
-      [a.id, a.subject],
-    );
-  }
-
-  // The insert-then-read shape means two machines approving at once converge on
-  // one account rather than racing to create two.
-  async ensureAccount(subject: string, newId: string): Promise<Account> {
-    if (subject === '') {
-      throw new Error('ensure account: empty subject');
-    }
-    // The conflict target restates accounts_by_subject's WHERE clause: an upsert
-    // matches a partial index only when its predicate is repeated.
-    await this.db.query(
-      `INSERT INTO ${this.t('accounts')} (id, subject) VALUES ($1, $2)
-       ON CONFLICT (subject) WHERE subject <> '' DO NOTHING`,
-      [newId, subject],
-    );
-    const res = await this.db.query(
-      `SELECT id, subject FROM ${this.t('accounts')} WHERE subject = $1`,
-      [subject],
-    );
-    if (!res.rows.length) {
-      throw new Error('ensure account: row vanished after upsert');
-    }
-    return rowToAccount(res.rows[0]);
-  }
-
-  async addToken(accountId: string, tokenHash: string): Promise<void> {
-    await this.db.query(
-      `INSERT INTO ${this.t('tokens')} (token_hash, account_id) VALUES ($1, $2) ON CONFLICT (token_hash) DO NOTHING`,
-      [tokenHash, accountId],
+      `INSERT INTO ${this.t('tokens')} (token_hash, user_id) VALUES ($1, $2) ON CONFLICT (token_hash) DO NOTHING`,
+      [tokenHash, userId],
     );
   }
 
@@ -567,7 +524,7 @@ class PgStore implements Store {
   }
 
   // Sweeps the three time-boxed tables in one transaction; everything else in the
-  // schema (accounts, apps, deploys, events) is retained by design.
+  // schema (users, apps, deploys, events) is retained by design.
   async deleteExpired(now: number): Promise<ExpiryCounts> {
     return this.inTx(async (tx) => {
       const sessions = await tx.query(
@@ -599,7 +556,7 @@ class PgStore implements Store {
 
   async deviceCodeByHash(hash: string): Promise<DeviceCode | null> {
     const res = await this.db.query(
-      `SELECT device_hash, user_code, account_id, status, expires_at FROM ${this.t('device_codes')} WHERE device_hash = $1`,
+      `SELECT device_hash, user_code, user_id, status, expires_at FROM ${this.t('device_codes')} WHERE device_hash = $1`,
       [hash],
     );
     return res.rows.length ? rowToDeviceCode(res.rows[0]) : null;
@@ -607,17 +564,17 @@ class PgStore implements Store {
 
   // Reports false if the code is unknown, expired, or already past pending, so a
   // replayed approval cannot re-open a claimed login.
-  async approveDeviceCode(userCode: string, accountId: string, now: number): Promise<boolean> {
+  async approveDeviceCode(userCode: string, userId: string, now: number): Promise<boolean> {
     return this.inTx(async (tx) => {
       const res = await tx.query(
-        `UPDATE ${this.t('device_codes')} SET status = $1, account_id = $2
+        `UPDATE ${this.t('device_codes')} SET status = $1, user_id = $2
          WHERE user_code = $3 AND status = $4 AND expires_at > $5`,
-        [DeviceStatus.Approved, accountId, userCode, DeviceStatus.Pending, now],
+        [DeviceStatus.Approved, userId, userCode, DeviceStatus.Pending, now],
       );
       if (res.rowCount !== 1) {
         return false;
       }
-      await this.insertEvent(tx, { accountId, kind: EventKind.LoginApproved });
+      await this.insertEvent(tx, { userId, kind: EventKind.LoginApproved });
       return true;
     });
   }
@@ -625,66 +582,66 @@ class PgStore implements Store {
   // Exactly one poll may mint a token for a given code.
   async claimDeviceCode(deviceHash: string): Promise<boolean> {
     return this.inTx(async (tx) => {
-      // RETURNING rather than a row count: the winner needs the account the code
+      // RETURNING rather than a row count: the winner needs the user the code
       // was approved for, which the caller does not have.
       const res = await tx.query(
         `UPDATE ${this.t('device_codes')} SET status = $1 WHERE device_hash = $2 AND status = $3
-         RETURNING account_id`,
+         RETURNING user_id`,
         [DeviceStatus.Claimed, deviceHash, DeviceStatus.Approved],
       );
       if (res.rowCount !== 1) {
         return false;
       }
       await this.insertEvent(tx, {
-        accountId: res.rows[0].account_id,
+        userId: res.rows[0].user_id,
         kind: EventKind.LoginClaimed,
       });
       return true;
     });
   }
 
-  async app(accountId: string, appId: string): Promise<App | null> {
+  async app(userId: string, appId: string): Promise<App | null> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2`,
-      [accountId, appId],
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND id = $2`,
+      [userId, appId],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 
   // More than one match is the ambiguous_identity case.
-  async appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]> {
+  async appsByFingerprint(userId: string, fingerprint: string): Promise<App[]> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
-      [accountId, fingerprint],
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
+      [userId, fingerprint],
     );
     return res.rows.map(rowToApp);
   }
 
-  async appsByAccount(accountId: string): Promise<App[]> {
+  async appsByUser(userId: string): Promise<App[]> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 ORDER BY created_at DESC, id`,
-      [accountId],
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 ORDER BY created_at DESC, id`,
+      [userId],
     );
     return res.rows.map(rowToApp);
   }
 
-  async appByClientRef(accountId: string, ref: string): Promise<App | null> {
+  async appByClientRef(userId: string, ref: string): Promise<App | null> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE account_id = $1 AND client_ref = $2`,
-      [accountId, ref],
+      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND client_ref = $2`,
+      [userId, ref],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 
   async createApp(a: App): Promise<void> {
     await this.inTx(async (tx) => {
-      // No ON CONFLICT: the create-dedup guard is the unique index on (account,
+      // No ON CONFLICT: the create-dedup guard is the unique index on (user,
       // clientRef), and losing that race must stay an error the caller resolves.
       await tx.query(
         `INSERT INTO ${this.t('apps')} (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           a.id,
-          a.accountId,
+          a.userId,
           a.slug,
           a.framework,
           a.url,
@@ -697,7 +654,7 @@ class PgStore implements Store {
         ],
       );
       await this.insertEvent(tx, {
-        accountId: a.accountId,
+        userId: a.userId,
         appId: a.id,
         kind: EventKind.AppCreated,
         detail: eventDetail({ slug: a.slug, framework: a.framework }),
@@ -705,13 +662,13 @@ class PgStore implements Store {
     });
   }
 
-  // Scoped by account like every other app read, so one tenant cannot delete
+  // Scoped by user like every other app read, so one tenant cannot delete
   // another's app by guessing an id. The events the app produced stay behind.
-  async deleteApp(accountId: string, appId: string): Promise<boolean> {
+  async deleteApp(userId: string, appId: string): Promise<boolean> {
     return this.inTx(async (tx) => {
       const del = await tx.query(
-        `DELETE FROM ${this.t('apps')} WHERE account_id = $1 AND id = $2 RETURNING slug`,
-        [accountId, appId],
+        `DELETE FROM ${this.t('apps')} WHERE user_id = $1 AND id = $2 RETURNING slug`,
+        [userId, appId],
       );
       if (del.rowCount !== 1) {
         return false; // already gone; deleting twice is not a failure
@@ -721,10 +678,10 @@ class PgStore implements Store {
       // inherits another life's access or route gates.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
       await tx.query(`DELETE FROM ${this.t('app_policies')} WHERE app_id = $1`, [appId]);
-      // insertEvent, not insertAppEvent: the app row it would read the account
+      // insertEvent, not insertAppEvent: the app row it would read the user
       // from no longer exists.
       await this.insertEvent(tx, {
-        accountId,
+        userId,
         appId,
         kind: EventKind.AppDeleted,
         detail: eventDetail({ slug: del.rows[0].slug }),
@@ -819,10 +776,9 @@ class PgStore implements Store {
   }
 
   // registerPolicy persists the live manifest's enforced sections and seeds the
-  // owner's grant, both idempotent. The owner is resolved through account.subject =
-  // user.id (the OIDC sub); an open-signup account with no user has no email, so no
-  // owner grant is seeded and ownerTenant stays empty (anyone-at-tenant fails closed
-  // until the builder shares in the dialog).
+  // owner's grant, both idempotent. The owner is the app's user; if that user row is
+  // missing it has no email, so no owner grant is seeded and ownerTenant stays empty
+  // (anyone-at-tenant fails closed until the builder shares in the dialog).
   private async registerPolicy(
     tx: Queryable,
     appId: string,
@@ -838,8 +794,7 @@ class PgStore implements Store {
 
     const ownerRes = await tx.query(
       `SELECT u.email AS email FROM ${this.t('apps')} ap
-       JOIN ${this.t('accounts')} a ON a.id = ap.account_id
-       JOIN ${this.t('users')} u ON u.id = a.subject
+       JOIN ${this.t('users')} u ON u.id = ap.user_id
        WHERE ap.id = $1`,
       [appId],
     );
@@ -982,7 +937,7 @@ class PgStore implements Store {
     return res.rows.length ? rowToAppPolicy(res.rows[0]) : null;
   }
 
-  // A single append to the events table, denormalizing the account from the app row.
+  // A single append to the events table, denormalizing the user from the app row.
   // Callers treat this as best-effort (they swallow its error), so a slow or failed
   // audit write never turns a served request into an error.
   async recordAppAccess(e: {
@@ -994,24 +949,24 @@ class PgStore implements Store {
     const kind = e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied;
     const detail = e.detail ?? eventDetail({ principal: e.principal });
     await this.db.query(
-      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail)
-       SELECT account_id, id, '', $1, $2 FROM ${this.t('apps')} WHERE id = $3`,
+      `INSERT INTO ${this.t('events')} (user_id, app_id, deploy_id, kind, detail)
+       SELECT user_id, id, '', $1, $2 FROM ${this.t('apps')} WHERE id = $3`,
       [kind, detail, e.appId],
     );
   }
 
   private async insertEvent(
     x: Queryable,
-    e: { accountId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
+    e: { userId?: string; appId?: string; deployId?: string; kind: string; detail?: string },
   ): Promise<void> {
     await x.query(
-      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail) VALUES ($1,$2,$3,$4,$5)`,
-      [e.accountId ?? '', e.appId ?? '', e.deployId ?? '', e.kind, e.detail ?? ''],
+      `INSERT INTO ${this.t('events')} (user_id, app_id, deploy_id, kind, detail) VALUES ($1,$2,$3,$4,$5)`,
+      [e.userId ?? '', e.appId ?? '', e.deployId ?? '', e.kind, e.detail ?? ''],
     );
   }
 
-  // Takes the account from the app row, so deploy transitions that know only an
-  // app id need not thread an account through only to denormalize it here.
+  // Takes the user from the app row, so deploy transitions that know only an
+  // app id need not thread a user through only to denormalize it here.
   private async insertAppEvent(
     x: Queryable,
     appId: string,
@@ -1020,8 +975,8 @@ class PgStore implements Store {
     detail: string,
   ): Promise<void> {
     await x.query(
-      `INSERT INTO ${this.t('events')} (account_id, app_id, deploy_id, kind, detail)
-       SELECT account_id, id, $1, $2, $3 FROM ${this.t('apps')} WHERE id = $4`,
+      `INSERT INTO ${this.t('events')} (user_id, app_id, deploy_id, kind, detail)
+       SELECT user_id, id, $1, $2, $3 FROM ${this.t('apps')} WHERE id = $4`,
       [deployId, kind, detail, appId],
     );
   }

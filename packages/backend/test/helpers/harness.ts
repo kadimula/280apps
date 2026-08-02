@@ -80,17 +80,24 @@ export async function newPlatform(opts: { appDomain?: string; hostSuffix?: strin
   };
 }
 
-// returns a Service scoped to an account, creating the account first.
-export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Service> {
-  await h.store.createAccount({ id: accountId, subject: '' });
-  return h.platform.for(accountId);
+// returns a Service scoped to a user, creating the user first. The email is derived
+// from the id so distinct ids never collide on the unique users_by_email index.
+export async function portFor(h: Harness, userId = 'usr_test'): Promise<Service> {
+  await ensureUser(h, userId);
+  return h.platform.for(userId);
 }
 
-// seeds an account and binds a CLI bearer token to it, mirroring api.ts hashToken
-// (sha256 hex) so authorize() resolves the token to accountId.
-export async function seedToken(h: Harness, accountId: string, token: string): Promise<void> {
-  await h.store.createAccount({ id: accountId, subject: '' });
-  await h.store.addToken(accountId, createHash('sha256').update(token, 'utf8').digest('hex'));
+// seeds a user and binds a CLI bearer token to it, mirroring api.ts hashToken
+// (sha256 hex) so authorize() resolves the token to the user.
+export async function seedToken(h: Harness, userId: string, token: string): Promise<void> {
+  await ensureUser(h, userId);
+  await h.store.addToken(userId, createHash('sha256').update(token, 'utf8').digest('hex'));
+}
+
+async function ensureUser(h: Harness, userId: string): Promise<void> {
+  if ((await h.store.userById(userId)) === null) {
+    await h.store.createUser({ id: userId, email: `${userId}@test`, name: '', image: '' });
+  }
 }
 
 // The test-facing surface: per-request config a case wants on the deps container,

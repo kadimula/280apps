@@ -8,14 +8,8 @@ import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy } from '@280/co
 
 export type { AppPolicy } from '@280/contracts';
 
-// subject is the owning user's id; empty only in legacy or test rows.
-export interface Account {
-  id: string;
-  subject: string;
-}
-
-// id is the subject the platform keys accounts on, so preserving ids across the
-// next-auth migration is what keeps existing users' apps attached to them.
+// id is the OIDC-stable principal every resource keys on, so preserving ids across
+// the next-auth migration is what keeps existing users' apps attached to them.
 export interface User {
   id: string;
   email: string;
@@ -50,7 +44,7 @@ export type DeviceStatus = (typeof DeviceStatus)[keyof typeof DeviceStatus];
 export interface DeviceCode {
   deviceHash: string;
   userCode: string;
-  accountId: string; // set on approval
+  userId: string; // set on approval
   status: string;
   expiresAt: number; // unix seconds
 }
@@ -58,7 +52,7 @@ export interface DeviceCode {
 // Script and URL are assigned at creation and never change.
 export interface App {
   id: string;
-  accountId: string;
+  userId: string;
   slug: string;
   framework: string;
   url: string; // https://<slug>-<token>.<domain>
@@ -99,7 +93,7 @@ export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
 export interface Event {
   id: number;
-  accountId: string;
+  userId: string;
   appId: string;
   deployId: string;
   kind: string;
@@ -143,11 +137,8 @@ export interface Store {
 
   recentEvents(limit: number): Promise<Event[]>;
 
-  accountByToken(tokenHash: string): Promise<Account | null>;
-  accountBySubject(subject: string): Promise<Account | null>;
-  createAccount(a: Account): Promise<void>;
-  ensureAccount(subject: string, newId: string): Promise<Account>;
-  addToken(accountId: string, tokenHash: string): Promise<void>;
+  userByToken(tokenHash: string): Promise<User | null>;
+  addToken(userId: string, tokenHash: string): Promise<void>;
 
   // The identity the backend owns once login moves off the frontend: users key on
   // a stable id, oauth logins on the provider's handle, sessions on a hashed token.
@@ -170,15 +161,15 @@ export interface Store {
 
   createDeviceCode(d: DeviceCode): Promise<void>;
   deviceCodeByHash(hash: string): Promise<DeviceCode | null>;
-  approveDeviceCode(userCode: string, accountId: string, now: number): Promise<boolean>;
+  approveDeviceCode(userCode: string, userId: string, now: number): Promise<boolean>;
   claimDeviceCode(deviceHash: string): Promise<boolean>;
 
-  app(accountId: string, appId: string): Promise<App | null>;
-  appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]>;
-  appsByAccount(accountId: string): Promise<App[]>;
-  appByClientRef(accountId: string, ref: string): Promise<App | null>;
+  app(userId: string, appId: string): Promise<App | null>;
+  appsByFingerprint(userId: string, fingerprint: string): Promise<App[]>;
+  appsByUser(userId: string): Promise<App[]>;
+  appByClientRef(userId: string, ref: string): Promise<App | null>;
   createApp(a: App): Promise<void>;
-  deleteApp(accountId: string, appId: string): Promise<boolean>;
+  deleteApp(userId: string, appId: string): Promise<boolean>;
   setStoreId(appId: string, storeId: string): Promise<void>;
   appByScript(script: string): Promise<App | null>;
 

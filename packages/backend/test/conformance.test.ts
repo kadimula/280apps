@@ -15,7 +15,7 @@ afterEach(async () => {
 describe('deploy conformance (in-process Service)', () => {
   for (const c of conformance.cases) {
     it(c.name, async () => {
-      // fresh empty account per case, built before run() so the factory it
+      // fresh empty user per case, built before run() so the factory it
       // calls can stay synchronous
       const h = await newPlatform();
       live.push(h);

@@ -30,7 +30,7 @@ function appFixture(over: Partial<App> = {}): App {
   seq++;
   return {
     id: over.id ?? `app_${seq.toString(16).padStart(12, '0')}`,
-    accountId: over.accountId ?? 'acct_test',
+    userId: over.userId ?? 'usr_test',
     slug: over.slug ?? 'demo',
     framework: over.framework ?? 'static',
     url: over.url ?? `https://demo-${seq}.280apps.run`,
@@ -66,13 +66,15 @@ describe.skipIf(!hasDatabase())('store', () => {
     await admin.connect();
     try {
       const first = await open(base, schema);
-      await first.createAccount({ id: 'acct_mig', subject: 'sub-mig' });
+      await first.createUser({ id: 'usr_mig', email: 'mig@example.com', name: 'Mig', image: '' });
       await first.close();
       // re-open: migrations run again against a populated schema, data intact
       const second = await open(base, schema);
-      expect(await second.accountBySubject('sub-mig')).toEqual({
-        id: 'acct_mig',
-        subject: 'sub-mig',
+      expect(await second.userById('usr_mig')).toEqual({
+        id: 'usr_mig',
+        email: 'mig@example.com',
+        name: 'Mig',
+        image: '',
       });
       await second.close();
     } finally {
@@ -81,51 +83,26 @@ describe.skipIf(!hasDatabase())('store', () => {
     }
   });
 
-  it('createAccount is idempotent on id (DO NOTHING keeps the first row)', async () => {
-    await store.createAccount({ id: 'acct_1', subject: 'sub-a' });
-    // ON CONFLICT (id) DO NOTHING: the second insert is a no-op, original survives
-    await store.createAccount({ id: 'acct_1', subject: 'sub-b' });
-    expect(await store.accountBySubject('sub-a')).toEqual({ id: 'acct_1', subject: 'sub-a' });
-    expect(await store.accountBySubject('sub-b')).toBeNull();
-  });
-
-  it('accountByToken joins tokens to accounts', async () => {
-    await store.createAccount({ id: 'acct_1', subject: 'sub-1' });
-    await store.addToken('acct_1', 'hash-1');
-    const a = await store.accountByToken('hash-1');
-    expect(a).toEqual({ id: 'acct_1', subject: 'sub-1' });
-    expect(await store.accountByToken('nope')).toBeNull();
+  it('userByToken joins tokens to users', async () => {
+    await store.createUser({ id: 'usr_1', email: 'u1@example.com', name: 'U1', image: '' });
+    await store.addToken('usr_1', 'hash-1');
+    const u = await store.userByToken('hash-1');
+    expect(u).toEqual({ id: 'usr_1', email: 'u1@example.com', name: 'U1', image: '' });
+    expect(await store.userByToken('nope')).toBeNull();
   });
 
   it('addToken is idempotent on token hash', async () => {
-    await store.createAccount({ id: 'acct_1', subject: '' });
-    await store.addToken('acct_1', 'hash-1');
-    await store.addToken('acct_1', 'hash-1'); // ON CONFLICT DO NOTHING
-    expect(await store.accountByToken('hash-1')).toEqual({ id: 'acct_1', subject: '' });
-  });
-
-  it('ensureAccount creates on first sight and converges on the second', async () => {
-    const first = await store.ensureAccount('sub-1', 'acct_new_1');
-    expect(first).toEqual({ id: 'acct_new_1', subject: 'sub-1' });
-    // a different candidate id must return the existing row: the partial unique
-    // index deduped rather than inserting a twin
-    const second = await store.ensureAccount('sub-1', 'acct_new_2');
-    expect(second).toEqual({ id: 'acct_new_1', subject: 'sub-1' });
-  });
-
-  it('ensureAccount rejects an empty subject', async () => {
-    await expect(store.ensureAccount('', 'acct_x')).rejects.toThrow(/empty subject/);
-  });
-
-  it('accountBySubject is read-only and returns null for the unknown', async () => {
-    expect(await store.accountBySubject('ghost')).toBeNull();
+    await store.createUser({ id: 'usr_1', email: 'u1@example.com', name: '', image: '' });
+    await store.addToken('usr_1', 'hash-1');
+    await store.addToken('usr_1', 'hash-1'); // ON CONFLICT DO NOTHING
+    expect((await store.userByToken('hash-1'))?.id).toBe('usr_1');
   });
 
   function deviceFixture(over: Partial<DeviceCode> = {}): DeviceCode {
     return {
       deviceHash: over.deviceHash ?? 'dev-hash',
       userCode: over.userCode ?? 'ABCD-1234',
-      accountId: over.accountId ?? '',
+      userId: over.userId ?? '',
       status: over.status ?? DeviceStatus.Pending,
       expiresAt: over.expiresAt ?? now() + 600,
     };
@@ -137,36 +114,33 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(d).toMatchObject({
       deviceHash: 'dev-hash',
       userCode: 'ABCD-1234',
-      accountId: '',
+      userId: '',
       status: DeviceStatus.Pending,
     });
     expect(await store.deviceCodeByHash('missing')).toBeNull();
   });
 
   it('approveDeviceCode binds a pending code and reports true once', async () => {
-    await store.createAccount({ id: 'acct_1', subject: 'sub-1' });
     await store.createDeviceCode(deviceFixture());
-    expect(await store.approveDeviceCode('ABCD-1234', 'acct_1', now())).toBe(true);
+    expect(await store.approveDeviceCode('ABCD-1234', 'usr_1', now())).toBe(true);
     const d = await store.deviceCodeByHash('dev-hash');
     expect(d?.status).toBe(DeviceStatus.Approved);
-    expect(d?.accountId).toBe('acct_1');
+    expect(d?.userId).toBe('usr_1');
     // a replayed approval on an already-approved code cannot re-open it
-    expect(await store.approveDeviceCode('ABCD-1234', 'acct_1', now())).toBe(false);
+    expect(await store.approveDeviceCode('ABCD-1234', 'usr_1', now())).toBe(false);
   });
 
   it('approveDeviceCode is false for unknown, expired, or claimed codes', async () => {
-    await store.createAccount({ id: 'acct_1', subject: 'sub-1' });
-    expect(await store.approveDeviceCode('NOPE-0000', 'acct_1', now())).toBe(false);
+    expect(await store.approveDeviceCode('NOPE-0000', 'usr_1', now())).toBe(false);
     await store.createDeviceCode(
       deviceFixture({ deviceHash: 'expired', userCode: 'EXPD-0001', expiresAt: now() - 1 }),
     );
-    expect(await store.approveDeviceCode('EXPD-0001', 'acct_1', now())).toBe(false);
+    expect(await store.approveDeviceCode('EXPD-0001', 'usr_1', now())).toBe(false);
   });
 
   it('claimDeviceCode lets exactly one caller win', async () => {
-    await store.createAccount({ id: 'acct_1', subject: 'sub-1' });
     await store.createDeviceCode(deviceFixture());
-    await store.approveDeviceCode('ABCD-1234', 'acct_1', now());
+    await store.approveDeviceCode('ABCD-1234', 'usr_1', now());
 
     const results = await Promise.all([
       store.claimDeviceCode('dev-hash'),
@@ -209,23 +183,22 @@ describe.skipIf(!hasDatabase())('store', () => {
   });
 
   it('createApp writes the app and an app.created event', async () => {
-    await store.createAccount({ id: 'acct_test', subject: '' });
     const a = appFixture({ slug: 'my-app', framework: 'next' });
     await store.createApp(a);
-    expect(await store.app('acct_test', a.id)).toEqual(a);
+    expect(await store.app('usr_test', a.id)).toEqual(a);
     const events = await store.recentEvents(10);
     expect(events[0]).toMatchObject({
       kind: EventKind.AppCreated,
       appId: a.id,
-      accountId: 'acct_test',
+      userId: 'usr_test',
     });
     expect(JSON.parse(events[0]!.detail)).toEqual({ slug: 'my-app', framework: 'next' });
   });
 
   it('app reads are account-scoped', async () => {
-    const a = appFixture({ accountId: 'acct_test' });
+    const a = appFixture({ userId: 'usr_test' });
     await store.createApp(a);
-    expect(await store.app('acct_other', a.id)).toBeNull();
+    expect(await store.app('usr_other', a.id)).toBeNull();
   });
 
   it('createApp rejects a duplicate client_ref within an account', async () => {
@@ -240,7 +213,7 @@ describe.skipIf(!hasDatabase())('store', () => {
   it('createApp allows many empty client_refs (partial index)', async () => {
     await store.createApp(appFixture({ clientRef: '' }));
     await store.createApp(appFixture({ clientRef: '' }));
-    expect(await store.appsByAccount('acct_test')).toHaveLength(2);
+    expect(await store.appsByUser('usr_test')).toHaveLength(2);
   });
 
   it('script column is globally unique', async () => {
@@ -255,15 +228,15 @@ describe.skipIf(!hasDatabase())('store', () => {
     const b = appFixture({ id: 'app_b', fingerprint: 'fp-1' });
     await store.createApp(a);
     await store.createApp(b);
-    const got = await store.appsByFingerprint('acct_test', 'fp-1');
+    const got = await store.appsByFingerprint('usr_test', 'fp-1');
     expect(got.map((x) => x.id)).toEqual(['app_a', 'app_b']);
   });
 
   it('appByClientRef resolves the dedup nonce', async () => {
     const a = appFixture({ clientRef: 'ref-1' });
     await store.createApp(a);
-    expect((await store.appByClientRef('acct_test', 'ref-1'))?.id).toBe(a.id);
-    expect(await store.appByClientRef('acct_test', 'missing')).toBeNull();
+    expect((await store.appByClientRef('usr_test', 'ref-1'))?.id).toBe(a.id);
+    expect(await store.appByClientRef('usr_test', 'missing')).toBeNull();
   });
 
   it('appByScript resolves a hostname label', async () => {
@@ -277,7 +250,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     const a = appFixture();
     await store.createApp(a);
     await store.setStoreId(a.id, 'store-xyz');
-    expect((await store.app('acct_test', a.id))?.storeId).toBe('store-xyz');
+    expect((await store.app('usr_test', a.id))?.storeId).toBe('store-xyz');
   });
 
   it('deleteApp removes the app and its deploys, keeps events, is idempotent', async () => {
@@ -290,11 +263,11 @@ describe.skipIf(!hasDatabase())('store', () => {
       state: State.Uploading,
       failure: null,
     });
-    expect(await store.deleteApp('acct_test', a.id)).toBe(true);
-    expect(await store.app('acct_test', a.id)).toBeNull();
+    expect(await store.deleteApp('usr_test', a.id)).toBe(true);
+    expect(await store.app('usr_test', a.id)).toBeNull();
     expect(await store.deploy(a.id, 'dep_1')).toBeNull();
     // the history stays behind; deleting twice is not a failure
-    expect(await store.deleteApp('acct_test', a.id)).toBe(false);
+    expect(await store.deleteApp('usr_test', a.id)).toBe(false);
     const kinds = (await store.recentEvents(50)).map((e) => e.kind);
     expect(kinds).toContain(EventKind.AppDeleted);
     expect(kinds).toContain(EventKind.AppCreated);
@@ -303,8 +276,8 @@ describe.skipIf(!hasDatabase())('store', () => {
   it('deleteApp is account-scoped', async () => {
     const a = appFixture();
     await store.createApp(a);
-    expect(await store.deleteApp('acct_other', a.id)).toBe(false);
-    expect(await store.app('acct_test', a.id)).not.toBeNull();
+    expect(await store.deleteApp('usr_other', a.id)).toBe(false);
+    expect(await store.app('usr_test', a.id)).not.toBeNull();
   });
 
   it('openDeploy creates then reopens a failed deploy', async () => {
@@ -398,7 +371,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     });
     await store.claimActivation(a.id, 'dep_v1');
     await store.finishLive(a.id, 'dep_v1');
-    expect((await store.app('acct_test', a.id))?.activeDeploy).toBe('dep_v1');
+    expect((await store.app('usr_test', a.id))?.activeDeploy).toBe('dep_v1');
     expect((await store.deploy(a.id, 'dep_v1'))?.state).toBe(State.Live);
 
     // v2 goes live: the v1 row must be deleted so a revert to v1 re-activates
@@ -411,7 +384,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     });
     await store.claimActivation(a.id, 'dep_v2');
     await store.finishLive(a.id, 'dep_v2');
-    expect((await store.app('acct_test', a.id))?.activeDeploy).toBe('dep_v2');
+    expect((await store.app('usr_test', a.id))?.activeDeploy).toBe('dep_v2');
     expect(await store.deploy(a.id, 'dep_v1')).toBeNull(); // superseded row gone
     expect((await store.deploy(a.id, 'dep_v2'))?.state).toBe(State.Live);
 
@@ -462,7 +435,6 @@ describe.skipIf(!hasDatabase())('store', () => {
   });
 
   it('recentEvents returns newest first and caps the page', async () => {
-    await store.createAccount({ id: 'acct_test', subject: '' });
     const first = appFixture({ id: 'app_first', slug: 'first' });
     const second = appFixture({ id: 'app_second', slug: 'second' });
     await store.createApp(first);

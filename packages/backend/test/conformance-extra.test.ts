@@ -1,6 +1,6 @@
 // Ported from platform/conformance_test.go: the tenancy, activation-recovery,
 // revert, and blob-scoping claims the shared conformance suite (W1) cannot make,
-// since it only exercises one already-authenticated account. Run against the
+// since it only exercises one already-authenticated user. Run against the
 // deploy Service (in-process) and the HTTP router.
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,11 +34,11 @@ async function expectCode(fn: () => Promise<unknown>, code: string): Promise<voi
   }
 }
 
-describe('AccountsAreIsolated', () => {
-  it('scopes autolink, addressing, and delete by account', async () => {
+describe('UsersAreIsolated', () => {
+  it('scopes autolink, addressing, and delete by user', async () => {
     const { app, harness } = await server({});
-    await seedToken(harness, 'acct_alice', 'alice-token');
-    await seedToken(harness, 'acct_bob', 'bob-token');
+    await seedToken(harness, 'usr_alice', 'alice-token');
+    await seedToken(harness, 'usr_bob', 'bob-token');
     const { manifest } = testManifest();
     const id = { slug: 'demo', framework: 'static', gitRemote: 'git@github.com:x/demo.git' };
 

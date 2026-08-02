@@ -60,10 +60,9 @@ async function ownerApp(email = 'boss@firm.com'): Promise<{ app: Hono<HonoEnv>; 
 
   const meRes = await s.app.request('/auth/me', { headers: { Cookie: session } });
   const userId = ((await meRes.json()) as { user: { id: string } }).user.id;
-  const acct = await harness.store.ensureAccount(userId, 'acct_' + userId);
 
   const { manifest, digest, body } = policyManifest();
-  const svc = harness.platform.for(acct.id);
+  const svc = harness.platform.for(userId);
   const res = await svc.sync({ identity: ident(), manifest });
   if (res.missing.length > 0) await svc.putBlob(res.app.id, digest, body.byteLength, bodyOf(body));
 

@@ -15,7 +15,6 @@ import {
 import {
   DeviceStatus,
   EventKind,
-  type Account,
   type App,
   type Deploy,
   type DeviceCode,
@@ -30,8 +29,7 @@ import {
 
 export class MemoryStore implements Store {
   private seq = 0;
-  private readonly accounts = new Map<string, Account>();
-  private readonly tokens = new Map<string, string>(); // tokenHash -> accountId
+  private readonly tokens = new Map<string, string>(); // tokenHash -> userId
   private readonly deviceByHash = new Map<string, DeviceCode>();
   private readonly apps = new Map<string, StoredApp>();
   private readonly deploys = new Map<string, StoredDeploy>(); // `${appId}/${id}`
@@ -49,10 +47,10 @@ export class MemoryStore implements Store {
     return [...this.events].reverse().slice(0, limit).map((e) => ({ ...e }));
   }
 
-  private record(e: { accountId?: string; appId?: string; kind: string; detail?: string }): void {
+  private record(e: { userId?: string; appId?: string; kind: string; detail?: string }): void {
     this.events.push({
       id: ++this.seq,
-      accountId: e.accountId ?? '',
+      userId: e.userId ?? '',
       appId: e.appId ?? '',
       deployId: '',
       kind: e.kind,
@@ -61,40 +59,19 @@ export class MemoryStore implements Store {
     });
   }
 
-  private accountIdFor(appId: string): string {
-    return this.apps.get(appId)?.accountId ?? '';
+  private userIdFor(appId: string): string {
+    return this.apps.get(appId)?.userId ?? '';
   }
 
-  async accountByToken(tokenHash: string): Promise<Account | null> {
+  async userByToken(tokenHash: string): Promise<User | null> {
     const id = this.tokens.get(tokenHash);
     if (id === undefined) return null;
-    const a = this.accounts.get(id);
-    return a ? { ...a } : null;
+    const u = this.users.get(id);
+    return u ? { ...u } : null;
   }
 
-  async accountBySubject(subject: string): Promise<Account | null> {
-    for (const a of this.accounts.values()) {
-      if (a.subject !== '' && a.subject === subject) return { ...a };
-    }
-    return null;
-  }
-
-  async createAccount(a: Account): Promise<void> {
-    // ON CONFLICT (id) DO NOTHING
-    if (!this.accounts.has(a.id)) this.accounts.set(a.id, { ...a });
-  }
-
-  async ensureAccount(subject: string, newId: string): Promise<Account> {
-    if (subject === '') throw new Error('ensure account: empty subject');
-    const existing = await this.accountBySubject(subject);
-    if (existing !== null) return existing;
-    const a: Account = { id: newId, subject };
-    this.accounts.set(a.id, a);
-    return { ...a };
-  }
-
-  async addToken(accountId: string, tokenHash: string): Promise<void> {
-    if (!this.tokens.has(tokenHash)) this.tokens.set(tokenHash, accountId);
+  async addToken(userId: string, tokenHash: string): Promise<void> {
+    if (!this.tokens.has(tokenHash)) this.tokens.set(tokenHash, userId);
   }
 
   async userById(id: string): Promise<User | null> {
@@ -188,11 +165,11 @@ export class MemoryStore implements Store {
     return d ? { ...d } : null;
   }
 
-  async approveDeviceCode(userCode: string, accountId: string, now: number): Promise<boolean> {
+  async approveDeviceCode(userCode: string, userId: string, now: number): Promise<boolean> {
     for (const d of this.deviceByHash.values()) {
       if (d.userCode === userCode && d.status === DeviceStatus.Pending && d.expiresAt > now) {
         d.status = DeviceStatus.Approved;
-        d.accountId = accountId;
+        d.userId = userId;
         return true;
       }
     }
@@ -208,28 +185,28 @@ export class MemoryStore implements Store {
     return false;
   }
 
-  async app(accountId: string, appId: string): Promise<App | null> {
+  async app(userId: string, appId: string): Promise<App | null> {
     const a = this.apps.get(appId);
-    return a && a.accountId === accountId ? cloneApp(a) : null;
+    return a && a.userId === userId ? cloneApp(a) : null;
   }
 
-  async appsByFingerprint(accountId: string, fingerprint: string): Promise<App[]> {
+  async appsByFingerprint(userId: string, fingerprint: string): Promise<App[]> {
     return [...this.apps.values()]
-      .filter((a) => a.accountId === accountId && a.fingerprint === fingerprint)
+      .filter((a) => a.userId === userId && a.fingerprint === fingerprint)
       .sort((x, y) => x.createdAt - y.createdAt || cmp(x.id, y.id))
       .map(cloneApp);
   }
 
-  async appsByAccount(accountId: string): Promise<App[]> {
+  async appsByUser(userId: string): Promise<App[]> {
     return [...this.apps.values()]
-      .filter((a) => a.accountId === accountId)
+      .filter((a) => a.userId === userId)
       .sort((x, y) => y.createdAt - x.createdAt || cmp(x.id, y.id))
       .map(cloneApp);
   }
 
-  async appByClientRef(accountId: string, ref: string): Promise<App | null> {
+  async appByClientRef(userId: string, ref: string): Promise<App | null> {
     for (const a of this.apps.values()) {
-      if (a.accountId === accountId && a.clientRef !== '' && a.clientRef === ref) return cloneApp(a);
+      if (a.userId === userId && a.clientRef !== '' && a.clientRef === ref) return cloneApp(a);
     }
     return null;
   }
@@ -238,17 +215,17 @@ export class MemoryStore implements Store {
     // script is globally UNIQUE
     for (const e of this.apps.values()) {
       if (e.script === a.script) throw new Error('duplicate script');
-      // (account, clientRef) is UNIQUE where clientRef <> ''
-      if (a.clientRef !== '' && e.accountId === a.accountId && e.clientRef === a.clientRef) {
+      // (user, clientRef) is UNIQUE where clientRef <> ''
+      if (a.clientRef !== '' && e.userId === a.userId && e.clientRef === a.clientRef) {
         throw new Error('duplicate client ref');
       }
     }
     this.apps.set(a.id, { ...a, createdAt: this.seq++ });
   }
 
-  async deleteApp(accountId: string, appId: string): Promise<boolean> {
+  async deleteApp(userId: string, appId: string): Promise<boolean> {
     const a = this.apps.get(appId);
-    if (!a || a.accountId !== accountId) return false;
+    if (!a || a.userId !== userId) return false;
     this.apps.delete(appId);
     for (const key of [...this.deploys.keys()]) {
       if (this.deploys.get(key)!.appId === appId) this.deploys.delete(key);
@@ -330,8 +307,8 @@ export class MemoryStore implements Store {
   }
 
   // Mirrors PgStore.registerPolicy: persist the live manifest's policy, seed the
-  // owner's grant, and record the audit event. Owner resolves through
-  // account.subject = user.id like the real store.
+  // owner's grant, and record the audit event. Owner is the app's user, like the
+  // real store.
   private registerPolicy(appId: string, d: StoredDeploy): void {
     let policy;
     try {
@@ -339,8 +316,7 @@ export class MemoryStore implements Store {
     } catch {
       return;
     }
-    const account = this.accounts.get(this.accountIdFor(appId));
-    const ownerEmail = account && account.subject !== '' ? (this.users.get(account.subject)?.email ?? '') : '';
+    const ownerEmail = this.users.get(this.userIdFor(appId))?.email ?? '';
     const ownerTenant = ownerEmail !== '' ? tenantFromEmail(ownerEmail) : '';
     const existing = this.policies.get(appId);
     this.policies.set(appId, {
@@ -364,7 +340,7 @@ export class MemoryStore implements Store {
       });
     }
     this.record({
-      accountId: this.accountIdFor(appId),
+      userId: this.userIdFor(appId),
       appId,
       kind: EventKind.PolicyRegistered,
       detail: JSON.stringify({ access: policy.access, roles: String(policy.roles.length), routes: String(policy.routes.length) }),
@@ -378,7 +354,7 @@ export class MemoryStore implements Store {
 
   async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void> {
     this.record({
-      accountId: this.accountIdFor(e.appId),
+      userId: this.userIdFor(e.appId),
       appId: e.appId,
       kind: e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied,
       detail: e.detail ?? JSON.stringify({ principal: e.principal }),
@@ -396,7 +372,7 @@ export class MemoryStore implements Store {
     // Upsert on (appId, principal): re-granting replaces the role in place.
     this.grants.set(grantKey(g.appId, g.principal), cloneGrant(g));
     this.record({
-      accountId: this.accountIdFor(g.appId),
+      userId: this.userIdFor(g.appId),
       appId: g.appId,
       kind: EventKind.GrantAdded,
       detail: JSON.stringify({ principal: g.principal, appRole: g.appRole, featureRole: g.featureRole, by: g.grantedBy }),
@@ -420,7 +396,7 @@ export class MemoryStore implements Store {
     const removed = this.grants.delete(grantKey(appId, principal));
     if (removed) {
       this.record({
-        accountId: this.accountIdFor(appId),
+        userId: this.userIdFor(appId),
         appId,
         kind: EventKind.GrantRevoked,
         detail: JSON.stringify({ principal, by: revokedBy }),

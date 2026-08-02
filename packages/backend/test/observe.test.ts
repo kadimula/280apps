@@ -16,7 +16,7 @@ describe('access log', () => {
     const { logger, records } = capturingLogger();
     const s = await newServer({ logger });
     live.push(s.harness);
-    await seedToken(s.harness, 'acct_log', 'log-token');
+    await seedToken(s.harness, 'usr_log', 'log-token');
     const app = s.app;
 
     const client = new HttpClient(app, 'log-token');
@@ -36,7 +36,7 @@ describe('access log', () => {
     expect(sync.attrs.method).toBe('POST');
     expect(sync.attrs.path).toBe('/v1/sync');
     expect(sync.attrs.status).toBe(200);
-    expect(String(sync.attrs.account)).toMatch(/^acct_/);
+    expect(String(sync.attrs.account)).toMatch(/^usr_/);
     expect(sync.attrs.ms).toBeDefined();
     expect(String(sync.attrs.request)).not.toBe('');
 

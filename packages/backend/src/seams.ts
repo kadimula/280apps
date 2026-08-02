@@ -105,6 +105,7 @@ export interface ExpiryCounts {
   sessions: number;
   deviceCodes: number;
   rateLimits: number;
+  tokens: number;
 }
 
 // Tier 1 of the permission model: roles over the app as an object (open it, change
@@ -137,7 +138,10 @@ export interface Store {
 
   recentEvents(limit: number): Promise<Event[]>;
 
-  userByToken(tokenHash: string): Promise<User | null>;
+  // Resolves the token's user only if it is still valid: minCreatedAt is the
+  // caller's now - ttl, and a token created at or before it is expired (null),
+  // indistinguishable from an unknown token.
+  userByToken(tokenHash: string, minCreatedAt: number): Promise<User | null>;
   addToken(userId: string, tokenHash: string): Promise<void>;
 
   // The identity the backend owns once login moves off the frontend: users key on
@@ -156,8 +160,9 @@ export interface Store {
   touchLoginRate(key: string, now: number, windowSecs: number, limit: number): Promise<boolean>;
 
   // Removes rows no longer valid as of now (expired sessions and device codes,
-  // lapsed rate windows). Idempotent; the counts returned are only for the log line.
-  deleteExpired(now: number): Promise<ExpiryCounts>;
+  // lapsed rate windows, machine tokens created before now - machineTokenTtlSecs).
+  // Idempotent; the counts returned are only for the log line.
+  deleteExpired(now: number, machineTokenTtlSecs: number): Promise<ExpiryCounts>;
 
   createDeviceCode(d: DeviceCode): Promise<void>;
   deviceCodeByHash(hash: string): Promise<DeviceCode | null>;

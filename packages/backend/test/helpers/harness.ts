@@ -41,11 +41,15 @@ export interface Harness {
 
 // builds an empty platform: a fresh Postgres schema (or store double), a fresh
 // blob directory, and a fresh in-memory runtime per call.
-export async function newPlatform(opts: { appDomain?: string; hostSuffix?: string } = {}): Promise<Harness> {
+export async function newPlatform(
+  opts: { appDomain?: string; hostSuffix?: string; store?: Store } = {},
+): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
   let store: Store;
-  if (hasDatabase()) {
+  if (opts.store !== undefined) {
+    store = opts.store;
+  } else if (hasDatabase()) {
     const s = await newStore();
     store = s.store;
     cleanups.push(s.cleanup);
@@ -108,8 +112,13 @@ export interface TestServerOpts {
   auth?: Auth;
   verificationUri?: string;
   minCliVersion?: string;
+  machineTokenTtlSecs?: number;
   logger?: Logger;
 }
+
+// Long enough that a token seeded at real time never expires mid-test; a case that
+// exercises expiry passes its own machineTokenTtlSecs.
+const DEFAULT_TEST_TOKEN_TTL_SECS = 90 * 24 * 60 * 60;
 
 // the request-scoped deps a test drives the router with. The harness store is
 // shared and torn down once, so there is no per-request close() (production's
@@ -120,6 +129,7 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
     auth: opts.auth,
     verificationUri: opts.verificationUri ?? '',
     minCliVersion: opts.minCliVersion ?? '',
+    machineTokenTtlSecs: opts.machineTokenTtlSecs ?? DEFAULT_TEST_TOKEN_TTL_SECS,
     appDomain: '280apps.run',
     viewAsOrigin: 'https://auth.280apps.run',
   };

@@ -47,10 +47,11 @@ const now = () => Math.floor(Date.now() / 1000);
 
 describe.skipIf(!hasDatabase())('store', () => {
   let store: Store;
+  let schema: string;
   let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    ({ store, cleanup } = await newStore());
+    ({ store, schema, cleanup } = await newStore());
   });
   afterEach(async () => {
     await cleanup();
@@ -86,16 +87,26 @@ describe.skipIf(!hasDatabase())('store', () => {
   it('userByToken joins tokens to users', async () => {
     await store.createUser({ id: 'usr_1', email: 'u1@example.com', name: 'U1', image: '' });
     await store.addToken('usr_1', 'hash-1');
-    const u = await store.userByToken('hash-1');
+    const u = await store.userByToken('hash-1', 0);
     expect(u).toEqual({ id: 'usr_1', email: 'u1@example.com', name: 'U1', image: '' });
-    expect(await store.userByToken('nope')).toBeNull();
+    expect(await store.userByToken('nope', 0)).toBeNull();
+  });
+
+  it('userByToken rejects a token created at or before the cutoff', async () => {
+    await store.createUser({ id: 'usr_1', email: 'u1@example.com', name: 'U1', image: '' });
+    await store.addToken('usr_1', 'hash-1'); // created_at defaults to ~now
+    const t = now();
+    // A cutoff in the future is past the token's created_at: expired, so null.
+    expect(await store.userByToken('hash-1', t + 3600)).toBeNull();
+    // A cutoff in the past leaves it valid.
+    expect((await store.userByToken('hash-1', t - 3600))?.id).toBe('usr_1');
   });
 
   it('addToken is idempotent on token hash', async () => {
     await store.createUser({ id: 'usr_1', email: 'u1@example.com', name: '', image: '' });
     await store.addToken('usr_1', 'hash-1');
     await store.addToken('usr_1', 'hash-1'); // ON CONFLICT DO NOTHING
-    expect((await store.userByToken('hash-1'))?.id).toBe('usr_1');
+    expect((await store.userByToken('hash-1', 0))?.id).toBe('usr_1');
   });
 
   function deviceFixture(over: Partial<DeviceCode> = {}): DeviceCode {
@@ -172,14 +183,42 @@ describe.skipIf(!hasDatabase())('store', () => {
     await store.touchLoginRate('ip_old', t - 1000, 1, 100);
     await store.touchLoginRate('ip_new', t, 600, 100);
 
-    expect(await store.deleteExpired(t)).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1 });
+    const ttl = 90 * 24 * 60 * 60;
+    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 0 });
 
     expect(await store.sessionByHash('sess_old')).toBeNull();
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.deviceCodeByHash('dc_old')).toBeNull();
     expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();
     // a second sweep with nothing left to expire removes nothing
-    expect(await store.deleteExpired(t)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0 });
+    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0, tokens: 0 });
+  });
+
+  it('deleteExpired removes only machine tokens created past the ttl', async () => {
+    const t = now();
+    const ttl = 90 * 24 * 60 * 60;
+    await store.createUser({ id: 'usr_tok', email: 'tok@example.com', name: '', image: '' });
+    await store.addToken('usr_tok', 'tok_old');
+    await store.addToken('usr_tok', 'tok_new');
+    // Backdate one token past the ttl; created_at is not a seam parameter, so the
+    // test sets it directly, mirroring an aged production row.
+    const admin = new (await import('pg')).default.Client({
+      connectionString: process.env.TEST_DATABASE_URL as string,
+    });
+    await admin.connect();
+    try {
+      await admin.query(`UPDATE "${schema}".tokens SET created_at = $1 WHERE token_hash = 'tok_old'`, [
+        t - ttl - 1,
+      ]);
+    } finally {
+      await admin.end();
+    }
+
+    expect(await store.deleteExpired(t, ttl)).toMatchObject({ tokens: 1 });
+    expect(await store.userByToken('tok_old', 0)).toBeNull();
+    expect((await store.userByToken('tok_new', t - ttl))?.id).toBe('usr_tok');
+    // idempotent: nothing left past the ttl
+    expect(await store.deleteExpired(t, ttl)).toMatchObject({ tokens: 0 });
   });
 
   it('createApp writes the app and an app.created event', async () => {

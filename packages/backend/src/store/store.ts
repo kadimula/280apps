@@ -428,12 +428,12 @@ class PgStore implements Store {
     return res.rows.map(rowToEvent);
   }
 
-  async userByToken(tokenHash: string): Promise<User | null> {
+  async userByToken(tokenHash: string, minCreatedAt: number): Promise<User | null> {
     const res = await this.db.query(
       `SELECT u.id, u.email, u.name, u.image FROM ${this.t('users')} u
        JOIN ${this.t('tokens')} t ON t.user_id = u.id
-       WHERE t.token_hash = $1`,
-      [tokenHash],
+       WHERE t.token_hash = $1 AND t.created_at > $2`,
+      [tokenHash, minCreatedAt],
     );
     return res.rows.length ? rowToUser(res.rows[0]) : null;
   }
@@ -523,9 +523,11 @@ class PgStore implements Store {
     return toNum(res.rows[0].count) <= limit;
   }
 
-  // Sweeps the three time-boxed tables in one transaction; everything else in the
-  // schema (users, apps, deploys, events) is retained by design.
-  async deleteExpired(now: number): Promise<ExpiryCounts> {
+  // Sweeps the time-boxed tables in one transaction; everything else in the schema
+  // (users, apps, deploys, events) is retained by design. Machine tokens carry no
+  // expires_at: validity is created_at within the ttl, so the cutoff is derived here.
+  async deleteExpired(now: number, machineTokenTtlSecs: number): Promise<ExpiryCounts> {
+    const tokenCutoff = now - machineTokenTtlSecs;
     return this.inTx(async (tx) => {
       const sessions = await tx.query(
         `DELETE FROM ${this.t('sessions')} WHERE expires_at <= $1`,
@@ -539,10 +541,15 @@ class PgStore implements Store {
         `DELETE FROM ${this.t('login_rate_limits')} WHERE expires_at <= $1`,
         [now],
       );
+      const tokens = await tx.query(
+        `DELETE FROM ${this.t('tokens')} WHERE created_at <= $1`,
+        [tokenCutoff],
+      );
       return {
         sessions: sessions.rowCount ?? 0,
         deviceCodes: deviceCodes.rowCount ?? 0,
         rateLimits: rateLimits.rowCount ?? 0,
+        tokens: tokens.rowCount ?? 0,
       };
     });
   }

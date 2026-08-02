@@ -59,6 +59,7 @@ async function run(log: Logger): Promise<void> {
     auth,
     verificationUri: config.verificationUri,
     minCliVersion: config.minCliVersion,
+    machineTokenTtlSecs: config.machineTokenTtlDays * 24 * 60 * 60,
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
   };
@@ -101,8 +102,9 @@ async function run(log: Logger): Promise<void> {
 // Worker's cron trigger. Unref'd so it never keeps the process alive on its own.
 function startSweep(store: Store, config: Config, log: Logger): NodeJS.Timeout {
   const secs = num(process.env.TWO80_SWEEP_INTERVAL_SECS, 3600);
+  const machineTokenTtlSecs = config.machineTokenTtlDays * 24 * 60 * 60;
   const tick = () => {
-    void sweepExpired(store, log, Math.floor(Date.now() / 1000)).catch((err) => {
+    void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs).catch((err) => {
       log.error('scheduled cleanup failed', { error: errText(err) });
     });
   };

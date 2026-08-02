@@ -29,7 +29,9 @@ import {
 
 export class MemoryStore implements Store {
   private seq = 0;
-  private readonly tokens = new Map<string, string>(); // tokenHash -> userId
+  private readonly tokens = new Map<string, { userId: string; createdAt: number }>();
+  // Settable so a test can seed a token created in the past; real time otherwise.
+  tokenClock: () => number = () => Math.floor(Date.now() / 1000);
   private readonly deviceByHash = new Map<string, DeviceCode>();
   private readonly apps = new Map<string, StoredApp>();
   private readonly deploys = new Map<string, StoredDeploy>(); // `${appId}/${id}`
@@ -63,15 +65,15 @@ export class MemoryStore implements Store {
     return this.apps.get(appId)?.userId ?? '';
   }
 
-  async userByToken(tokenHash: string): Promise<User | null> {
-    const id = this.tokens.get(tokenHash);
-    if (id === undefined) return null;
-    const u = this.users.get(id);
+  async userByToken(tokenHash: string, minCreatedAt: number): Promise<User | null> {
+    const rec = this.tokens.get(tokenHash);
+    if (rec === undefined || rec.createdAt <= minCreatedAt) return null;
+    const u = this.users.get(rec.userId);
     return u ? { ...u } : null;
   }
 
   async addToken(userId: string, tokenHash: string): Promise<void> {
-    if (!this.tokens.has(tokenHash)) this.tokens.set(tokenHash, userId);
+    if (!this.tokens.has(tokenHash)) this.tokens.set(tokenHash, { userId, createdAt: this.tokenClock() });
   }
 
   async userById(id: string): Promise<User | null> {
@@ -127,7 +129,7 @@ export class MemoryStore implements Store {
     return cur.count <= limit;
   }
 
-  async deleteExpired(now: number): Promise<ExpiryCounts> {
+  async deleteExpired(now: number, machineTokenTtlSecs: number): Promise<ExpiryCounts> {
     let sessions = 0;
     for (const [k, s] of [...this.sessions.entries()]) {
       if (s.expiresAt <= now) {
@@ -149,7 +151,15 @@ export class MemoryStore implements Store {
         rateLimits++;
       }
     }
-    return { sessions, deviceCodes, rateLimits };
+    let tokens = 0;
+    const tokenCutoff = now - machineTokenTtlSecs;
+    for (const [k, rec] of [...this.tokens.entries()]) {
+      if (rec.createdAt <= tokenCutoff) {
+        this.tokens.delete(k);
+        tokens++;
+      }
+    }
+    return { sessions, deviceCodes, rateLimits, tokens };
   }
 
   async createDeviceCode(d: DeviceCode): Promise<void> {

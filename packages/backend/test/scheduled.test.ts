@@ -37,18 +37,29 @@ describe('scheduled cleanup', () => {
     await store.touchLoginRate('ip_old', now - 1000, 1, 100);
     await store.touchLoginRate('ip_new', now, 600, 100);
 
-    const { logger, records } = capturingLogger();
-    const counts = await sweepExpired(store, logger, now);
+    // A token created past the ttl is stale; one created at now is within it.
+    const ttl = 3600;
+    await store.createUser({ id: 'u1', email: 'u1@test', name: '', image: '' });
+    await store.createUser({ id: 'u2', email: 'u2@test', name: '', image: '' });
+    store.tokenClock = () => now - ttl - 1;
+    await store.addToken('u1', 'tok_old');
+    store.tokenClock = () => now;
+    await store.addToken('u2', 'tok_new');
 
-    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1 });
+    const { logger, records } = capturingLogger();
+    const counts = await sweepExpired(store, logger, now, ttl);
+
+    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1 });
 
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.sessionByHash('sess_old')).toBeNull();
     expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();
     expect(await store.deviceCodeByHash('dc_old')).toBeNull();
+    expect(await store.userByToken('tok_new', now - ttl)).not.toBeNull();
+    expect(await store.userByToken('tok_old', 0)).toBeNull();
 
     const line = records.find((r) => r.msg === 'scheduled cleanup');
-    expect(line?.attrs).toMatchObject({ sessions: 1, deviceCodes: 1, rateLimits: 1 });
+    expect(line?.attrs).toMatchObject({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1 });
   });
 
   it('is an idempotent no-op when nothing has expired', async () => {
@@ -57,7 +68,12 @@ describe('scheduled cleanup', () => {
     await store.createSession({ tokenHash: 's', userId: 'u', expiresAt: now + 10 });
 
     const { logger } = capturingLogger();
-    expect(await sweepExpired(store, logger, now)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0 });
+    expect(await sweepExpired(store, logger, now, 3600)).toEqual({
+      sessions: 0,
+      deviceCodes: 0,
+      rateLimits: 0,
+      tokens: 0,
+    });
     expect(await store.sessionByHash('s')).not.toBeNull();
   });
 });

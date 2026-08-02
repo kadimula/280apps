@@ -615,9 +615,13 @@ export class Server {
     // to push as every user in it.
     const hash = hashToken(token);
 
+    // An expired token (created before now - ttl) resolves to null, the same answer
+    // an unknown token gets, so the CLI's "run 280 login" recovery covers both.
+    const minCreatedAt = nowSecs() - this.deps(c).machineTokenTtlSecs;
+
     let user;
     try {
-      user = await this.deps(c).platform.store.userByToken(hash);
+      user = await this.deps(c).platform.store.userByToken(hash, minCreatedAt);
     } catch {
       throw new DeployErr({ code: DeployCode.Unavailable, message: 'auth lookup failed', retryable: true });
     }

@@ -19,12 +19,17 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/backend/package.json packages/backend/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/gateway/package.json packages/gateway/package.json
 RUN pnpm install --frozen-lockfile
 
-# Sources, then build the two packages the platform runs on.
+# Sources, then build the packages the platform runs on plus @280/gateway, whose
+# verify-and-forward middleware is vendored into the per-app harness Worker below.
 COPY packages/contracts packages/contracts
 COPY packages/backend packages/backend
-RUN pnpm --filter @280/contracts build && pnpm --filter @280/backend build
+COPY packages/gateway packages/gateway
+RUN pnpm --filter @280/contracts build \
+ && pnpm --filter @280/backend build \
+ && pnpm --filter @280/gateway build
 
 # A self-contained deploy tree: prod deps (including the built @280/contracts,
 # flattened into node_modules) plus the platform package's dist.
@@ -57,13 +62,22 @@ RUN apt-get update \
 
 COPY --from=build /app /app
 
-# Vendor the App280Container harness Worker (the roll config's `main`) and its one
-# runtime dependency, so `wrangler deploy` can bundle it during the roll. Without
-# this the roll fails "entry-point worker.js not found". TWO80_WORKER_ENTRY points
-# the generated roll config at the vendored entry (absolute, so it resolves from
-# any build-context cwd).
+# Vendor the App280Container harness Worker (the roll config's `main`) so `wrangler
+# deploy` can bundle it during the roll. Without this the roll fails "entry-point
+# worker.js not found". `npm install` supplies @cloudflare/containers + zod (the
+# middleware's transitive runtime dep); the built @280/gateway (its verify-and-forward
+# middleware) and @280/contracts are copied flat into the harness node_modules so
+# wrangler's esbuild resolves `@280/gateway/appworker` -> `@280/contracts` at bundle
+# time. @280/gateway declares @280/backend as a dep, but the middleware never imports
+# it, so it is intentionally not vendored (and never enters the tenant bundle).
+# TWO80_WORKER_ENTRY points the generated roll config at the vendored entry (absolute,
+# so it resolves from any build-context cwd).
 COPY platform/appcontainer /app/appcontainer
 RUN npm install --omit=dev --prefix /app/appcontainer
+COPY --from=build /repo/packages/gateway/package.json /app/appcontainer/node_modules/@280/gateway/package.json
+COPY --from=build /repo/packages/gateway/dist /app/appcontainer/node_modules/@280/gateway/dist
+COPY --from=build /repo/packages/contracts/package.json /app/appcontainer/node_modules/@280/contracts/package.json
+COPY --from=build /repo/packages/contracts/dist /app/appcontainer/node_modules/@280/contracts/dist
 ENV TWO80_WORKER_ENTRY=/app/appcontainer/src/worker.js
 
 EXPOSE 8080

@@ -35,6 +35,13 @@ export function errorPage(): string {
   return page('Something went wrong', `<h1>Something went wrong</h1><p>Please try again.</p>`);
 }
 
+// Shown when the app Worker cannot reach the central gateway to mint or refresh an
+// identity and holds no still-valid token: sign-in is down, not the app. A retry
+// once the gateway recovers (or a live token) serves normally.
+export function unavailablePage(): string {
+  return page('Sign-in unavailable', `<h1>Sign-in is temporarily unavailable</h1><p>Please retry in a moment.</p>`);
+}
+
 function page(title: string, inner: string): string {
   return `<!doctype html>
 <meta charset="utf-8">

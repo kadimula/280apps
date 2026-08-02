@@ -10,6 +10,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./appworker": {
+      "types": "./dist/appworker.d.ts",
+      "import": "./dist/appworker.js"
+    },
+    "./routegate": {
+      "types": "./dist/routegate.d.ts",
+      "import": "./dist/routegate.js"
+    },
+    "./cookies": {
+      "types": "./dist/cookies.d.ts",
+      "import": "./dist/cookies.js"
+    },
+    "./mint": {
+      "types": "./dist/mint.d.ts",
+      "import": "./dist/mint.js"
     }
   },
   "main": "./dist/index.js",

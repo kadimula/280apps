@@ -11,7 +11,7 @@ import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
 import { IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
-import { readCookie, stampIdentity } from './cookies.js';
+import { readCookie, stampIdentity, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
 import type { MintInput, MintResult } from './mint.js';
 import type { Upstream } from './upstream.js';
 
@@ -34,10 +34,6 @@ export interface VerifiedViewer {
   tenant: string;
 }
 
-export const SESSION_COOKIE = '280_session';
-export const STATE_COOKIE = '280_oauth';
-// One live "view as" preview, scoped to its app by the script inside it.
-export const VIEW_COOKIE = '280_view';
 const STATE_TTL_SECS = 600;
 const VIEW_TTL_SECS = 3600;
 

@@ -4,8 +4,6 @@
 
 import { ID_HEADER } from '@280/contracts/identity';
 
-export { ID_HEADER };
-
 // Cookie names, shared by the central gateway and the app-Worker middleware.
 export const SESSION_COOKIE = '280_session'; // SSO session, Domain=.<appDomain>
 export const STATE_COOKIE = '280_oauth'; // OIDC state, host-only on the auth host

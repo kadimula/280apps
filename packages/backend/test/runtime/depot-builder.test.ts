@@ -44,12 +44,13 @@ function activation(files: Record<string, string>): { act: Activation } {
   };
 }
 
-function rolloutOf(act: Activation) {
+function rolloutOf(act: Activation, over: { policy?: Record<string, unknown> } = {}) {
   return {
     app: act.app,
     deployId: act.deployId,
     build: act.manifest.build,
     files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+    policy: over.policy ?? { access: 'invited', roles: [], routes: [], secrets: [] },
   };
 }
 
@@ -255,10 +256,15 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: credsFetch(),
     });
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    const policy = { access: 'link', roles: [], routes: [{ path: '/reports/*', appRole: '', role: 'analyst' }], secrets: ['API_KEY'] };
+    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { policy }));
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },
     ]);
+    // Depot shares the same rollConfig spine: route + GATEWAY binding + baked policy.
+    expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
+    expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
+    expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
     await rm(workdir, { recursive: true, force: true });
   });
 

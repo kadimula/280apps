@@ -119,6 +119,7 @@ describe('DockerBuilder (injected exec)', () => {
       deployId: act.deployId,
       build: act.manifest.build,
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+      policy: { access: 'invited', roles: [], routes: [], secrets: [] },
     });
 
     expect(res.imageRef).toBe('registry.cloudflare.com/acct1/demo-abc:dep_1');
@@ -152,6 +153,7 @@ describe('DockerBuilder (injected exec)', () => {
       deployId: act.deployId,
       build: act.manifest.build,
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+      policy: { access: 'invited', roles: [], routes: [], secrets: [] },
     });
     expect(rollConfig.name).toBe('demo-abc');
     expect(rollConfig.main).toBe('harness.js');
@@ -163,6 +165,57 @@ describe('DockerBuilder (injected exec)', () => {
         max_instances: 1,
       },
     ]);
+    // The app Worker gets its own route and the GATEWAY binding to the central
+    // gateway's GatewayRPC (mint/jwks) — the container-only front door.
+    expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
+    expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
+    const vars = rollConfig.vars as Record<string, string>;
+    expect(vars.TWO80_APP_ID).toBe('app_1');
+    expect(vars.TWO80_SCRIPT).toBe('demo-abc');
+    expect(vars.TWO80_APP_HOST_SUFFIX).toBe('');
+    expect(vars.TWO80_APP_DOMAIN).toBe('280apps.run');
+    expect(vars.TWO80_ID_ISSUER).toBe('https://auth.280apps.run');
+    expect(vars.TWO80_ID_SKEW_SECS).toBe('5');
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('bakes the dev serving suffix and the app route policy into the roll config', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return { code: 0, output: '' };
+    };
+    const builder = new DockerBuilder({
+      accountId: 'acct1',
+      apiToken: 'tok',
+      workdir,
+      workerEntry: 'harness.js',
+      hostSuffix: '-development',
+      exec,
+      fetch: credsFetch(),
+    });
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    const policy = { access: 'invited', roles: ['manager'], routes: [{ path: '/admin/*', appRole: 'admin', role: '' }], secrets: [] };
+    await builder.rollout({
+      app: act.app,
+      deployId: act.deployId,
+      build: act.manifest.build,
+      files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+      policy,
+    });
+    // Dev host + service both carry the -development suffix; the issuer follows.
+    expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc-development.280apps.run/*', zone_name: '280apps.run' }]);
+    expect(rollConfig.services).toEqual([
+      { binding: 'GATEWAY', service: '280-gateway-development', entrypoint: 'GatewayRPC' },
+    ]);
+    const vars = rollConfig.vars as Record<string, string>;
+    expect(vars.TWO80_APP_HOST_SUFFIX).toBe('-development');
+    expect(vars.TWO80_ID_ISSUER).toBe('https://auth-development.280apps.run');
+    // The whole enforced policy is baked verbatim so the middleware can route-gate locally.
+    expect(JSON.parse(vars.TWO80_ROUTE_POLICY)).toEqual(policy);
     await rm(workdir, { recursive: true, force: true });
   });
 
@@ -177,6 +230,7 @@ describe('DockerBuilder (injected exec)', () => {
         deployId: act.deployId,
         build: act.manifest.build,
         files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+        policy: { access: 'invited', roles: [], routes: [], secrets: [] },
       }),
     ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('280 push') });
     await rm(workdir, { recursive: true, force: true });
@@ -210,6 +264,7 @@ describe('DockerBuilder (injected exec)', () => {
       deployId: act.deployId,
       build: act.manifest.build,
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+      policy: { access: 'invited', roles: [], routes: [], secrets: [] },
     });
     expect(seen).toEqual({ Dockerfile: 'FROM node:20', nested: 'export const x = 1' });
     await rm(workdir, { recursive: true, force: true });

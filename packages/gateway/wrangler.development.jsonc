@@ -18,7 +18,7 @@
 	// The dev Hyperdrive config over the dev control-plane Postgres (the same Neon DB
 	// the Node control plane reaches directly via DATABASE_URL). Only this Worker
 	// needs Hyperdrive; app Workers never touch the DB.
-	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_DEV_HYPERDRIVE_ID" }],
+	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "a32cfdb1e2334b2b9d9cc2a2753b832e" }],
 
 	// Secrets via `wrangler secret put --env development` (or the plain form when
 	// deploying this config): GOOGLE_*, ENTRA_*, ID_SIGNING_JWK.

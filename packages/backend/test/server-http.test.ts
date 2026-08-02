@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server as NodeHttpServer } from 'node:http';
 import { Server } from '../src/api.js';
 import { REQUEST_ID_HEADER } from '../src/observe.js';
-import { newPlatform, testDeps, testManifest, type Harness } from './helpers/harness.js';
+import { newPlatform, seedToken, testDeps, testManifest, type Harness } from './helpers/harness.js';
 
 let harness: Harness;
 let node: NodeHttpServer;
@@ -17,7 +17,8 @@ let base: string;
 
 beforeAll(async () => {
   harness = await newPlatform();
-  const app = new Server({ buildDeps: () => testDeps(harness, { openSignup: true }) }).handler();
+  await seedToken(harness, 'usr_http', 'http-smoke-token');
+  const app = new Server({ buildDeps: () => testDeps(harness) }).handler();
   await new Promise<void>((resolve) => {
     node = serve({ fetch: app.fetch, port: 0 }, () => resolve()) as NodeHttpServer;
     node.requestTimeout = 6 * 60 * 1000;

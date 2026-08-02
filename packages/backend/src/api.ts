@@ -198,7 +198,7 @@ export class Server {
       await this.deps(c).platform.store.createDeviceCode({
         deviceHash: hashToken(deviceCode),
         userCode,
-        accountId: '',
+        userId: '',
         status: DeviceStatus.Pending,
         expiresAt,
       });
@@ -272,7 +272,7 @@ export class Server {
 
     const token = randomSecret(32);
     try {
-      await this.deps(c).platform.store.addToken(dc.accountId, hashToken(token));
+      await this.deps(c).platform.store.addToken(dc.userId, hashToken(token));
     } catch {
       throw unavailable('could not complete login');
     }
@@ -288,17 +288,11 @@ export class Server {
       appendReason: false,
     });
 
-    // The subject is the signed-in user, not a body field: a browser cannot approve
+    // The principal is the signed-in user, not a body field: a browser cannot approve
     // a login for anyone but itself.
-    let acct;
-    try {
-      acct = await this.deps(c).platform.store.ensureAccount(user.id, newAccountId());
-    } catch {
-      throw unavailable('could not resolve the account');
-    }
     let ok: boolean;
     try {
-      ok = await this.deps(c).platform.store.approveDeviceCode(normalizeUserCode(req.userCode), acct.id, nowSecs());
+      ok = await this.deps(c).platform.store.approveDeviceCode(normalizeUserCode(req.userCode), user.id, nowSecs());
     } catch {
       throw unavailable('could not record the approval');
     }
@@ -315,21 +309,9 @@ export class Server {
   private async handleApps(c: Context<HonoEnv>): Promise<Response> {
     const user = await this.sessionUser(c);
 
-    let acct;
-    try {
-      acct = await this.deps(c).platform.store.accountBySubject(user.id);
-    } catch {
-      throw unavailable('could not resolve the account');
-    }
-    // No account means nothing pushed yet, which the dashboard renders as an empty
-    // state. Not an error.
-    if (acct === null) {
-      return c.json({ apps: [] });
-    }
-
     let apps;
     try {
-      apps = await this.deps(c).platform.store.appsByAccount(acct.id);
+      apps = await this.deps(c).platform.store.appsByUser(user.id);
     } catch {
       throw unavailable('could not list apps');
     }
@@ -354,18 +336,7 @@ export class Server {
       appendReason: false,
     });
 
-    let acct;
-    try {
-      acct = await this.deps(c).platform.store.accountBySubject(user.id);
-    } catch {
-      throw unavailable('could not resolve the account');
-    }
-    // No account is the same answer as no app.
-    if (acct === null) {
-      throw new DeployErr({ code: DeployCode.NoSuchApp, message: 'that app does not exist on this account' });
-    }
-
-    const svc = this.deps(c).platform.for(acct.id);
+    const svc = this.deps(c).platform.for(user.id);
 
     // The dry run does the looking up: it fails closed on an app this account does
     // not own, and it is where the slug comes from.
@@ -382,28 +353,19 @@ export class Server {
     return c.json(encodeDeleteResult(res));
   }
 
-  // ownedApp resolves the app named in the path, scoped to the caller's account, so
-  // a builder can only ever manage sharing for their own apps. Same not-found answer
-  // for "no account", "no app", and "another account's app": ownership is not
-  // probeable.
+  // ownedApp resolves the app named in the path, scoped to the caller, so a builder
+  // can only ever manage sharing for their own apps. Same not-found answer for "no
+  // app" and "another user's app": ownership is not probeable.
   private async ownedApp(c: Context<HonoEnv>): Promise<{ user: User; app: StoreApp }> {
     const user = await this.sessionUser(c);
     const appId = c.req.param('app') ?? '';
-    let acct;
+    let app;
     try {
-      acct = await this.deps(c).platform.store.accountBySubject(user.id);
+      app = await this.deps(c).platform.store.app(user.id, appId);
     } catch {
-      throw unavailable('could not resolve the account');
+      throw unavailable('could not look up the app');
     }
-    if (acct !== null) {
-      let app;
-      try {
-        app = await this.deps(c).platform.store.app(acct.id, appId);
-      } catch {
-        throw unavailable('could not look up the app');
-      }
-      if (app !== null) return { user, app };
-    }
+    if (app !== null) return { user, app };
     throw new DeployErr({ code: DeployCode.NoSuchApp, message: 'that app does not exist on this account' });
   }
 
@@ -640,7 +602,7 @@ export class Server {
     });
   }
 
-  // authorize resolves the bearer token to an account-scoped service.
+  // authorize resolves the bearer token to a user-scoped service.
   private async authorize(c: Context<HonoEnv>): Promise<Service> {
     this.tooOld(c);
 
@@ -650,29 +612,24 @@ export class Server {
       throw noAccount();
     }
     // Only the hash is stored, so a leaked database does not hand over the ability
-    // to push to every account in it.
+    // to push as every user in it.
     const hash = hashToken(token);
 
-    let acct;
+    // An expired token (created before now - ttl) resolves to null, the same answer
+    // an unknown token gets, so the CLI's "run 280 login" recovery covers both.
+    const minCreatedAt = nowSecs() - this.deps(c).machineTokenTtlSecs;
+
+    let user;
     try {
-      acct = await this.deps(c).platform.store.accountByToken(hash);
+      user = await this.deps(c).platform.store.userByToken(hash, minCreatedAt);
     } catch {
       throw new DeployErr({ code: DeployCode.Unavailable, message: 'auth lookup failed', retryable: true });
     }
-    if (acct === null) {
-      if (!this.deps(c).openSignup) throw noAccount();
-      // Derive the id from the token so a repeated presentation lands on the same
-      // account even if the insert below raced.
-      acct = { id: 'acct_' + hash.slice(0, 12), subject: '' };
-      try {
-        await this.deps(c).platform.store.createAccount(acct);
-        await this.deps(c).platform.store.addToken(acct.id, hash);
-      } catch {
-        throw new DeployErr({ code: DeployCode.Unavailable, message: 'could not create account', retryable: true });
-      }
+    if (user === null) {
+      throw noAccount();
     }
-    markAccount(c, acct.id);
-    return this.deps(c).platform.for(acct.id);
+    markAccount(c, user.id);
+    return this.deps(c).platform.for(user.id);
   }
 
   // failResponse writes the seam's error shape. The client parses the body first and
@@ -772,10 +729,6 @@ function normalizeUserCode(s: string): string {
 
 function hashToken(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-function newAccountId(): string {
-  return 'acct_' + randomSecret(9);
 }
 
 function stripBearer(header: string): string {

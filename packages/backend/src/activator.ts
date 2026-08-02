@@ -98,7 +98,7 @@ export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Pr
 // The destructive half of a delete: runtime, then content, then the row that
 // names them. Every step is idempotent and only makes sense while the row still
 // exists, so an interruption anywhere leaves an app that re-running finishes off.
-export async function runTail(deps: ActivatorDeps, app: RuntimeApp, accountId: string): Promise<boolean> {
+export async function runTail(deps: ActivatorDeps, app: RuntimeApp, userId: string): Promise<boolean> {
   try {
     await deps.runtime.delete(app);
   } catch (err) {
@@ -106,7 +106,7 @@ export async function runTail(deps: ActivatorDeps, app: RuntimeApp, accountId: s
   }
   try {
     await deps.blobs.deleteApp(app.id);
-    return await deps.store.deleteApp(accountId, app.id);
+    return await deps.store.deleteApp(userId, app.id);
   } catch (err) {
     throw internal('delete app content', err);
   }
@@ -133,7 +133,7 @@ export class InProcessActivator implements Activator {
   }
 
   delete(app: App): Promise<boolean> {
-    return this.withLock(app.id, () => runTail(this.deps, runtimeApp(app), app.accountId));
+    return this.withLock(app.id, () => runTail(this.deps, runtimeApp(app), app.userId));
   }
 
   private withLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {

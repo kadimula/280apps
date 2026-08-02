@@ -1,11 +1,11 @@
 // Ported from platform/conformance_test.go: the tenancy, activation-recovery,
 // revert, and blob-scoping claims the shared conformance suite (W1) cannot make,
-// since it only exercises one already-authenticated account. Run against the
+// since it only exercises one already-authenticated user. Run against the
 // deploy Service (in-process) and the HTTP router.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { DeployCode, DeployErr, MANIFEST_KIND_CONTAINER, State, digestBytes, type SyncResult } from '@280/contracts';
-import { HttpClient, bodyOf, newPlatform, newServer, portFor, testManifest, type Harness } from './helpers/harness.js';
+import { HttpClient, bodyOf, newPlatform, newServer, portFor, seedToken, testManifest, type Harness } from './helpers/harness.js';
 
 const live: Harness[] = [];
 afterEach(async () => {
@@ -16,10 +16,12 @@ async function platform(): Promise<Harness> {
   live.push(h);
   return h;
 }
-async function server(cfg: Parameters<typeof newServer>[0]): Promise<{ app: Awaited<ReturnType<typeof newServer>>['app'] }> {
+async function server(
+  cfg: Parameters<typeof newServer>[0],
+): Promise<{ app: Awaited<ReturnType<typeof newServer>>['app']; harness: Harness }> {
   const s = await newServer(cfg);
   live.push(s.harness);
-  return { app: s.app };
+  return { app: s.app, harness: s.harness };
 }
 
 async function expectCode(fn: () => Promise<unknown>, code: string): Promise<void> {
@@ -32,9 +34,11 @@ async function expectCode(fn: () => Promise<unknown>, code: string): Promise<voi
   }
 }
 
-describe('AccountsAreIsolated', () => {
-  it('scopes autolink, addressing, and delete by account', async () => {
-    const { app } = await server({ openSignup: true });
+describe('UsersAreIsolated', () => {
+  it('scopes autolink, addressing, and delete by user', async () => {
+    const { app, harness } = await server({});
+    await seedToken(harness, 'usr_alice', 'alice-token');
+    await seedToken(harness, 'usr_bob', 'bob-token');
     const { manifest } = testManifest();
     const id = { slug: 'demo', framework: 'static', gitRemote: 'git@github.com:x/demo.git' };
 
@@ -147,7 +151,7 @@ describe('BlobsAreAppScoped', () => {
 });
 
 describe('Unauthorized', () => {
-  it('an unknown token without OpenSignup fails unauthorized with a fix', async () => {
+  it('an unknown token fails unauthorized with a fix', async () => {
     const { app } = await server({});
     const client = new HttpClient(app, 'not-a-real-token');
     try {

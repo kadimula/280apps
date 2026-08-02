@@ -144,7 +144,7 @@ describe('device flow', () => {
     expect((await redeem(app, s.deviceCode)).body.code).toBe(AuthCode.AuthorizationPending);
   });
 
-  it('same user converges on one account across machines', async () => {
+  it('same user converges on one identity across machines', async () => {
     const app = await authServer();
     const tokens: string[] = [];
     for (let i = 0; i < 2; i++) {
@@ -199,7 +199,7 @@ describe('dashboard (session-gated endpoints)', () => {
     expect(listed.apps[0]!.id).not.toBe('');
   });
 
-  it('a signed-in user with no account lists empty, not an error', async () => {
+  it('a signed-in user with no apps lists empty, not an error', async () => {
     const app = await authServer();
     const session = await signIn(app, 'nobody@test');
     const listed = await listApps(app, session);

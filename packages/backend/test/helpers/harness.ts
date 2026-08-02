@@ -4,6 +4,7 @@
 // directly; transport tests go through the router via app.request. Mirrors
 // platform/conformance_test.go's newPlatform.
 
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,11 +41,15 @@ export interface Harness {
 
 // builds an empty platform: a fresh Postgres schema (or store double), a fresh
 // blob directory, and a fresh in-memory runtime per call.
-export async function newPlatform(opts: { appDomain?: string; hostSuffix?: string } = {}): Promise<Harness> {
+export async function newPlatform(
+  opts: { appDomain?: string; hostSuffix?: string; store?: Store } = {},
+): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
   let store: Store;
-  if (hasDatabase()) {
+  if (opts.store !== undefined) {
+    store = opts.store;
+  } else if (hasDatabase()) {
     const s = await newStore();
     store = s.store;
     cleanups.push(s.cleanup);
@@ -79,10 +84,24 @@ export async function newPlatform(opts: { appDomain?: string; hostSuffix?: strin
   };
 }
 
-// returns a Service scoped to an account, creating the account first.
-export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Service> {
-  await h.store.createAccount({ id: accountId, subject: '' });
-  return h.platform.for(accountId);
+// returns a Service scoped to a user, creating the user first. The email is derived
+// from the id so distinct ids never collide on the unique users_by_email index.
+export async function portFor(h: Harness, userId = 'usr_test'): Promise<Service> {
+  await ensureUser(h, userId);
+  return h.platform.for(userId);
+}
+
+// seeds a user and binds a CLI bearer token to it, mirroring api.ts hashToken
+// (sha256 hex) so authorize() resolves the token to the user.
+export async function seedToken(h: Harness, userId: string, token: string): Promise<void> {
+  await ensureUser(h, userId);
+  await h.store.addToken(userId, createHash('sha256').update(token, 'utf8').digest('hex'));
+}
+
+async function ensureUser(h: Harness, userId: string): Promise<void> {
+  if ((await h.store.userById(userId)) === null) {
+    await h.store.createUser({ id: userId, email: `${userId}@test`, name: '', image: '' });
+  }
 }
 
 // The test-facing surface: per-request config a case wants on the deps container,
@@ -91,11 +110,15 @@ export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Serv
 export interface TestServerOpts {
   harness?: Harness;
   auth?: Auth;
-  openSignup?: boolean;
   verificationUri?: string;
   minCliVersion?: string;
+  machineTokenTtlSecs?: number;
   logger?: Logger;
 }
+
+// Long enough that a token seeded at real time never expires mid-test; a case that
+// exercises expiry passes its own machineTokenTtlSecs.
+const DEFAULT_TEST_TOKEN_TTL_SECS = 90 * 24 * 60 * 60;
 
 // the request-scoped deps a test drives the router with. The harness store is
 // shared and torn down once, so there is no per-request close() (production's
@@ -104,9 +127,9 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
   return {
     platform: harness.platform,
     auth: opts.auth,
-    openSignup: opts.openSignup ?? false,
     verificationUri: opts.verificationUri ?? '',
     minCliVersion: opts.minCliVersion ?? '',
+    machineTokenTtlSecs: opts.machineTokenTtlSecs ?? DEFAULT_TEST_TOKEN_TTL_SECS,
     appDomain: '280apps.run',
     viewAsOrigin: 'https://auth.280apps.run',
   };

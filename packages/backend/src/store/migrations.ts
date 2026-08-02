@@ -31,6 +31,8 @@ const epochDefault = `EXTRACT(EPOCH FROM now())::bigint`;
 // DDL statement before the first boot is a step that gets forgotten.
 export function migrations(schema: string): string[] {
   const t = qualify(schema);
+  // information_schema keys tables by their real schema; empty schema is public.
+  const schemaLit = schema === '' ? 'public' : schema;
   const stmts: string[] = [];
 
   if (schema !== '') {
@@ -38,32 +40,69 @@ export function migrations(schema: string): string[] {
   }
 
   stmts.push(
-    `CREATE TABLE IF NOT EXISTS ${t('accounts')} (
-       id         TEXT PRIMARY KEY,
-       subject    TEXT NOT NULL DEFAULT '',
-       created_at BIGINT NOT NULL DEFAULT (${epochDefault})
-     )`,
-    // Partial, so the subject-less accounts OpenSignup mints do not collide on ''.
-    `CREATE UNIQUE INDEX IF NOT EXISTS accounts_by_subject
-       ON ${t('accounts')}(subject) WHERE subject <> ''`,
+    // One-time, idempotent carry-over of the legacy accounts indirection into the
+    // merged user-as-principal model. Runs only while the accounts table still
+    // exists in this schema (a no-op once it has been dropped, so re-runs converge;
+    // a no-op on a fresh schema, where the branch is never entered). It must precede
+    // every user_id table and index below: CREATE INDEX IF NOT EXISTS validates its
+    // column list before the name-skip, so an index over user_id would fail on a
+    // legacy schema whose column is still account_id until this rename.
+    `DO $$
+     DECLARE orphan_count bigint;
+     BEGIN
+       IF EXISTS (
+         SELECT 1 FROM information_schema.tables
+         WHERE table_schema = '${schemaLit}' AND table_name = 'accounts'
+       ) THEN
+         SELECT count(*) INTO orphan_count FROM ${t('accounts')} WHERE subject = '';
+         IF orphan_count > 0 THEN
+           RAISE EXCEPTION 'accounts merge: % account row(s) have an empty subject and cannot be mapped to a user; delete or map them manually, then re-run the migration', orphan_count;
+         END IF;
+
+         IF EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = '${schemaLit}' AND table_name = 'apps' AND column_name = 'account_id') THEN
+           UPDATE ${t('apps')} ap SET account_id = a.subject FROM ${t('accounts')} a WHERE a.id = ap.account_id;
+           ALTER TABLE ${t('apps')} RENAME COLUMN account_id TO user_id;
+         END IF;
+         IF EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = '${schemaLit}' AND table_name = 'tokens' AND column_name = 'account_id') THEN
+           UPDATE ${t('tokens')} tk SET account_id = a.subject FROM ${t('accounts')} a WHERE a.id = tk.account_id;
+           ALTER TABLE ${t('tokens')} RENAME COLUMN account_id TO user_id;
+         END IF;
+         IF EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = '${schemaLit}' AND table_name = 'device_codes' AND column_name = 'account_id') THEN
+           UPDATE ${t('device_codes')} dc SET account_id = a.subject FROM ${t('accounts')} a WHERE a.id = dc.account_id;
+           ALTER TABLE ${t('device_codes')} RENAME COLUMN account_id TO user_id;
+         END IF;
+         IF EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_schema = '${schemaLit}' AND table_name = 'events' AND column_name = 'account_id') THEN
+           UPDATE ${t('events')} ev SET account_id = a.subject FROM ${t('accounts')} a WHERE a.id = ev.account_id;
+           ALTER TABLE ${t('events')} RENAME COLUMN account_id TO user_id;
+         END IF;
+
+         ALTER INDEX IF EXISTS ${t('events_by_account')} RENAME TO events_by_user;
+         DROP TABLE ${t('accounts')};
+       END IF;
+     END $$`,
+
     // Only the hash is stored, so a leaked database does not hand over the ability
-    // to push to every account in it.
+    // to push to every user in it.
     `CREATE TABLE IF NOT EXISTS ${t('tokens')} (
        token_hash TEXT PRIMARY KEY,
-       account_id TEXT NOT NULL,
+       user_id    TEXT NOT NULL,
        created_at BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
     `CREATE TABLE IF NOT EXISTS ${t('device_codes')} (
        device_hash TEXT PRIMARY KEY,
        user_code   TEXT NOT NULL UNIQUE,
-       account_id  TEXT NOT NULL DEFAULT '',
+       user_id     TEXT NOT NULL DEFAULT '',
        status      TEXT NOT NULL,
        expires_at  BIGINT NOT NULL,
        created_at  BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
     `CREATE TABLE IF NOT EXISTS ${t('apps')} (
        id            TEXT PRIMARY KEY,
-       account_id    TEXT NOT NULL,
+       user_id       TEXT NOT NULL,
        slug          TEXT NOT NULL,
        framework     TEXT NOT NULL,
        url           TEXT NOT NULL,
@@ -75,11 +114,11 @@ export function migrations(schema: string): string[] {
        active_deploy TEXT NOT NULL DEFAULT '',
        created_at    BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
-    `CREATE INDEX IF NOT EXISTS apps_by_fingerprint ON ${t('apps')}(account_id, fingerprint)`,
+    `CREATE INDEX IF NOT EXISTS apps_by_fingerprint ON ${t('apps')}(user_id, fingerprint)`,
     // Enforces clientRef create-dedup in the database rather than a read-then-write
     // race: a retried push that lost its config file cannot produce a second app.
     `CREATE UNIQUE INDEX IF NOT EXISTS apps_by_client_ref
-       ON ${t('apps')}(account_id, client_ref) WHERE client_ref <> ''`,
+       ON ${t('apps')}(user_id, client_ref) WHERE client_ref <> ''`,
     `CREATE TABLE IF NOT EXISTS ${t('deploys')} (
        app_id     TEXT NOT NULL,
        id         TEXT NOT NULL,
@@ -93,7 +132,7 @@ export function migrations(schema: string): string[] {
     // two events can share a second; scoping columns default '' so reads are plain equality.
     `CREATE TABLE IF NOT EXISTS ${t('events')} (
        id         BIGSERIAL PRIMARY KEY,
-       account_id TEXT NOT NULL DEFAULT '',
+       user_id    TEXT NOT NULL DEFAULT '',
        app_id     TEXT NOT NULL DEFAULT '',
        deploy_id  TEXT NOT NULL DEFAULT '',
        kind       TEXT NOT NULL,
@@ -101,7 +140,7 @@ export function migrations(schema: string): string[] {
        created_at BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
     `CREATE INDEX IF NOT EXISTS events_by_time ON ${t('events')}(created_at DESC, id DESC)`,
-    `CREATE INDEX IF NOT EXISTS events_by_account ON ${t('events')}(account_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS events_by_user ON ${t('events')}(user_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS events_by_app ON ${t('events')}(app_id, created_at DESC)`,
 
     // The two-tier permission model, flat: one row per (app, principal), no
@@ -137,8 +176,8 @@ export function migrations(schema: string): string[] {
      )`,
 
     // Identity the backend now owns since login moved off the frontend. A user's id
-    // is the subject the accounts table keys on (assigned once, never changes);
-    // email is lowercased and unique so two providers for one person converge.
+    // is the OIDC-stable principal every resource keys on (assigned once, never
+    // changes); email is lowercased and unique so two providers for one person converge.
     `CREATE TABLE IF NOT EXISTS ${t('users')} (
        id         TEXT PRIMARY KEY,
        email      TEXT NOT NULL,

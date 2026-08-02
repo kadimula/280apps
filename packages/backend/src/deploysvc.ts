@@ -60,7 +60,7 @@ export function asDeployErr(err: unknown): DeployErr | null {
   return s === null ? null : new DeployErr(s);
 }
 
-// Platform is the account-independent half: storage, config, and the activator.
+// Platform is the user-independent half: storage, config, and the activator.
 export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
@@ -89,18 +89,18 @@ export class Platform {
     this.hostSuffix = deps.hostSuffix ?? '';
   }
 
-  // The Port scoped to an account: the account is a field, not a parameter, so a
-  // query that forgets to scope by account is not expressible.
-  for(accountId: string): Service {
-    return new Service(this, accountId);
+  // The Port scoped to a user: the user is a field, not a parameter, so a query
+  // that forgets to scope by user is not expressible.
+  for(userId: string): Service {
+    return new Service(this, userId);
   }
 }
 
-// Service implements the deploy Port for one authenticated account.
+// Service implements the deploy Port for one authenticated user.
 export class Service implements Port {
   constructor(
     private readonly p: Platform,
-    private readonly accountId: string,
+    private readonly userId: string,
   ) {}
 
   async sync(req: SyncRequest): Promise<SyncResult> {
@@ -149,7 +149,7 @@ export class Service implements Port {
   private async resolve(id: Identity): Promise<{ app: App; resolution: string }> {
     if (id.appId !== '') {
       const app = await this.wrapInternal('look up app', () =>
-        this.p.store.app(this.accountId, id.appId),
+        this.p.store.app(this.userId, id.appId),
       );
       if (app === null) {
         throw new DeployErr({
@@ -164,7 +164,7 @@ export class Service implements Port {
     if (!id.forceNew) {
       if (id.gitRemote !== '') {
         const matches = await this.wrapInternal('match fingerprint', () =>
-          this.p.store.appsByFingerprint(this.accountId, fingerprint(id.gitRemote, id.slug)),
+          this.p.store.appsByFingerprint(this.userId, fingerprint(id.gitRemote, id.slug)),
         );
         if (matches.length === 1) {
           return { app: matches[0]!, resolution: Resolution.FingerprintLinked };
@@ -180,7 +180,7 @@ export class Service implements Port {
       }
       if (id.clientRef !== '') {
         const app = await this.wrapInternal('match client ref', () =>
-          this.p.store.appByClientRef(this.accountId, id.clientRef),
+          this.p.store.appByClientRef(this.userId, id.clientRef),
         );
         if (app !== null) {
           return { app, resolution: Resolution.Existing };
@@ -204,7 +204,7 @@ export class Service implements Port {
 
     const app: App = {
       id: appId,
-      accountId: this.accountId,
+      userId: this.userId,
       slug,
       framework: id.framework,
       script,
@@ -226,7 +226,7 @@ export class Service implements Port {
       // is the answer we wanted anyway.
       if (app.clientRef !== '') {
         const existing = await this.p.store
-          .appByClientRef(this.accountId, app.clientRef)
+          .appByClientRef(this.userId, app.clientRef)
           .catch(() => null);
         if (existing !== null) return existing;
       }
@@ -246,7 +246,7 @@ export class Service implements Port {
       });
     }
 
-    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.accountId, appId));
+    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
     if (app === null) {
       throw new DeployErr({
         code: DeployCode.NoSuchApp,
@@ -317,7 +317,7 @@ export class Service implements Port {
   // re-uploading the worker after this removes it. Dry-run and confirmation stay here.
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const app = await this.wrapInternal('look up app', () =>
-      this.p.store.app(this.accountId, req.appId),
+      this.p.store.app(this.userId, req.appId),
     );
     if (app === null) {
       throw new DeployErr({
@@ -347,7 +347,7 @@ export class Service implements Port {
   }
 
   async status(appId: string, deployId: string): Promise<DeployStatus> {
-    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.accountId, appId));
+    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
     if (app === null) throw notFound(appId, deployId);
     const dep = await this.wrapInternal('read deploy', () => this.p.store.deploy(appId, deployId));
     if (dep === null) throw notFound(appId, deployId);

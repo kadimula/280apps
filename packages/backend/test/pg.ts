@@ -33,7 +33,7 @@ let schemaSeq = 0;
 // returns an empty database confined to its own schema, plus its teardown (drop
 // schema, close pool). open() creates the schema, the same path production takes
 // on first boot; dropping it is the test's job.
-export async function newStore(): Promise<{ store: Store; cleanup: () => Promise<void> }> {
+export async function newStore(): Promise<{ store: Store; schema: string; cleanup: () => Promise<void> }> {
   const base = requireDatabaseURL();
   if (base === '') {
     throw new Error('newStore called without TEST_DATABASE_URL; guard with hasDatabase()');
@@ -52,7 +52,7 @@ export async function newStore(): Promise<{ store: Store; cleanup: () => Promise
       await admin.end().catch(() => {});
     }
   };
-  return { store, cleanup };
+  return { store, schema: name, cleanup };
 }
 
 export function hasDatabase(): boolean {

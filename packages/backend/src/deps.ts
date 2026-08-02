@@ -87,14 +87,20 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
 }
 
 // sweepExpired is the scheduled cleanup's core, factored out of the Worker so it is
-// testable against any Store: delete expired sessions, device codes, and lapsed
-// login-rate windows, and log the counts.
-export async function sweepExpired(store: Store, log: Logger, now: number): Promise<ExpiryCounts> {
-  const counts = await store.deleteExpired(now);
+// testable against any Store: delete expired sessions, device codes, lapsed
+// login-rate windows, and machine tokens past their ttl, and log the counts.
+export async function sweepExpired(
+  store: Store,
+  log: Logger,
+  now: number,
+  machineTokenTtlSecs: number,
+): Promise<ExpiryCounts> {
+  const counts = await store.deleteExpired(now, machineTokenTtlSecs);
   log.info('scheduled cleanup', {
     sessions: counts.sessions,
     deviceCodes: counts.deviceCodes,
     rateLimits: counts.rateLimits,
+    tokens: counts.tokens,
   });
   return counts;
 }

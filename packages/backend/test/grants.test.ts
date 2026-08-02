@@ -14,7 +14,7 @@ function appFixture(over: Partial<App> = {}): App {
   appSeq++;
   return {
     id: over.id ?? `app_${appSeq.toString(16).padStart(12, '0')}`,
-    accountId: over.accountId ?? 'acct_test',
+    userId: over.userId ?? 'usr_test',
     slug: over.slug ?? 'demo',
     framework: over.framework ?? 'static',
     url: over.url ?? `https://demo-${appSeq}.280apps.run`,
@@ -143,7 +143,7 @@ function grantSuite(name: string, makeStore: StoreFactory, skip: boolean) {
       await store.putGrant(grantFixture({ appId: app.id, principal: 'bob@firm.com' }));
       expect(await store.grantsByApp(app.id)).toHaveLength(2);
 
-      expect(await store.deleteApp(app.accountId, app.id)).toBe(true);
+      expect(await store.deleteApp(app.userId, app.id)).toBe(true);
       // A re-created app id must inherit no access from the deleted app.
       expect(await store.grantsByApp(app.id)).toEqual([]);
     });

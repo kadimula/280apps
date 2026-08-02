@@ -57,8 +57,8 @@ const ident = (over: Partial<Identity> = {}): Identity => ({
 });
 
 // Pushes a manifest to a live deploy through the real Service, returning the app id.
-async function pushLive(h: Harness, accountId: string, m: Manifest, digest: string, body: Uint8Array): Promise<string> {
-  const svc = h.platform.for(accountId);
+async function pushLive(h: Harness, userId: string, m: Manifest, digest: string, body: Uint8Array): Promise<string> {
+  const svc = h.platform.for(userId);
   const res = await svc.sync({ identity: ident(), manifest: m });
   if (res.missing.length > 0) await svc.putBlob(res.app.id, digest, body.byteLength, bodyOf(body));
   return res.app.id;
@@ -67,10 +67,9 @@ async function pushLive(h: Harness, accountId: string, m: Manifest, digest: stri
 describe('manifest policy round-trip', () => {
   it('registers the live deploy policy in the store', async () => {
     const h = await harness();
-    await h.store.createAccount({ id: 'acct_a', subject: '' });
     const { manifest, digest, body } = policyManifest();
 
-    const appId = await pushLive(h, 'acct_a', manifest, digest, body);
+    const appId = await pushLive(h, 'usr_a', manifest, digest, body);
     const policy = await h.store.appPolicy(appId);
 
     expect(policy).not.toBeNull();
@@ -85,11 +84,10 @@ describe('manifest policy round-trip', () => {
 
   it('seeds the owner grant and its tenant from the account owner', async () => {
     const h = await harness();
-    await h.store.createUser({ id: 'u_owner', email: 'boss@firm.com', name: 'Boss', image: '' });
-    await h.store.ensureAccount('u_owner', 'acct_owner');
+    await h.store.createUser({ id: 'usr_owner', email: 'boss@firm.com', name: 'Boss', image: '' });
     const { manifest, digest, body } = policyManifest({ access: 'anyone-at-tenant' });
 
-    const appId = await pushLive(h, 'acct_owner', manifest, digest, body);
+    const appId = await pushLive(h, 'usr_owner', manifest, digest, body);
 
     const owner = await h.store.grant(appId, 'boss@firm.com');
     expect(owner?.appRole).toBe('owner');
@@ -98,9 +96,8 @@ describe('manifest policy round-trip', () => {
 
   it('writes a policy.registered audit event', async () => {
     const h = await harness();
-    await h.store.createAccount({ id: 'acct_e', subject: '' });
     const { manifest, digest, body } = policyManifest();
-    const appId = await pushLive(h, 'acct_e', manifest, digest, body);
+    const appId = await pushLive(h, 'usr_e', manifest, digest, body);
 
     const events = await h.store.recentEvents(50);
     const registered = events.find((e) => e.kind === EventKind.PolicyRegistered && e.appId === appId);
@@ -109,13 +106,12 @@ describe('manifest policy round-trip', () => {
 
   it('re-registers when the policy changes across deploys', async () => {
     const h = await harness();
-    await h.store.createAccount({ id: 'acct_r', subject: '' });
     const first = policyManifest();
-    const appId = await pushLive(h, 'acct_r', first.manifest, first.digest, first.body);
+    const appId = await pushLive(h, 'usr_r', first.manifest, first.digest, first.body);
     expect((await h.store.appPolicy(appId))!.access).toBe('invited');
 
     const second = policyManifest({ access: 'link', routes: [] });
-    await pushLive(h, 'acct_r', second.manifest, second.digest, second.body);
+    await pushLive(h, 'usr_r', second.manifest, second.digest, second.body);
     const policy = await h.store.appPolicy(appId);
     expect(policy!.access).toBe('link');
     expect(policy!.routes).toEqual([]);
@@ -125,9 +121,8 @@ describe('manifest policy round-trip', () => {
 describe('policy preflight (fail closed)', () => {
   async function expectRejected(over: Partial<Manifest>): Promise<void> {
     const h = await harness();
-    await h.store.createAccount({ id: 'acct_x', subject: '' });
     const { manifest } = policyManifest(over);
-    await expect(h.platform.for('acct_x').sync({ identity: ident(), manifest })).rejects.toThrow();
+    await expect(h.platform.for('usr_x').sync({ identity: ident(), manifest })).rejects.toThrow();
   }
 
   it('rejects an unknown access mode', async () => {

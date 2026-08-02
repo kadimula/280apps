@@ -16,9 +16,9 @@ export interface ConfigVars {
   TWO80_FRONTEND_ORIGIN?: string;
   TWO80_VERIFICATION_URI?: string;
   TWO80_COOKIE_DOMAIN?: string;
-  TWO80_OPEN_SIGNUP?: string;
   TWO80_MIN_CLI_VERSION?: string;
   TWO80_SESSION_TTL_DAYS?: string;
+  TWO80_MACHINE_TOKEN_TTL_DAYS?: string;
   TWO80_LOGIN_RATE_WINDOW_SECS?: string;
   TWO80_LOGIN_RATE_MAX?: string;
   TWO80_BUILD_HOST?: string;
@@ -57,9 +57,11 @@ export interface Config {
   frontendOrigin: string;
   verificationUri: string;
   cookieDomain: string;
-  openSignup: boolean;
   minCliVersion: string;
   sessionTtlDays: number;
+  // A CLI machine token is valid only while its created_at is within this window;
+  // a change applies retroactively, so shortening it revokes older tokens at once.
+  machineTokenTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
   // builder selects which ContainerBuilder the runtime constructs.
@@ -92,9 +94,9 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     frontendOrigin: str(vars.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
     verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
     cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
-    openSignup: vars.TWO80_OPEN_SIGNUP === '1',
     minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',
     sessionTtlDays: num(vars.TWO80_SESSION_TTL_DAYS, 30),
+    machineTokenTtlDays: num(vars.TWO80_MACHINE_TOKEN_TTL_DAYS, 90),
     loginRate: {
       windowSecs: num(vars.TWO80_LOGIN_RATE_WINDOW_SECS, 600),
       max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
@@ -124,9 +126,11 @@ export interface RequestDeps {
   // Unset when no login provider is configured (a memory-runtime dev loop): the web
   // surface fails closed, the deploy API still serves.
   auth?: Auth;
-  openSignup: boolean;
   verificationUri: string;
   minCliVersion: string;
+  // now - this is the created_at cutoff authorize() passes to userByToken: a token
+  // created before it is expired and answers exactly like an unknown one.
+  machineTokenTtlSecs: number;
   // The zone app URLs live on, and the gateway origin the share dialog's "view as"
   // links point at (the gateway owns view-as; the control plane only links to it).
   appDomain: string;

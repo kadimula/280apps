@@ -8,7 +8,7 @@ import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy } from '@280/co
 
 export type { AppPolicy } from '@280/contracts';
 
-// Subject is empty for OpenSignup accounts.
+// subject is the owning user's id; empty only in legacy or test rows.
 export interface Account {
   id: string;
   subject: string;

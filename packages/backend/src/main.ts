@@ -57,7 +57,6 @@ async function run(log: Logger): Promise<void> {
   const deps: RequestDeps = {
     platform,
     auth,
-    openSignup: config.openSignup,
     verificationUri: config.verificationUri,
     minCliVersion: config.minCliVersion,
     appDomain: config.appDomain,

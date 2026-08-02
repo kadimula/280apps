@@ -4,6 +4,7 @@
 // directly; transport tests go through the router via app.request. Mirrors
 // platform/conformance_test.go's newPlatform.
 
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,13 +86,19 @@ export async function portFor(h: Harness, accountId = 'acct_test'): Promise<Serv
   return h.platform.for(accountId);
 }
 
+// seeds an account and binds a CLI bearer token to it, mirroring api.ts hashToken
+// (sha256 hex) so authorize() resolves the token to accountId.
+export async function seedToken(h: Harness, accountId: string, token: string): Promise<void> {
+  await h.store.createAccount({ id: accountId, subject: '' });
+  await h.store.addToken(accountId, createHash('sha256').update(token, 'utf8').digest('hex'));
+}
+
 // The test-facing surface: per-request config a case wants on the deps container,
 // plus an optional shared harness and access logger. Server takes a buildDeps
 // closure, not these fields; testDeps wraps them.
 export interface TestServerOpts {
   harness?: Harness;
   auth?: Auth;
-  openSignup?: boolean;
   verificationUri?: string;
   minCliVersion?: string;
   logger?: Logger;
@@ -104,7 +111,6 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
   return {
     platform: harness.platform,
     auth: opts.auth,
-    openSignup: opts.openSignup ?? false,
     verificationUri: opts.verificationUri ?? '',
     minCliVersion: opts.minCliVersion ?? '',
     appDomain: '280apps.run',

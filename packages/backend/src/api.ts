@@ -660,16 +660,7 @@ export class Server {
       throw new DeployErr({ code: DeployCode.Unavailable, message: 'auth lookup failed', retryable: true });
     }
     if (acct === null) {
-      if (!this.deps(c).openSignup) throw noAccount();
-      // Derive the id from the token so a repeated presentation lands on the same
-      // account even if the insert below raced.
-      acct = { id: 'acct_' + hash.slice(0, 12), subject: '' };
-      try {
-        await this.deps(c).platform.store.createAccount(acct);
-        await this.deps(c).platform.store.addToken(acct.id, hash);
-      } catch {
-        throw new DeployErr({ code: DeployCode.Unavailable, message: 'could not create account', retryable: true });
-      }
+      throw noAccount();
     }
     markAccount(c, acct.id);
     return this.deps(c).platform.for(acct.id);

@@ -16,7 +16,6 @@ export interface ConfigVars {
   TWO80_FRONTEND_ORIGIN?: string;
   TWO80_VERIFICATION_URI?: string;
   TWO80_COOKIE_DOMAIN?: string;
-  TWO80_OPEN_SIGNUP?: string;
   TWO80_MIN_CLI_VERSION?: string;
   TWO80_SESSION_TTL_DAYS?: string;
   TWO80_LOGIN_RATE_WINDOW_SECS?: string;
@@ -57,7 +56,6 @@ export interface Config {
   frontendOrigin: string;
   verificationUri: string;
   cookieDomain: string;
-  openSignup: boolean;
   minCliVersion: string;
   sessionTtlDays: number;
   loginRate: { windowSecs: number; max: number };
@@ -92,7 +90,6 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     frontendOrigin: str(vars.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
     verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
     cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
-    openSignup: vars.TWO80_OPEN_SIGNUP === '1',
     minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',
     sessionTtlDays: num(vars.TWO80_SESSION_TTL_DAYS, 30),
     loginRate: {
@@ -124,7 +121,6 @@ export interface RequestDeps {
   // Unset when no login provider is configured (a memory-runtime dev loop): the web
   // surface fails closed, the deploy API still serves.
   auth?: Auth;
-  openSignup: boolean;
   verificationUri: string;
   minCliVersion: string;
   // The zone app URLs live on, and the gateway origin the share dialog's "view as"

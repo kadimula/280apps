@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { REQUEST_ID_HEADER } from '../src/observe.js';
-import { HttpClient, capturingLogger, newServer, requests, testManifest, type Harness } from './helpers/harness.js';
+import { HttpClient, capturingLogger, newServer, requests, seedToken, testManifest, type Harness } from './helpers/harness.js';
 
 const live: Harness[] = [];
 afterEach(async () => {
@@ -14,8 +14,9 @@ afterEach(async () => {
 describe('access log', () => {
   it('records every request but health checks, at the right level', async () => {
     const { logger, records } = capturingLogger();
-    const s = await newServer({ openSignup: true, logger });
+    const s = await newServer({ logger });
     live.push(s.harness);
+    await seedToken(s.harness, 'acct_log', 'log-token');
     const app = s.app;
 
     const client = new HttpClient(app, 'log-token');

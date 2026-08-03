@@ -1,6 +1,6 @@
-// Host classification, carried over from platform/dispatcher/src/index.js so the
-// gateway and the dispatcher agree on what is an app vs reserved. Adds `auth`,
-// the canonical login host.
+// Host classification: what a hostname is (the canonical auth host, an app host,
+// or reserved/unknown). Used by the gateway to route the auth host; app hosts are
+// served by their own Workers.
 
 export const RESERVED = new Set(['www', 'api', 'app', 'admin', 'dashboard', 'status', 'assets', 'auth']);
 
@@ -25,8 +25,8 @@ export function classifyHost(hostname: string, cfg: HostConfig): HostKind {
   return script === null ? { kind: 'none' } : { kind: 'app', script, host };
 }
 
-// Recovers the app script from a hostname's first label, stripping the dev suffix
-// (dispatcher parity). null for reserved, empty, or malformed labels.
+// Recovers the app script from a hostname's first label, stripping the dev suffix.
+// null for reserved, empty, or malformed labels.
 export function scriptFor(hostname: string, hostSuffix: string): string | null {
   let label = hostname.split('.')[0] ?? '';
   if (hostSuffix !== '' && label.length > hostSuffix.length && label.endsWith(hostSuffix)) {

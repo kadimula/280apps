@@ -11,16 +11,18 @@ committed [`.env.example`](../.env.example) at the repo root.
 
 | | Production | Development |
 | --- | --- | --- |
-| Dispatch namespace (Workers for Platforms) | `apps` | `apps-development` |
+| Auth host (identity gateway) | `auth.280apps.run` | `auth-development.280apps.run` |
 | App URLs | `*.280apps.run` | `*-development.280apps.run` |
 | Control-plane API (`TWO80_API`) | `https://api.280apps.com` | `https://api-development.280apps.com` |
 | Frontend origin | `https://www.280apps.com` | `https://www-development.280apps.com` |
 | App host suffix (`TWO80_APP_HOST_SUFFIX`) | *(empty)* | `-development` |
 
-Dev apps deploy to the `apps-development` Workers-for-Platforms dispatch namespace
-and serve at `*-development.280apps.run`. Production apps deploy to the `apps`
-namespace and serve at `*.280apps.run`. The `-development` host label comes from
-`TWO80_APP_HOST_SUFFIX`, which is inserted before `TWO80_APP_DOMAIN` (`280apps.run`).
+Container-only serving: each dev app deploys as its own Cloudflare Worker and
+serves at `*-development.280apps.run`; production apps serve at `*.280apps.run`.
+Each app Worker calls the identity gateway (`auth[-development].280apps.run`) to
+mint a signed identity, then forwards to its container. The `-development` host
+label comes from `TWO80_APP_HOST_SUFFIX`, which is inserted before
+`TWO80_APP_DOMAIN` (`280apps.run`).
 
 ## Targeting dev from the CLI
 

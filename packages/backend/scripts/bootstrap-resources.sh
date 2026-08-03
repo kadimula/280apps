@@ -12,9 +12,9 @@
 #   * a Hyperdrive config pointing at the existing Neon Postgres project, with
 #     query caching DISABLED
 #
-# It does NOT create the Durable Object namespace, KV, dispatch namespaces, or
-# secrets: DO namespaces come up with the first `wrangler deploy` (migration tag
-# v1), and secrets are set with `wrangler secret put` (see the wrangler configs).
+# It does NOT create the Durable Object namespace, KV, or secrets: DO namespaces
+# come up with the first `wrangler deploy` (migration tag v1), and secrets are set
+# with `wrangler secret put` (see the wrangler configs).
 #
 # ============================================================================
 #  READ THIS: HYPERDRIVE QUERY CACHING MUST BE DISABLED IN EVERY ENVIRONMENT.
@@ -34,8 +34,8 @@
 # creation is safe to re-run; Hyperdrive create will make a NEW config each time,
 # so only run those once and record the printed ids in the wrangler files).
 #
-# Prereqs: `wrangler` (Workers for Platforms plan), authenticated to the correct
-# Cloudflare account (`wrangler whoami`). Run from packages/backend/.
+# Prereqs: `wrangler`, authenticated to the correct Cloudflare account
+# (`wrangler whoami`). Run from packages/backend/.
 
 set -euo pipefail
 

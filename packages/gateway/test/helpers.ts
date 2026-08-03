@@ -1,7 +1,6 @@
 // Test support: an in-memory Store (auth + apps + grants), fake OIDC providers, a
-// fresh signing keypair, fake app containers, and a wired Gateway with a matching
-// verifier. Nothing here reaches the network; a login "code" is the email the fake
-// signs in as, and a "container" echoes the request it was proxied.
+// fresh signing keypair, and a wired Gateway with a matching verifier. Nothing here
+// reaches the network; a login "code" is the email the fake signs in as.
 
 import { Auth } from '@280/backend/authsvc';
 import type { OidcIdentity, OidcProvider } from '@280/backend/auth/oidc';
@@ -9,7 +8,6 @@ import type { AppPolicy, Grant, Session, Store, User, OAuthAccount } from '@280/
 import { Authorizer } from '../src/access.js';
 import { confineRedirect, Gateway, type GatewayOptions } from '../src/gateway.js';
 import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '../src/identity.js';
-import { ContainerUpstream, type AppContainers } from '../src/upstream.js';
 import type { ProviderLink } from '../src/pages.js';
 
 const APP_DOMAIN = '280apps.run';
@@ -140,43 +138,6 @@ export class FakeStore {
   }
 }
 
-// FakeContainer echoes the request it was proxied so a test can prove the signed
-// identity header arrived; FakeContainers records which scripts were reached so a
-// deny test can assert no proxy happened.
-export interface UpstreamEcho {
-  upstream: 'container';
-  host: string;
-  path: string;
-  method: string;
-  identity: string | null;
-}
-
-class FakeContainer {
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const body: UpstreamEcho = {
-      upstream: 'container',
-      host: url.hostname,
-      path: url.pathname + url.search,
-      method: request.method,
-      identity: request.headers.get('X-280-Identity'),
-    };
-    return new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
-  }
-}
-
-export class FakeContainers implements AppContainers {
-  readonly calls: string[] = [];
-
-  forScript(script: string): Fetcher | null {
-    this.calls.push(script);
-    return new FakeContainer() as unknown as Fetcher;
-  }
-}
-
 export async function genSigningKey(): Promise<{ privateJwk: JsonWebKey; publicJwks: Record<string, JsonWebKey>; kid: string }> {
   const kid = 'test-k1';
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
@@ -188,7 +149,6 @@ export interface GatewayHarness {
   gateway: Gateway;
   verifier: IdentityVerifier;
   publicJwks: Record<string, JsonWebKey>;
-  containers: FakeContainers;
   store: FakeStore;
 }
 
@@ -237,13 +197,11 @@ export async function newGateway(
     { name: 'google', label: 'Continue with Google' },
     { name: 'microsoft', label: 'Continue with Microsoft' },
   ];
-  const containers = new FakeContainers();
   const opts: GatewayOptions = {
     auth,
     signer,
     authz: new Authorizer(store),
     audit: store,
-    upstream: new ContainerUpstream(containers),
     hosts,
     authOrigin: AUTH_ORIGIN,
     cookieDomain: `.${APP_DOMAIN}`,
@@ -254,7 +212,7 @@ export async function newGateway(
   };
 
   const verifier = new IdentityVerifier({ publicJwks, issuer: ISSUER });
-  return { gateway: new Gateway(opts), verifier, publicJwks, containers, store };
+  return { gateway: new Gateway(opts), verifier, publicJwks, store };
 }
 
 // cookiePair extracts a "name=value" from the response's Set-Cookie headers.

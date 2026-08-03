@@ -12,8 +12,8 @@
 	// Container-only serving: the gateway is the identity mint/JWKS service, not an
 	// app proxy. It owns ONLY the auth host; each app is its own Worker on its own
 	// <script>.280apps.run/* route (emitted by the roll) that calls this gateway's
-	// GatewayRPC over a service binding. The prod dispatcher keeps the wildcard until
-	// the Phase 3 cutover removes it.
+	// GatewayRPC over a service binding. The legacy dispatch wildcard was removed in
+	// the Phase 3 cutover.
 	"routes": [{ "pattern": "auth.280apps.run/*", "zone_name": "280apps.run" }],
 
 	// The prod Hyperdrive over the prod control-plane Postgres. Only this Worker needs

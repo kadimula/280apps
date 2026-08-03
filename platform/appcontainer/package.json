@@ -7,8 +7,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@280/gateway": "workspace:*",
-    "@cloudflare/containers": "0.3.7"
+    "@cloudflare/containers": "0.3.7",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "wrangler": "4.116.0"

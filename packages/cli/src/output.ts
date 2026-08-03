@@ -151,7 +151,7 @@ export function usageError(s: Streams, cmd: string, badFlag: string, validFlags:
 
 // argError rejects an unexpected positional argument, same exit code as an
 // unknown flag: the command took something it cannot act on.
-export function argError(s: Streams, cmd: string, badArg: string, validFlags: string[]): number {
+function argError(s: Streams, cmd: string, badArg: string, validFlags: string[]): number {
   const help =
     validFlags.length > 0
       ? `\`${cmd}\` takes flags, not arguments: ${validFlags.join(', ')} (--help always allowed)`
@@ -161,7 +161,7 @@ export function argError(s: Streams, cmd: string, badArg: string, validFlags: st
 
 // valueError rejects a string flag given without a value, same exit code as an
 // unknown flag.
-export function valueError(s: Streams, cmd: string, flag: string, validFlags: string[]): number {
+function valueError(s: Streams, cmd: string, flag: string, validFlags: string[]): number {
   return usage(s, 'missing_value', `flag ${flag} needs a value`, flagList(cmd, validFlags));
 }
 

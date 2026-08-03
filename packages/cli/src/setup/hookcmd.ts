@@ -11,7 +11,7 @@ export interface BinProbe {
   isFile(p: string): boolean; // exists and is a regular file (follows symlinks)
 }
 
-export const nodeProbe: BinProbe = {
+const nodeProbe: BinProbe = {
   realpath: (p) => fs.realpathSync(p),
   isFile: (p) => {
     try {

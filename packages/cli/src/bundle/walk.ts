@@ -48,14 +48,6 @@ export function fileExists(p: string): boolean {
   }
 }
 
-export function dirExists(p: string): boolean {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 // Orders by UTF-8 bytes, matching Go's string < (what os.ReadDir sorts by), so the
 // asset list order is deterministic and matches the Go CLI.
 function byteCompare(a: string, b: string): number {
@@ -66,7 +58,7 @@ function byteCompare(a: string, b: string): number {
 // basename within each directory, exactly as Go's filepath.WalkDir does. Each
 // yield carries the absolute path and the "/"-joined path relative to dir. An
 // optional skip(rel, isDir) prunes a subtree or a file before it is visited.
-export function* walkFiles(
+function* walkFiles(
   dir: string,
   skip?: (rel: string, isDir: boolean) => boolean,
 ): Generator<{ abs: string; rel: string }> {

@@ -11,7 +11,7 @@ import * as config from './config.js';
 import * as output from './output.js';
 import type { Ctx } from './app.js';
 
-export const DELETE_HELP = `280 delete - destroy this project's app: its URL, content, and data
+const DELETE_HELP = `280 delete - destroy this project's app: its URL, content, and data
 
 Flags:
   --yes <name>   confirm; must name the app. Bare 280 delete prints the name

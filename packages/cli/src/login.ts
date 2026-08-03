@@ -11,7 +11,7 @@ import * as output from './output.js';
 import { CliError, asError } from './output.js';
 import type { Ctx } from './app.js';
 
-export const LOGIN_HELP = `280 login - authenticate this machine; prints a link to show your user, then
+const LOGIN_HELP = `280 login - authenticate this machine; prints a link to show your user, then
 re-run to finish. Never waits.
 
 Examples:
@@ -95,7 +95,7 @@ export async function cmdLogin(ctx: Ctx): Promise<number> {
 
 // waitingOn is the message the agent relays. Addressed to the agent on purpose:
 // the fix tells it not to open the URL or sign in itself.
-export function waitingOn(p: credentials.Pending): CliError {
+function waitingOn(p: credentials.Pending): CliError {
   return new CliError(
     AuthCode.AuthorizationPending,
     `280 needs your user to sign in: ${p.url} (code ${p.userCode})`,

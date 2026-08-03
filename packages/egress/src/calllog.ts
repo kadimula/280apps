@@ -30,6 +30,3 @@ export type CallLog = (event: CallLogEvent) => void;
 export const consoleCallLog: CallLog = (event) => {
   console.log('[280-egress] ' + JSON.stringify(event));
 };
-
-// noopCallLog discards events, for tests that do not assert on the audit trail.
-export const noopCallLog: CallLog = () => {};

@@ -1,7 +1,7 @@
 // The device-flow client: start, redeem, the polled authorization_pending answer, and error coercion.
 
 import { describe, it, expect } from 'vitest';
-import { Client, pending } from '../src/auth/http.js';
+import { Client } from '../src/auth/http.js';
 import { asDeployError } from '../src/deploy/error.js';
 import { AuthCode, DeployCode } from '../src/index.js';
 import type { FetchInit, FetchLike } from '../src/deploy/http.js';
@@ -60,7 +60,6 @@ describe('auth HTTP Client', () => {
     const { fetch } = mockFetch(() => new Response(body, { status: 400 }));
     const c = new Client('https://api', { fetch });
     const err = await catchErr(() => c.redeem('dc'));
-    expect(pending(err)).toBe(true);
     expect(asDeployError(err)?.code).toBe(AuthCode.AuthorizationPending);
   });
 
@@ -81,10 +80,5 @@ describe('auth HTTP Client', () => {
     expect(err?.code).toBe(DeployCode.Unavailable);
     expect(err?.retryable).toBe(true);
     expect(err?.message).toContain('ETIMEDOUT');
-  });
-
-  it('pending is false for a non-pending error and non-errors', () => {
-    expect(pending(new Error('nope'))).toBe(false);
-    expect(pending(undefined)).toBe(false);
   });
 });

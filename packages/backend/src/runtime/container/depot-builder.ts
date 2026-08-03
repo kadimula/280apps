@@ -145,7 +145,7 @@ interface HttpDepotApiConfig {
 // throws rather than pretend a project exists, so misconfiguration surfaces
 // honestly instead of silently sharing one cache. Only exercised in the gated live
 // proof — unit tests inject a fake DepotApi.
-export class HttpDepotApi implements DepotApi {
+class HttpDepotApi implements DepotApi {
   private readonly base: string;
   private readonly fetchImpl: typeof fetch;
 

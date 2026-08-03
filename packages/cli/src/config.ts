@@ -7,9 +7,9 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DIR = '.280';
+const DIR = '.280';
 
-export const FILE = path.join(DIR, 'config.json');
+const FILE = path.join(DIR, 'config.json');
 
 // Config is the committed project<->app binding. JSON field names mirror Go so a
 // config written by either CLI reads on the other.
@@ -20,7 +20,7 @@ export interface Config {
   clientRef: string; // create-dedup nonce (no-git-remote projects)
 }
 
-export function pathOf(root: string): string {
+function pathOf(root: string): string {
   return path.join(root, FILE);
 }
 

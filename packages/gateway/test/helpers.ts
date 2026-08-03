@@ -29,7 +29,7 @@ const DEFAULT_GRANTS: Array<{ appId: string; principal: string }> = [
 
 // FakeProvider maps a login code to an identity: sign in as anyone by passing
 // their email as the code. "boom" fails the exchange.
-export class FakeProvider implements OidcProvider {
+class FakeProvider implements OidcProvider {
   constructor(readonly name: string) {}
 
   authUrl({ state, redirectUri }: { state: string; redirectUri: string }): string {
@@ -45,7 +45,7 @@ export class FakeProvider implements OidcProvider {
 
 // FakeStore is the auth + access slice of Store; the deploy methods the gateway
 // never calls are absent (the value is cast to Store where needed).
-export class FakeStore {
+class FakeStore {
   private readonly users = new Map<string, User>();
   private readonly oauth = new Map<string, OAuthAccount>();
   private readonly sessions = new Map<string, Session>();
@@ -250,4 +250,4 @@ export async function signIn(
   return session;
 }
 
-export { AUTH_ORIGIN, AUTH_HOST, APP_DOMAIN, ISSUER };
+export { AUTH_ORIGIN, APP_DOMAIN, ISSUER };

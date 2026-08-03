@@ -30,7 +30,7 @@ export function pendingLive(p: Pending | undefined, now: number, api: string): b
 }
 
 // pathOf is ~/.280/credentials, honoring TWO80_HOME for tests.
-export function pathOf(): string {
+function pathOf(): string {
   return home.file('credentials');
 }
 

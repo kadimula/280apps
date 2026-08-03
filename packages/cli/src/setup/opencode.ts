@@ -36,7 +36,7 @@ export function install(root: string, command: string): InstallResult {
 
 // Deterministic in `command`, so an unchanged command yields byte-identical
 // output (idempotent no-op) and a path repair yields a diff.
-export function pluginSource(command: string): string {
+function pluginSource(command: string): string {
   return `// ${MARKER} v${VERSION} — do not edit; regenerate with \`280 setup\`.
 // Injects this directory's 280 app state into every OpenCode session at start,
 // so the agent can act on the live deploy state without invoking anything first.

@@ -11,7 +11,7 @@ import { fail } from './walk.js';
 // Framework names this package can build. Mirrors detect.FrameworkNext /
 // FrameworkStatic (cli/src/detect); duplicated as a constant so bundle has no
 // dependency on the detect module.
-export const Framework = {
+const Framework = {
   Static: 'static',
   Next: 'next',
 } as const;
@@ -29,13 +29,3 @@ export function build(root: string, framework: string): Bundle {
       );
   }
 }
-
-// contextPaths returns the manifest's build-context file paths, for logging.
-export function contextPaths(m: { files: { path: string }[] }): string[] {
-  return m.files.map((f) => f.path);
-}
-
-export type { Bundle };
-export { buildStatic, staticDir } from './static.js';
-export { buildNextContainer, buildStaticContainer, APP_PORT } from './container.js';
-export { PreflightError, fail, walkContext, walkFiles, fileExists, dirExists } from './walk.js';

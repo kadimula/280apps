@@ -4,11 +4,8 @@
 
 import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import {
-  DeployCode,
-  errorSchema,
-  type DeployError,
-} from '../errors.js';
+import { DeployCode } from '../errors.js';
+import { tryParseError, readBodyText, errMessage } from '../http-body.js';
 import {
   deployStatusSchema,
   deleteResultSchema,
@@ -164,24 +161,6 @@ async function errorFromResponse(resp: Response): Promise<DeployErr> {
   }
 }
 
-// A non-JSON or non-error body yields undefined; the loose schema fills omitempty fields.
-function tryParseError(raw: string): DeployError | undefined {
-  let obj: unknown;
-  try {
-    obj = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const res = errorSchema.safeParse(obj);
-  return res.success ? res.data : undefined;
-}
-
-// Reads the response body, bounded to 64 KiB.
-async function readBodyText(resp: Response): Promise<string> {
-  const text = await resp.text().catch(() => '');
-  return text.length > 64 << 10 ? text.slice(0, 64 << 10) : text;
-}
-
 // Wraps a transport error as retryable unavailable, so the caller re-runs the loop.
 function retryable(what: string, err: unknown): DeployErr {
   return new DeployErr({
@@ -189,10 +168,6 @@ function retryable(what: string, err: unknown): DeployErr {
     message: `${what}: ${errMessage(err)}`,
     retryable: true,
   });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 // Adapts a BlobBody to the web ReadableStream fetch wants without buffering it: the 100 MiB PUT must stream.

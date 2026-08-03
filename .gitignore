@@ -20,6 +20,7 @@ data/
 .lavish/
 docs/*
 !docs/dev-environment.md
+!docs/architecture.md
 *.local.md
 
 # Local env / secrets

@@ -35,6 +35,10 @@ export interface Identity280 {
   scope(name: string): unknown;
   role: string; // the viewer's feature role, '' if none
   appRole: string; // the viewer's app role
+  // True on the platform-minted anonymous viewer a public app serves to visitors
+  // with no session (user.email is '' then). Branch on this before writes or
+  // per-user rows: `if (identity.anonymous) ...`.
+  anonymous: boolean;
   claims: IdentityClaims;
 }
 
@@ -76,6 +80,7 @@ export async function verifyIdentityToken(token: string, opts: IdentityOptions =
     user,
     role: claims.role,
     appRole: claims.appRole,
+    anonymous: claims.anon === true,
     claims,
     can: (capability: string) => caps.has(capability),
     scope: (name: string) => (name in claims.scope ? claims.scope[name] : null),

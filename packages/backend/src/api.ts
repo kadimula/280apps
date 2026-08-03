@@ -13,6 +13,8 @@ import {
   appRoleAtLeast,
   asDeployError,
   deleteRequestSchema,
+  isAppAccess,
+  isConsumerEmailDomain,
   statusForCode,
   syncRequestSchema,
   tenantFromEmail,
@@ -123,6 +125,7 @@ export class Server {
     app.get('/internal/apps/:app/grants', this.route((c) => this.handleGrantsList(c)));
     app.post('/internal/apps/:app/grants', this.route((c) => this.handleGrantPut(c)));
     app.post('/internal/apps/:app/grants/revoke', this.route((c) => this.handleGrantRevoke(c)));
+    app.post('/internal/apps/:app/access', this.route((c) => this.handleSetAccess(c)));
     app.get('/internal/apps/:app/share', this.route((c) => this.handleShareDialog(c)));
 
     // The dashboard preview: issues the opaque grant the iframe exchanges at the
@@ -393,10 +396,16 @@ export class Server {
     } catch {
       throw unavailable('could not read the access list');
     }
+    const ownerTenant = policy?.ownerTenant ?? '';
     return c.json({
       app: { id: app.id, slug: app.slug, url: app.url },
       script: app.script,
       access: policy?.access ?? 'invited',
+      accessSource: policy?.accessSource ?? 'manifest',
+      ownerTenant,
+      // Lets the dialog disable/warn on "Anyone at gmail.com"; the gateway
+      // independently refuses to admit on a consumer tenant (defense in depth).
+      ownerTenantIsConsumer: isConsumerEmailDomain(ownerTenant),
       roles: policy?.roles ?? [],
       viewAsOrigin: this.deps(c).viewAsOrigin,
       grants: grants.map((g) => ({
@@ -465,6 +474,33 @@ export class Server {
       await this.deps(c).platform.store.revokeGrant(app.id, principal, user.email);
     } catch {
       throw unavailable('could not update the access list');
+    }
+    return c.body(null, 204);
+  }
+
+  // handleSetAccess is the Share modal's "General access" dial: it writes the
+  // dashboard override, which wins durably over 280.json's access on every future
+  // deploy. ownedApp() makes it account-owner-only — public opens the app's whole
+  // viewer surface to the internet, so nothing below the owner may flip it.
+  private async handleSetAccess(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, accessSetSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the access change',
+      appendReason: false,
+    });
+    if (!isAppAccess(req.access)) {
+      throw badRequest('access must be one of invited, anyone-at-tenant, public');
+    }
+
+    let ok: boolean;
+    try {
+      ok = await this.deps(c).platform.store.setAppAccess(app.id, req.access, user.email);
+    } catch {
+      throw unavailable('could not save the access change');
+    }
+    if (!ok) {
+      throw badRequest('this app has never gone live; push it first, then set its access');
     }
     return c.body(null, 204);
   }
@@ -799,6 +835,7 @@ function encodeStatus(s: DeployStatus): Record<string, unknown> {
   const out: Record<string, unknown> = { state: s.state };
   // url is omitempty and set by the service only when live.
   if (s.url) out.url = s.url;
+  if (s.notice) out.notice = s.notice;
   if (s.failure) out.failure = encodeError(s.failure as DeployError);
   return out;
 }
@@ -898,6 +935,12 @@ const grantPutSchema = {
 const grantRevokeSchema = {
   parse(u: unknown): { principal: string } {
     return { principal: str(asObject(u).principal) };
+  },
+};
+
+const accessSetSchema = {
+  parse(u: unknown): { access: string } {
+    return { access: str(asObject(u).access) };
   },
 };
 

@@ -37,6 +37,7 @@ function reader(
         : {
             appId,
             access: p.access ?? 'invited',
+            accessSource: p.accessSource ?? 'manifest',
             roles: p.roles ?? [],
             routes: p.routes ?? [],
             secrets: p.secrets ?? [],
@@ -92,11 +93,27 @@ describe('Authorizer — open access', () => {
     if (!denied.allow && !missing.allow) expect(denied.reason).toBe(missing.reason);
   });
 
-  it('admits any signed-in viewer to a link-access app as an implicit viewer', async () => {
-    const r = reader({ renewals: 'app_1' }, {}, { app_1: { access: 'link' } });
+  it('admits any signed-in viewer to a public app as an implicit viewer', async () => {
+    const r = reader({ renewals: 'app_1' }, {}, { app_1: { access: 'public' } });
     const d = await evaluate(r, viewer('stranger@anywhere.com'));
     expect(d.allow).toBe(true);
     if (d.allow) expect(d.effective.appRole).toBe('viewer');
+  });
+
+  it('a grant still wins over the implicit viewer on a public app', async () => {
+    const r = reader(
+      { renewals: 'app_1' },
+      { 'app_1 ed@evergreen.com': { appRole: 'editor' } },
+      { app_1: { access: 'public' } },
+    );
+    const d = await evaluate(r, viewer('ed@evergreen.com'));
+    expect(d.allow).toBe(true);
+    if (d.allow) expect(d.effective.appRole).toBe('editor');
+  });
+
+  it('denies under the retired link value (unknown modes fail closed)', async () => {
+    const r = reader({ renewals: 'app_1' }, {}, { app_1: { access: 'link' as AppPolicy['access'] } });
+    expect((await evaluate(r, viewer('stranger@anywhere.com'))).allow).toBe(false);
   });
 
   it('admits only same-tenant viewers to an anyone-at-tenant app', async () => {
@@ -107,6 +124,26 @@ describe('Authorizer — open access', () => {
     );
     expect((await evaluate(r, viewer('sam@evergreen.com'))).allow).toBe(true);
     expect((await evaluate(r, viewer('sam@rival.com'))).allow).toBe(false);
+  });
+
+  it('never admits anyone-at-tenant on a consumer ownerTenant (gmail is not an org)', async () => {
+    const r = reader(
+      { renewals: 'app_1' },
+      {},
+      { app_1: { access: 'anyone-at-tenant', ownerTenant: 'gmail.com' } },
+    );
+    expect((await evaluate(r, viewer('sam@gmail.com'))).allow).toBe(false);
+  });
+
+  it('publicAppId answers the app id only for an effective-public policy', async () => {
+    const r = reader(
+      { renewals: 'app_1', sales: 'app_2' },
+      {},
+      { app_1: { access: 'public' }, app_2: { access: 'invited' } },
+    );
+    expect(await new Authorizer(r).publicAppId('renewals')).toBe('app_1');
+    expect(await new Authorizer(r).publicAppId('sales')).toBe(null);
+    expect(await new Authorizer(r).publicAppId('ghost')).toBe(null);
   });
 });
 

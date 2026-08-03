@@ -29,6 +29,9 @@ export interface IdentityClaims {
   role: string; // '' | a builder-defined feature role
   caps: string[]; // capabilities can() checks (MVP: [role] when a feature role is held)
   scope: Record<string, unknown>; // advisory data scope, {} when unset
+  // True only on the anonymous identity the gateway mints for a public app's
+  // no-session visitors (sub 'anon', empty email). Absent on every real viewer.
+  anon?: boolean;
   iat: number;
   exp: number;
 }
@@ -65,6 +68,7 @@ export interface SignInput {
   role?: string;
   caps?: string[];
   scope?: Record<string, unknown>;
+  anon?: boolean;
 }
 
 export class IdentitySigner {
@@ -116,6 +120,7 @@ export class IdentitySigner {
       role: input.role ?? '',
       caps: input.caps ?? [],
       scope: input.scope ?? {},
+      ...(input.anon === true ? { anon: true } : {}),
       iat,
       exp: iat + this.ttlSecs,
     };
@@ -176,7 +181,13 @@ export class IdentityVerifier {
 
     const claims = decodeJson(p, 'payload') as Partial<IdentityClaims>;
     requireStr(claims.sub, 'sub');
-    requireStr(claims.email, 'email');
+    // The anonymous identity (anon: true) is the one claim set allowed an empty
+    // email; every real viewer must carry one.
+    if (claims.anon === true) {
+      if (typeof claims.email !== 'string') throw new IdentityError('missing email');
+    } else {
+      requireStr(claims.email, 'email');
+    }
     if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') {
       throw new IdentityError('missing iat/exp');
     }
@@ -200,6 +211,7 @@ export class IdentityVerifier {
       scope: claims.scope !== null && typeof claims.scope === 'object' && !Array.isArray(claims.scope)
         ? (claims.scope as Record<string, unknown>)
         : {},
+      ...(claims.anon === true ? { anon: true } : {}),
       iat: claims.iat,
       exp: claims.exp,
     };

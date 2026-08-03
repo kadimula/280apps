@@ -74,10 +74,12 @@ describe('routeGateSatisfied', () => {
 });
 
 describe('isAppAccess', () => {
-  it('accepts the three modes and rejects others', () => {
+  it('accepts the three modes and rejects others (link is retired)', () => {
     expect(isAppAccess(APP_ACCESS.Invited)).toBe(true);
-    expect(isAppAccess(APP_ACCESS.Link)).toBe(true);
-    expect(isAppAccess('public')).toBe(false);
+    expect(isAppAccess(APP_ACCESS.AnyoneAtTenant)).toBe(true);
+    expect(isAppAccess(APP_ACCESS.Public)).toBe(true);
+    expect(isAppAccess('link')).toBe(false);
+    expect(isAppAccess('')).toBe(false);
   });
 });
 
@@ -110,7 +112,7 @@ describe('canonicalDigest folds the policy', () => {
 
   it('changes when any enforced section changes', () => {
     const base = canonicalDigest(manifest({}));
-    expect(canonicalDigest(manifest({ access: 'link' }))).not.toBe(base);
+    expect(canonicalDigest(manifest({ access: 'public' }))).not.toBe(base);
     expect(canonicalDigest(manifest({ roles: ['manager'] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ routes: [gate('/x', { appRole: 'admin' })] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ secrets: ['K'] }))).not.toBe(base);

@@ -354,9 +354,21 @@ export class Service implements Port {
     const st: DeployStatus = {
       state: dep.state,
       url: dep.state === State.Live ? app.url : '',
+      notice: dep.state === State.Live ? await this.accessOverrideNotice(appId, dep.manifest) : '',
       failure: dep.failure ?? undefined,
     };
     return st;
+  }
+
+  // The one-line push-output notice when the dashboard's access override diverges
+  // from 280.json (design D5: the dashboard wins durably; the deploy must say so
+  // rather than let the builder believe the manifest applied).
+  private async accessOverrideNotice(appId: string, m: Manifest): Promise<string> {
+    const policy = await this.p.store.appPolicy(appId).catch(() => null);
+    if (policy === null || policy.accessSource !== 'dashboard') return '';
+    const declared = isAppAccess(m.access ?? '') ? m.access : 'invited';
+    if (policy.access === declared) return '';
+    return `access is "${policy.access}" (set in the dashboard, which overrides 280.json's "${declared}")`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,
@@ -423,7 +435,7 @@ function preflightPolicy(
   reject: (why: string) => never,
 ): void {
   if (access !== '' && !isAppAccess(access)) {
-    reject(`access "${access}" is not one of invited, anyone-at-tenant, link`);
+    reject(`access "${access}" is not one of invited, anyone-at-tenant, public`);
   }
   const known = new Set(roles.filter((r) => r !== ''));
   for (const g of routes) {

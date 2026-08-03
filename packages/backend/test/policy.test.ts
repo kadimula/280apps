@@ -110,10 +110,10 @@ describe('manifest policy round-trip', () => {
     const appId = await pushLive(h, 'usr_r', first.manifest, first.digest, first.body);
     expect((await h.store.appPolicy(appId))!.access).toBe('invited');
 
-    const second = policyManifest({ access: 'link', routes: [] });
+    const second = policyManifest({ access: 'public', routes: [] });
     await pushLive(h, 'usr_r', second.manifest, second.digest, second.body);
     const policy = await h.store.appPolicy(appId);
-    expect(policy!.access).toBe('link');
+    expect(policy!.access).toBe('public');
     expect(policy!.routes).toEqual([]);
   });
 });
@@ -125,8 +125,8 @@ describe('policy preflight (fail closed)', () => {
     await expect(h.platform.for('usr_x').sync({ identity: ident(), manifest })).rejects.toThrow();
   }
 
-  it('rejects an unknown access mode', async () => {
-    await expectRejected({ access: 'public' as unknown as Manifest['access'] });
+  it('rejects an unknown access mode (the retired link value included)', async () => {
+    await expectRejected({ access: 'link' as unknown as Manifest['access'] });
   });
 
   it('rejects a route that gates on an undeclared feature role', async () => {

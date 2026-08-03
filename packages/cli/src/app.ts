@@ -165,6 +165,8 @@ async function cmdPush(ctx: Ctx): Promise<number> {
     },
   );
 
+  if (res.notice !== '') output.progress(s, res.notice);
+
   return output.result(s, {
     url: res.url,
     appId: res.app.id,

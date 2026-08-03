@@ -103,6 +103,11 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'Two-tier roles in 280.json; owner shares in the dialog; gateway enforces',
     },
     {
+      name: 'General access modes (invited, anyone-at-tenant, public)',
+      status: 'supported',
+      note: 'Set in 280.json or the dashboard Share dialog (dashboard wins); public serves anonymous viewers with no sign-in',
+    },
+    {
       name: 'Per app Postgres and R2',
       status: 'unsupported',
       note: 'Direction, not shipped',
@@ -323,7 +328,10 @@ enforced at the gateway, before any of your code runs.
 \`\`\`
 
 - \`access\`: \`invited\` (only people the owner shared with), \`anyone-at-tenant\`
-  (anyone in the owner's org), or \`link\` (any signed-in viewer). Default \`invited\`.
+  (anyone in the owner's org), or \`public\` (anyone on the internet, no sign-in;
+  such visitors get an anonymous viewer identity). Default \`invited\`. If the
+  owner set the mode in the dashboard's Share dialog, that setting wins over this
+  field on every deploy — the push output says so when they diverge.
 - \`roles\`: your feature roles. A route can require one via \`{ "role": "..." }\`, and
   you check the same name with \`can("...")\`. Name a role for a custom action.
 - \`routes\`: \`path\` (globs allowed, \`/admin/*\`) → \`require\` an \`app_role\` floor OR a

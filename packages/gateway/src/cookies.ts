@@ -39,13 +39,37 @@ export function serializeCookie(name: string, value: string, opts: CookieOptions
   return parts.join('; ');
 }
 
+// Platform-reserved cookie-name prefix. Every 280_* cookie is stripped before the
+// request reaches untrusted container code: 280_session is a portable SSO bearer, and
+// apps read identity from X-280-Identity, never a cookie, so nothing legitimate breaks.
+const RESERVED_COOKIE_PREFIX = '280_';
+
+function stripReservedCookies(headers: Headers): void {
+  const raw = headers.get('cookie');
+  if (raw === null) return;
+  const kept = raw
+    .split(';')
+    .map((pair) => pair.trim())
+    .filter((pair) => {
+      if (pair === '') return false;
+      const i = pair.indexOf('=');
+      const name = (i < 0 ? pair : pair.slice(0, i)).trim();
+      return !name.startsWith(RESERVED_COOKIE_PREFIX);
+    });
+  if (kept.length === 0) headers.delete('cookie');
+  else headers.set('cookie', kept.join('; '));
+}
+
 // stampIdentity strips any client-supplied x-280-* headers (load-bearing: else a
-// viewer forges their own identity) and sets the gateway-minted one for the container.
+// viewer forges their own identity) and the platform's own 280_* cookies (load-bearing:
+// else untrusted container code sees the SSO session), then sets the gateway-minted
+// identity header for the container.
 export function stampIdentity(request: Request, token: string): Request {
   const headers = new Headers(request.headers);
   for (const name of [...headers.keys()]) {
     if (name.toLowerCase().startsWith('x-280-')) headers.delete(name);
   }
+  stripReservedCookies(headers);
   headers.set(ID_HEADER, token);
   return new Request(request, { headers });
 }

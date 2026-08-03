@@ -13,7 +13,17 @@ import {
   type Manifest,
 } from '@280/contracts';
 import { DeployErr, bodyOf, bytesOf, newPlatform, portFor, type Harness } from './helpers/harness.js';
-import type { Service } from '../src/deploysvc.js';
+import { sanitizeSlug, type Service } from '../src/deploysvc.js';
+
+describe('sanitizeSlug', () => {
+  it('never returns a name starting with a digit (Cloudflare rejects it at the roll)', () => {
+    expect(sanitizeSlug('1-static')).toBe('app-1-static');
+    expect(sanitizeSlug('2024-renewals')).toBe('app-2024-renewals');
+    expect(sanitizeSlug('My App')).toBe('my-app');
+    expect(/^[0-9]/.test(sanitizeSlug('9lives'))).toBe(false);
+    expect(sanitizeSlug('###')).toBe('app');
+  });
+});
 
 // mkBundle builds a container context: the Dockerfile is manifest.files[0]; extra
 // source files follow in insertion order.

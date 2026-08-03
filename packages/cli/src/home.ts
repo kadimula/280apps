@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // dir returns ~/.280, or TWO80_HOME when set. It creates nothing.
-export function dir(): string {
+function dir(): string {
   const h = process.env.TWO80_HOME;
   if (h) return h;
   return path.join(os.homedir(), '.280');

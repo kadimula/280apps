@@ -7,7 +7,7 @@
 // The shape of a bare Postgres identifier. A schema name reaches SQL by
 // concatenation (an identifier cannot be a bind parameter) and arrives from the
 // environment, so it is checked rather than trusted.
-export const safeSchema = /^[a-z_][a-z0-9_]*$/;
+const safeSchema = /^[a-z_][a-z0-9_]*$/;
 
 export type Qualifier = (name: string) => string;
 

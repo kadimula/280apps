@@ -9,7 +9,7 @@
 	// (enableInternet=false, interceptHttps=true) in src/container.js. `image`
 	// points at the build context the CLI buildpack produces — for the local proof,
 	// materialize a hello-world app's context there (see README.md); in production
-	// the self-hosted DockerBuilder supplies the app's own image.
+	// the build home supplies the app's own image.
 	"durable_objects": {
 		"bindings": [{ "class_name": "App280Container", "name": "APP" }]
 	},

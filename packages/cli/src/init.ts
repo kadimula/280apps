@@ -8,7 +8,7 @@ import * as detect from './detect.js';
 import * as output from './output.js';
 import type { Ctx } from './app.js';
 
-export const INIT_HELP = `280 init - detect framework, write .280/config.json (push does this for you)
+const INIT_HELP = `280 init - detect framework, write .280/config.json (push does this for you)
 
 Flags:
   --name <slug>             app name (default: package.json name)
@@ -41,7 +41,7 @@ export function ensureInit(root: string, nameOverride: string, frameworkOverride
 
 // newClientRef is a random create-dedup nonce, closing the
 // crash-between-create-and-persist window for projects with no git remote.
-export function newClientRef(): string {
+function newClientRef(): string {
   return 'cr_' + randomBytes(16).toString('hex');
 }
 

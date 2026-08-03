@@ -22,7 +22,7 @@ import { cmdSetup } from './setup/index.js';
 export const VERSION = '0.4.0';
 
 // DEFAULT_API is the platform endpoint; override with TWO80_API.
-export const DEFAULT_API = 'https://api.280apps.com';
+const DEFAULT_API = 'https://api.280apps.com';
 
 // Env is the process environment one invocation runs in, injected so tests need
 // no real stdio or working directory.
@@ -195,7 +195,7 @@ Examples:
 
 // GLOBAL_HELP is the agent's command reference, trimmed to shipped commands so a
 // public package does not advertise a roadmap.
-export const GLOBAL_HELP = `280 - Deploy and share your app with one command.
+const GLOBAL_HELP = `280 - Deploy and share your app with one command.
 
 Usage:
   280 push [flags]    build, deploy, print the live URL (runs init if new)

@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Manifest } from '@280/contracts';
 import { State } from '@280/contracts';
-import type { App, Deploy, DeviceCode, Store } from '../src/seams.js';
+import type { App, Deploy, DeviceCode, PreviewGrant, Store } from '../src/seams.js';
 import { DeviceStatus, EventKind } from '../src/seams.js';
 import { hasDatabase, newStore } from './pg.js';
 
@@ -167,6 +167,47 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.claimDeviceCode('dev-hash')).toBe(false); // still pending
   });
 
+  function previewGrantFixture(over: Partial<PreviewGrant> = {}): PreviewGrant {
+    return {
+      tokenHash: over.tokenHash ?? 'pv-hash',
+      appId: over.appId ?? 'app_pv',
+      ownerUserId: over.ownerUserId ?? 'usr_owner',
+      viewAs: over.viewAs ?? { kind: 'user', email: 'target@firm.com' },
+      expiresAt: over.expiresAt ?? now() + 600,
+      revoked: over.revoked ?? false,
+    };
+  }
+
+  it('createPreviewGrant round-trips the view-as target by hash', async () => {
+    await store.createPreviewGrant(previewGrantFixture());
+    const g = await store.previewGrantByHash('pv-hash');
+    expect(g).toMatchObject({
+      tokenHash: 'pv-hash',
+      appId: 'app_pv',
+      ownerUserId: 'usr_owner',
+      viewAs: { kind: 'user', email: 'target@firm.com' },
+      revoked: false,
+    });
+    expect(await store.previewGrantByHash('missing')).toBeNull();
+  });
+
+  it('revokePreviewGrant kills a grant exactly once', async () => {
+    await store.createPreviewGrant(previewGrantFixture());
+    expect(await store.revokePreviewGrant('pv-hash')).toBe(true);
+    expect((await store.previewGrantByHash('pv-hash'))?.revoked).toBe(true);
+    expect(await store.revokePreviewGrant('pv-hash')).toBe(false); // already revoked
+    expect(await store.revokePreviewGrant('missing')).toBe(false);
+  });
+
+  it('deleteExpired sweeps lapsed preview grants', async () => {
+    const t = now();
+    await store.createPreviewGrant(previewGrantFixture({ tokenHash: 'pv-old', expiresAt: t - 1 }));
+    await store.createPreviewGrant(previewGrantFixture({ tokenHash: 'pv-new', expiresAt: t + 600 }));
+    expect(await store.deleteExpired(t, 90 * 24 * 60 * 60)).toMatchObject({ previewGrants: 1 });
+    expect(await store.previewGrantByHash('pv-old')).toBeNull();
+    expect(await store.previewGrantByHash('pv-new')).not.toBeNull();
+  });
+
   it('deleteExpired removes only lapsed sessions, device codes, and rate windows', async () => {
     const t = now();
     await store.createUser({ id: 'usr_exp', email: 'exp@example.com', name: '', image: '' });
@@ -184,14 +225,14 @@ describe.skipIf(!hasDatabase())('store', () => {
     await store.touchLoginRate('ip_new', t, 600, 100);
 
     const ttl = 90 * 24 * 60 * 60;
-    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 0 });
+    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 0, previewGrants: 0 });
 
     expect(await store.sessionByHash('sess_old')).toBeNull();
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.deviceCodeByHash('dc_old')).toBeNull();
     expect(await store.deviceCodeByHash('dc_new')).not.toBeNull();
     // a second sweep with nothing left to expire removes nothing
-    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0, tokens: 0 });
+    expect(await store.deleteExpired(t, ttl)).toEqual({ sessions: 0, deviceCodes: 0, rateLimits: 0, tokens: 0, previewGrants: 0 });
   });
 
   it('deleteExpired removes only machine tokens created past the ttl', async () => {

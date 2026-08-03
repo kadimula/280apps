@@ -10,19 +10,23 @@ import {
   DeployCode,
   DeployErr,
   AuthCode,
+  appRoleAtLeast,
   asDeployError,
   deleteRequestSchema,
   statusForCode,
   syncRequestSchema,
+  tenantFromEmail,
   tokenRequestSchema,
   approveRequestSchema,
   deleteAppRequestSchema,
+  previewGrantRequestSchema,
   version,
   type App as PublicApp,
   type DeployError,
   type DeployStatus,
   type SyncResult,
   type DeleteResult,
+  type ViewAsTarget,
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
 import { docsRoutes } from './docs.js';
@@ -58,6 +62,11 @@ const USER_CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
 
 // What a human types into the delete dialog.
 const DASHBOARD_CONFIRM = 'delete';
+
+// A preview grant outlives one dashboard visit, not a session: the app-host
+// middleware re-mints ~120s identity tokens from it while the iframe is open, and
+// the dashboard re-issues a grant when it lapses.
+const PREVIEW_GRANT_TTL_SECS = 15 * 60;
 
 export interface ServerConfig {
   // buildDeps constructs the I/O container from the Hono context.
@@ -115,6 +124,10 @@ export class Server {
     app.post('/internal/apps/:app/grants', this.route((c) => this.handleGrantPut(c)));
     app.post('/internal/apps/:app/grants/revoke', this.route((c) => this.handleGrantRevoke(c)));
     app.get('/internal/apps/:app/share', this.route((c) => this.handleShareDialog(c)));
+
+    // The dashboard preview: issues the opaque grant the iframe exchanges at the
+    // app host's /__280/preview for a gateway-minted identity.
+    app.post('/internal/apps/:app/preview-grant', this.route((c) => this.handlePreviewGrant(c)));
 
     app.get('/healthz', (c) => c.text('ok\n'));
 
@@ -482,6 +495,98 @@ export class Server {
       viewAsOrigin: this.deps(c).viewAsOrigin,
     });
     return c.html(html);
+  }
+
+  // handlePreviewGrant issues an owner-authorized, short-lived, hashed preview
+  // grant for one app (design: dashboard preview + view-as). ownedApp() scopes it
+  // to the caller's own app; on top of that the caller's effective grant must be
+  // admin or above (viewAsAllowed semantics), the same rule the gateway re-checks
+  // on every mint from the grant.
+  private async handlePreviewGrant(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, previewGrantRequestSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the preview request',
+      appendReason: false,
+    });
+    const viewAs = await this.validViewAs(c, app.id, req.viewAs);
+
+    const effective = await this.effectiveAppRole(c, app.id, user.email);
+    if (!appRoleAtLeast(effective, 'admin')) {
+      throw badRequest('only an app owner or admin can preview it');
+    }
+
+    const token = randomSecret(32);
+    try {
+      await this.deps(c).platform.store.createPreviewGrant({
+        tokenHash: hashToken(token),
+        appId: app.id,
+        ownerUserId: user.id,
+        viewAs,
+        expiresAt: nowSecs() + PREVIEW_GRANT_TTL_SECS,
+        revoked: false,
+      });
+    } catch {
+      throw unavailable('could not create the preview grant');
+    }
+    return c.json({
+      grant: token,
+      expiresIn: PREVIEW_GRANT_TTL_SECS,
+      url: `${app.url}/__280/preview?g=${token}`,
+    });
+  }
+
+  // validViewAs normalizes and validates a preview target: a role target must name
+  // a real app role or a feature role the app declares; a user target must be an
+  // email (any email — view-as-user is open to all principals by design, and the
+  // gateway runs the target through the normal admission decision).
+  private async validViewAs(
+    c: Context<HonoEnv>,
+    appId: string,
+    viewAs: ViewAsTarget,
+  ): Promise<ViewAsTarget> {
+    if (viewAs.kind === 'none') return { kind: 'none' };
+    if (viewAs.kind === 'user') {
+      const email = viewAs.email.trim().toLowerCase();
+      if (email === '' || !email.includes('@')) {
+        throw badRequest('name the person to view as by email');
+      }
+      return { kind: 'user', email };
+    }
+    const appRole = viewAs.appRole.trim();
+    const featureRole = viewAs.featureRole.trim();
+    if (appRole === '' && featureRole === '') {
+      throw badRequest('name an app role or a feature role to view as');
+    }
+    if (appRole !== '' && !(APP_ROLE_ORDER as readonly string[]).includes(appRole)) {
+      throw badRequest(`app role must be one of ${APP_ROLE_ORDER.join(', ')}`);
+    }
+    if (featureRole !== '') {
+      const policy = await this.deps(c).platform.store.appPolicy(appId).catch(() => null);
+      if (!(policy?.roles ?? []).includes(featureRole)) {
+        throw badRequest(`"${featureRole}" is not a feature role this app declares in 280.json`);
+      }
+    }
+    return { kind: 'role', appRole, featureRole };
+  }
+
+  // effectiveAppRole merges the caller's direct and org-domain grants into the app
+  // role the gateway would resolve for them (the higher of the two wins).
+  private async effectiveAppRole(c: Context<HonoEnv>, appId: string, email: string): Promise<string> {
+    const store = this.deps(c).platform.store;
+    const tenant = tenantFromEmail(email);
+    let direct, domain;
+    try {
+      [direct, domain] = await Promise.all([
+        store.grant(appId, email),
+        tenant !== '' ? store.grant(appId, 'domain:' + tenant) : Promise.resolve(null),
+      ]);
+    } catch {
+      throw unavailable('could not read the access list');
+    }
+    const a = direct?.appRole ?? '';
+    const b = domain?.appRole ?? '';
+    return appRoleAtLeast(a, b) ? a : b;
   }
 
   // handleAuthStart sends the browser to the provider's consent screen. A failure

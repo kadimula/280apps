@@ -175,6 +175,19 @@ export function migrations(schema: string): string[] {
        updated_at   BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
 
+    // Owner-authorized dashboard preview grants, modeled on device_codes: only the
+    // opaque token's hash is stored. The control plane inserts; the gateway reads
+    // per mint, so revoked/expires_at bound and kill a preview server-side.
+    `CREATE TABLE IF NOT EXISTS ${t('preview_grants')} (
+       token_hash    TEXT PRIMARY KEY,
+       app_id        TEXT NOT NULL,
+       owner_user_id TEXT NOT NULL,
+       view_as       JSONB NOT NULL DEFAULT '{"kind":"none"}',
+       expires_at    BIGINT NOT NULL,
+       revoked       BOOLEAN NOT NULL DEFAULT FALSE,
+       created_at    BIGINT NOT NULL DEFAULT (${epochDefault})
+     )`,
+
     // Identity the backend now owns since login moved off the frontend. A user's id
     // is the OIDC-stable principal every resource keys on (assigned once, never
     // changes); email is lowercased and unique so two providers for one person converge.

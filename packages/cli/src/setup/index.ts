@@ -80,5 +80,3 @@ Flags:
 Examples:
   280 setup
   280 setup --check`;
-
-export { SETUP_HELP };

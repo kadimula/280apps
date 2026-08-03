@@ -5,10 +5,10 @@
 // turns a non-zero exit into an agent-actionable DeployErr.
 //
 // The one step that differs per build home — how the image is actually built and
-// pushed — is the single abstract method buildAndPush. DockerBuilder implements it
-// with `docker build`/`docker push`; DepotBuilder with one `depot build --push`.
-// Keeping the sequence here is what keeps the two builders in sync: a fix to the
-// roll (see rollContainerApp) or teardown lands for both at once.
+// pushed — is the single abstract method buildAndPush. DepotBuilder implements it
+// with one `depot build --push`. Keeping the shared sequence here is what lets a
+// new build home add only buildAndPush: a fix to the roll (see rollContainerApp)
+// or teardown lands for every builder at once.
 //
 // Every external command goes through an injected ExecFn, so the whole sequence is
 // unit-testable without Docker, Depot, or a Cloudflare account. This module reaches
@@ -30,7 +30,7 @@ export interface ExecResult {
 // ExecFn runs one command in cwd and resolves with its exit code and combined
 // output. It never rejects on a non-zero exit; the builder inspects code. env is
 // merged over the process environment for commands that need per-build secrets
-// (the Depot build id/token); DockerBuilder passes none.
+// (the Depot build id/token); other build homes pass none.
 export type ExecFn = (
   cmd: string,
   args: string[],
@@ -287,7 +287,7 @@ export async function materialize(dir: string, files: RolloutJob['files']): Prom
 // the raw API token (or the account id) as a password; it requires these minted
 // credentials (username "v1", an expiring JWT). Both `docker login` and Depot's
 // docker-config credentials provider consume the returned pair.
-export async function mintRegistryCredentials(
+async function mintRegistryCredentials(
   accountId: string,
   apiToken: string,
   registry: string,
@@ -322,7 +322,7 @@ export function tail(s: string, n = 25): string {
 // spawnExec is the production ExecFn: it runs the command and collects combined
 // output. child_process is imported lazily so this module loads under type-checking
 // without pinning the import at module scope.
-export const spawnExec: ExecFn = async (cmd, args, opts) => {
+const spawnExec: ExecFn = async (cmd, args, opts) => {
   const { spawn } = await import('node:child_process');
   return new Promise<ExecResult>((resolveExec) => {
     const env = opts.env ? { ...process.env, ...opts.env } : process.env;

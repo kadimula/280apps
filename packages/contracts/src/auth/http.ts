@@ -6,9 +6,10 @@ import {
   tokenResponseSchema,
   type DeviceCodeResponse,
 } from '../types.js';
-import { DeployCode, errorSchema, AuthCode, type DeployError } from '../errors.js';
-import { DeployErr, asDeployError } from '../deploy/error.js';
+import { DeployCode } from '../errors.js';
+import { DeployErr } from '../deploy/error.js';
 import type { FetchLike } from '../deploy/http.js';
+import { tryParseError, readBodyText, errMessage } from '../http-body.js';
 
 export interface AuthClientOptions {
   fetch?: FetchLike;
@@ -65,12 +66,6 @@ export function newClient(baseURL: string): Client {
   return new Client(baseURL);
 }
 
-// True when err is the flow's "not finished yet" answer, which callers poll on rather than fail on.
-export function pending(err: unknown): boolean {
-  const de = asDeployError(err);
-  return de !== undefined && de.code === AuthCode.AuthorizationPending;
-}
-
 // Prefers the server's error shape, synthesizing one only for a non-error body (proxy page, HTML).
 async function errorFrom(resp: Response): Promise<DeployErr> {
   const raw = await readBodyText(resp);
@@ -85,30 +80,10 @@ async function errorFrom(resp: Response): Promise<DeployErr> {
   });
 }
 
-function tryParseError(raw: string): DeployError | undefined {
-  let obj: unknown;
-  try {
-    obj = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const res = errorSchema.safeParse(obj);
-  return res.success ? res.data : undefined;
-}
-
-async function readBodyText(resp: Response): Promise<string> {
-  const text = await resp.text().catch(() => '');
-  return text.length > 64 << 10 ? text.slice(0, 64 << 10) : text;
-}
-
 function unavailable(what: string, err: unknown): DeployErr {
   return new DeployErr({
     code: DeployCode.Unavailable,
     message: `${what}: ${errMessage(err)}`,
     retryable: true,
   });
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

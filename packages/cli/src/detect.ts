@@ -9,13 +9,8 @@ import { DeployCode } from '@280/contracts';
 import { fail } from './output.js';
 
 // Frameworks the CLI can deploy.
-export const FrameworkNext = 'next';
-export const FrameworkStatic = 'static';
-
-export interface DetectResult {
-  framework: string; // "next" | "static"
-  slug: string; // default app name, from package.json name or the dir
-}
+const FrameworkNext = 'next';
+const FrameworkStatic = 'static';
 
 // framework detects root's framework: Next.js when package.json depends on `next`,
 // else static when an index.html or common build dir exists, else preflight_rejected.
@@ -27,10 +22,6 @@ export function framework(root: string): string {
     'no supported framework found: need a Next.js project (next in package.json) or a static build (index.html)',
     'cd into your app directory, or pass 280 init --framework next|static',
   );
-}
-
-export function detect(root: string): DetectResult {
-  return { framework: framework(root), slug: slug(root) };
 }
 
 // slug is the default app name: package.json "name" slugified, else the project

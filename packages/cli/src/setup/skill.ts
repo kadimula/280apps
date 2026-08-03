@@ -9,7 +9,7 @@ import { writeAtomic } from './jsonfile.js';
 import { DESCRIPTION } from '../homeview.js';
 import type { InstallResult } from './result.js';
 
-export const SKILL_NAME = '280-deploy';
+const SKILL_NAME = '280-deploy';
 
 export const INSTALL_FILE = path.join('.claude', 'skills', SKILL_NAME, 'SKILL.md');
 

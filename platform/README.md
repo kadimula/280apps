@@ -13,11 +13,10 @@ signed identity and forwards to its container. The legacy edge dispatcher
 (Workers for Platforms) and its dispatch namespaces were removed in the Phase 3
 cutover.
 
-The control plane itself deploys from `packages/backend/` — its `wrangler.jsonc`
-(prod) and `wrangler.development.jsonc` (development) declare the `api.280apps.com`
-route, the R2 / Hyperdrive / Durable Object bindings, and the cleanup cron.
-One-time resources (R2 buckets, Hyperdrive configs with query caching disabled)
-are created by `packages/backend/scripts/bootstrap-resources.sh`.
+The control plane itself is a Node service deployed on Railway from
+`packages/backend/` (`Dockerfile`, env in `.env.example`). One-time resources (R2
+buckets, Hyperdrive configs with query caching disabled) are created by
+`packages/backend/scripts/bootstrap-resources.sh`.
 
 Server behavior, store, blobstore, runtime, API, and run/deploy docs: see
 `packages/backend/`.

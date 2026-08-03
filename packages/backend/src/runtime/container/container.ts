@@ -16,7 +16,7 @@ import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult } fr
 // RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
 // per-app Worker (TWO80_ROUTE_POLICY): access mode + feature roles + route gates +
 // declared secret names. It is exactly appPolicyFromManifest's output.
-export type RolloutPolicy = ReturnType<typeof appPolicyFromManifest>;
+type RolloutPolicy = ReturnType<typeof appPolicyFromManifest>;
 
 // ContextFile is one file of the build context, read lazily so a large context
 // streams file by file instead of materializing in memory all at once.
@@ -60,7 +60,7 @@ export interface ContainerBuilder {
 // tail and a fix and is marked non-retryable; a transient one (cannot reach the
 // build host) stays retryable so the loop tries again. The builder decides which
 // by throwing a DeployErr itself; anything else is treated as retryable infra.
-export function buildFailed(err: unknown): DeployErr {
+function buildFailed(err: unknown): DeployErr {
   if (err instanceof DeployErr) return err;
   return new DeployErr({
     code: DeployCode.Unavailable,

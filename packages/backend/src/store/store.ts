@@ -46,6 +46,25 @@ interface Backend {
   close(): Promise<void>;
 }
 
+// runTx wraps fn in BEGIN/COMMIT on the given connection, rolling back (swallowing
+// a doomed rollback) on failure. It never owns the connection lifecycle: the caller
+// acquires and releases its own Queryable.
+async function runTx<T>(q: Queryable, fn: (q: Queryable) => Promise<T>): Promise<T> {
+  await q.query('BEGIN');
+  try {
+    const out = await fn(q);
+    await q.query('COMMIT');
+    return out;
+  } catch (err) {
+    try {
+      await q.query('ROLLBACK');
+    } catch {
+      // no-op once committed; the original error is what matters
+    }
+    throw err;
+  }
+}
+
 class PoolBackend implements Backend {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -56,17 +75,7 @@ class PoolBackend implements Backend {
   async transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
-      const out = await fn(client);
-      await client.query('COMMIT');
-      return out;
-    } catch (err) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        // no-op once committed; the original error is what matters
-      }
-      throw err;
+      return await runTx(client, fn);
     } finally {
       client.release();
     }
@@ -105,19 +114,7 @@ class ClientBackend implements Backend {
 
   async transaction<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
     const c = await this.conn();
-    await c.query('BEGIN');
-    try {
-      const out = await fn(c);
-      await c.query('COMMIT');
-      return out;
-    } catch (err) {
-      try {
-        await c.query('ROLLBACK');
-      } catch {
-        // no-op once committed; the original error is what matters
-      }
-      throw err;
-    }
+    return runTx(c, fn);
   }
 
   async close(): Promise<void> {

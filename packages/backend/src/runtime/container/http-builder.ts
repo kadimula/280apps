@@ -2,7 +2,7 @@
 // build context to the self-hosted Docker build host over HTTP and relays the
 // outcome. It holds no Docker and no filesystem, so it loads and runs under the
 // Workers runtime (the AppActivator Durable Object builds it); the host on the
-// other end runs the real DockerBuilder.
+// other end runs the real registry build.
 //
 // A build failure comes back as the seam's error shape (status + DeployError
 // JSON) and is rethrown as a DeployErr, so a broken app build reaches the agent

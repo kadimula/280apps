@@ -373,45 +373,11 @@ export const approveRequestSchema = z
   .passthrough();
 export type ApproveRequest = z.infer<typeof approveRequestSchema>;
 
-export const appSummarySchema = z
-  .object({
-    id: str(),
-    slug: str(),
-    url: str(),
-    live: bool(),
-  })
-  .passthrough();
-export type AppSummary = z.infer<typeof appSummarySchema>;
-
-export const appsResponseSchema = z
-  .object({ apps: arr(appSummarySchema) })
-  .passthrough();
-export type AppsResponse = z.infer<typeof appsResponseSchema>;
-
 // Like approve: the owner is the session, so only the typed confirmation rides in the body; the app is in the path.
 export const deleteAppRequestSchema = z
   .object({ confirm: str() })
   .passthrough();
 export type DeleteAppRequest = z.infer<typeof deleteAppRequestSchema>;
-
-// The signed-in user the backend renders for the web surface. Its id is the subject
-// the platform keys accounts on, so a user carries their apps across a re-login.
-export const userSchema = z
-  .object({
-    id: str(),
-    email: str(),
-    name: str(),
-    image: str(),
-  })
-  .passthrough();
-export type User = z.infer<typeof userSchema>;
-
-// What GET /auth/me returns: the current user, or a null user when the request
-// carries no valid session (the frontend renders the signed-out state from that).
-export const meResponseSchema = z
-  .object({ user: userSchema.nullish().transform((v) => v ?? null) })
-  .passthrough();
-export type MeResponse = z.infer<typeof meResponseSchema>;
 
 // The hex SHA-256 of raw content.
 export function digestBytes(data: Uint8Array): Digest {

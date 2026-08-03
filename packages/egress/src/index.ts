@@ -21,7 +21,7 @@ export type { Vault } from './vault.js';
 export { envVault, mapVault } from './vault.js';
 
 export type { CallLog, CallLogEvent, CallOutcome } from './calllog.js';
-export { consoleCallLog, noopCallLog } from './calllog.js';
+export { consoleCallLog } from './calllog.js';
 
 export type { EgressHandlerOptions } from './handler.js';
 export { makeEgressHandler } from './handler.js';

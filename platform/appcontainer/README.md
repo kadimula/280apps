@@ -1,9 +1,8 @@
 # 280 app container
 
 The container class every 280 app runs in, with the platform security defaults
-locked on. This is what the phase-2 gateway will bind and what the self-hosted
-DockerBuilder targets; here it also lets you run one app end to end with
-`wrangler dev`.
+locked on. The gateway binds this container class; here it also lets you run one
+app end to end with `wrangler dev`.
 
 - `src/container.js` — `App280Container extends Container`. Locked defaults:
   `enableInternet = false` (default-deny egress; the library default is `true`),
@@ -12,9 +11,10 @@ DockerBuilder targets; here it also lets you run one app end to end with
   a class field, so it can't trip the footgun the spike documented). The handler +
   `applyEgressPolicy()` here mirror the tested `@280/egress` package (packages/
   egress), which the production gateway imports.
-- `src/worker.js` — a thin proof front that applies the app's egress policy (from
-  `EGRESS_POLICY` in the Worker env, derived from `280.json`) then forwards to the
-  container. NOT the gateway (no OIDC/access/identity; that is phase 2).
+- `src/worker.js` — compiles in the `@280/gateway` verify-and-forward middleware
+  (`handleAppRequest`): it verifies the signed identity, applies the app's egress
+  policy (from `EGRESS_POLICY` in the Worker env, derived from `280.json`), then
+  forwards to the container.
 
 The egress data path — default-deny, the fail-closed allowlist, credential
 injection from the Worker vault (the container never sees the secret), and one
@@ -22,8 +22,7 @@ call-log event per outbound request — is unit-proven in `packages/egress`
 (`test/exfil.test.ts` is the CI exfiltration guard).
 
 The defaults, the HTTP-520 fail-closed on unlisted hosts, and the runtime-CA
-mechanism are CONFIRMED on real Cloudflare Containers by the phase-0 egress spike
-(`/Users/kishore/Development/firstmate/data/280-p0-egress-spike/report.md`).
+mechanism are CONFIRMED on real Cloudflare Containers by the phase-0 egress spike.
 
 ## Local end-to-end proof (wrangler dev + Docker)
 
@@ -44,8 +43,8 @@ npx wrangler dev            # binds App280Container to ./proof-context, serves o
 curl -s localhost:8787 | grep -o 'Hello from 280[^<]*'
 ```
 
-`proof-context/` is throwaway (gitignored). In production the self-hosted
-DockerBuilder builds the app's own image and the gateway binds it by host; nothing
-here is per-app committed state.
+`proof-context/` is throwaway (gitignored). In production the build home builds
+the app's own image and the gateway binds it by host; nothing here is per-app
+committed state.
 
-See `BUILD_HOME.md` for the build-home decision (self-hosted Docker builder).
+See `BUILD_HOME.md` for the build-home decision.

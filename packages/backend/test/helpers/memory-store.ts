@@ -11,6 +11,7 @@ import {
   tenantFromEmail,
   type AppPolicy,
   type DeployError,
+  type PreviewGrant,
 } from '@280/contracts';
 import {
   DeviceStatus,
@@ -39,6 +40,7 @@ export class MemoryStore implements Store {
   private readonly oauth = new Map<string, OAuthAccount>(); // `${provider}/${providerAccountId}`
   private readonly sessions = new Map<string, Session>(); // tokenHash -> session
   private readonly loginRate = new Map<string, { count: number; expiresAt: number }>();
+  private readonly previewGrants = new Map<string, PreviewGrant>(); // tokenHash -> grant
   private readonly grants = new Map<string, Grant>(); // `${appId}/${principal}`
   private readonly policies = new Map<string, AppPolicy>(); // appId -> policy
   private readonly events: Event[] = [];
@@ -159,7 +161,14 @@ export class MemoryStore implements Store {
         tokens++;
       }
     }
-    return { sessions, deviceCodes, rateLimits, tokens };
+    let previewGrants = 0;
+    for (const [k, g] of [...this.previewGrants.entries()]) {
+      if (g.expiresAt <= now) {
+        this.previewGrants.delete(k);
+        previewGrants++;
+      }
+    }
+    return { sessions, deviceCodes, rateLimits, tokens, previewGrants };
   }
 
   async createDeviceCode(d: DeviceCode): Promise<void> {
@@ -193,6 +202,22 @@ export class MemoryStore implements Store {
       return true;
     }
     return false;
+  }
+
+  async createPreviewGrant(g: PreviewGrant): Promise<void> {
+    this.previewGrants.set(g.tokenHash, { ...g, viewAs: { ...g.viewAs } });
+  }
+
+  async previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null> {
+    const g = this.previewGrants.get(tokenHash);
+    return g ? { ...g, viewAs: { ...g.viewAs } } : null;
+  }
+
+  async revokePreviewGrant(tokenHash: string): Promise<boolean> {
+    const g = this.previewGrants.get(tokenHash);
+    if (!g || g.revoked) return false;
+    g.revoked = true;
+    return true;
   }
 
   async app(userId: string, appId: string): Promise<App | null> {
@@ -362,11 +387,11 @@ export class MemoryStore implements Store {
     return p ? { ...p, roles: [...p.roles], routes: [...p.routes], secrets: [...p.secrets] } : null;
   }
 
-  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void> {
+  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string; kind?: string }): Promise<void> {
     this.record({
       userId: this.userIdFor(e.appId),
       appId: e.appId,
-      kind: e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied,
+      kind: e.kind ?? (e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied),
       detail: e.detail ?? JSON.stringify({ principal: e.principal }),
     });
   }

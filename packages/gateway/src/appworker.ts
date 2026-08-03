@@ -11,7 +11,7 @@
 import { IdentityVerifier, IdentityError, type VerifiedIdentity } from '@280/contracts/identity';
 import type { RouteGate } from '@280/contracts';
 import { gateForPath } from './routegate.js';
-import { ID_COOKIE, SESSION_COOKIE, VIEW_COOKIE, readCookie, serializeCookie, stampIdentity } from './cookies.js';
+import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE, VIEW_COOKIE, readCookie, serializeCookie, stampIdentity } from './cookies.js';
 import type { GatewayBinding, MintResult } from './mint.js';
 import { denyPage, errorPage, unavailablePage } from './pages.js';
 
@@ -24,6 +24,18 @@ const DEFAULT_EDGE_SKEW_SECS = 5;
 // local. An unknown kid (a just-rotated key) forces one immediate refetch, so rotation
 // does not wait out the TTL.
 const JWKS_TTL_SECS = 300;
+
+// The platform-reserved path where the dashboard iframe exchanges its preview
+// grant (?g=) for partitioned cookies. Never forwarded to the container.
+const PREVIEW_PATH = '/__280/preview';
+
+// Outlives the grant on purpose: the server-side expires_at (re-checked on every
+// mint) is authoritative, so a lingering cookie only earns a clean deny.
+const PREVIEW_COOKIE_TTL_SECS = 1800;
+
+// The platform, not the builder, decides who may frame an app host: only the 280
+// dashboard origins, applied to every served response in serveGated.
+const FRAME_ANCESTORS = 'https://www.280apps.com https://www-development.280apps.com';
 
 export interface AppWorkerEnv {
   // This app's App280Container namespace. The harness Worker (not this middleware)
@@ -83,6 +95,12 @@ export async function handleAppRequest(
   }
   const gateway = env.GATEWAY;
 
+  // The preview bootstrap: the dashboard iframe's first hop, carrying the grant in
+  // the URL exactly once before it moves into the partitioned cookie.
+  if (path === PREVIEW_PATH) {
+    return handlePreviewBootstrap(url, gateway, script, host);
+  }
+
   // Steady state: a valid host-only token serves entirely locally, no central call.
   const idCookie = readCookie(request, ID_COOKIE);
   if (idCookie !== '') {
@@ -96,15 +114,22 @@ export async function handleAppRequest(
     }
   }
 
-  // Mint or refresh: resolve the session centrally into a token / login / deny.
+  // Mint or refresh: resolve the session centrally into a token / login / deny. A
+  // present preview-grant cookie means this is the dashboard iframe, where no
+  // session cookie ever arrives: refresh from the grant instead, which re-checks
+  // it is live and the acting owner is still admin+ on every cycle.
+  const previewGrant = readCookie(request, PREVIEW_COOKIE);
   let result: MintResult;
   try {
-    result = await gateway.mint({
-      sessionToken: readCookie(request, SESSION_COOKIE),
-      viewCookie: readCookie(request, VIEW_COOKIE),
-      script,
-      host,
-    });
+    result =
+      previewGrant !== ''
+        ? await gateway.mintPreview({ grant: previewGrant, script, host })
+        : await gateway.mint({
+            sessionToken: readCookie(request, SESSION_COOKIE),
+            viewCookie: readCookie(request, VIEW_COOKIE),
+            script,
+            host,
+          });
   } catch {
     // Central unreachable and no valid local token: sign-in is down, not the app.
     return html(unavailablePage(), 503);
@@ -125,8 +150,55 @@ export async function handleAppRequest(
     // between the gateway and this Worker's JWKS, not a viewer problem.
     return html(errorPage(), 500);
   }
-  const setCookie = serializeCookie(ID_COOKIE, result.token, { maxAge: result.ttlSecs });
+  const setCookie = serializeCookie(ID_COOKIE, result.token, {
+    maxAge: result.ttlSecs,
+    // A cookie set from inside the cross-site iframe must be partitioned or the
+    // browser drops it, which would re-mint on every single request.
+    partitioned: previewGrant !== '',
+  });
   return serveGated(request, result.token, verified, routes, path, deps.container, setCookie);
+}
+
+// handlePreviewBootstrap exchanges ?g=<grant> for the two partitioned cookies (the
+// grant reference and a first identity token), then bounces to the target path so
+// the grant never lingers in the iframe's address. Everything the grant authorizes
+// is decided centrally in mintPreview; a dead grant is a plain deny page.
+async function handlePreviewBootstrap(
+  url: URL,
+  gateway: GatewayBinding,
+  script: string,
+  host: string,
+): Promise<Response> {
+  const grant = url.searchParams.get('g') ?? '';
+  if (grant === '') return html(errorPage(), 400);
+
+  let result: MintResult;
+  try {
+    result = await gateway.mintPreview({ grant, script, host });
+  } catch {
+    return html(unavailablePage(), 503);
+  }
+  if (result.kind !== 'token') {
+    return html(denyPage(result.kind === 'deny' ? result.reason : 'This preview is not available.'), 403);
+  }
+
+  const headers = new Headers({ location: confinePath(url.searchParams.get('to') ?? '') });
+  headers.append(
+    'set-cookie',
+    serializeCookie(PREVIEW_COOKIE, grant, { maxAge: PREVIEW_COOKIE_TTL_SECS, partitioned: true }),
+  );
+  headers.append(
+    'set-cookie',
+    serializeCookie(ID_COOKIE, result.token, { maxAge: result.ttlSecs, partitioned: true }),
+  );
+  return new Response(null, { status: 302, headers });
+}
+
+// Only a same-origin absolute path may be the bootstrap's landing: anything else
+// ("//evil", "https://…", relative) collapses to the app root.
+function confinePath(raw: string): string {
+  if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
+  return raw;
 }
 
 // serveGated enforces the route gate against the token's roles, then stamps the raw
@@ -147,10 +219,23 @@ async function serveGated(
 
   const stamped = stampIdentity(request, token);
   const res = await container.fetch(stamped);
-  if (setCookie === null) return res;
   const headers = new Headers(res.headers);
-  headers.append('set-cookie', setCookie);
+  ownFraming(headers);
+  if (setCookie !== null) headers.append('set-cookie', setCookie);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+// ownFraming makes who-may-frame-an-app-host a platform guarantee: any
+// container-supplied X-Frame-Options or frame-ancestors is replaced with the 280
+// dashboard origins, so a builder's headers can neither break the dashboard embed
+// nor open the app to other embedders. Other CSP directives the app set survive.
+function ownFraming(headers: Headers): void {
+  headers.delete('x-frame-options');
+  const kept = (headers.get('content-security-policy') ?? '')
+    .split(';')
+    .map((d) => d.trim())
+    .filter((d) => d !== '' && !d.toLowerCase().startsWith('frame-ancestors'));
+  headers.set('content-security-policy', [`frame-ancestors ${FRAME_ANCESTORS}`, ...kept].join('; '));
 }
 
 async function verifyToken(

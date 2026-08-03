@@ -6,7 +6,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { newLogger } from '@280/backend/logger';
 import { buildStatics, requestGateway, type GatewayStatics } from './deps.js';
 import type { Env } from './config.js';
-import type { MintInput, MintResult, JwksDoc } from './mint.js';
+import type { MintInput, MintPreviewInput, MintResult, JwksDoc } from './mint.js';
 
 const log = newLogger('json');
 
@@ -27,6 +27,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> {
     const { gateway, close } = requestGateway(isolate(this.env));
     try {
       return await gateway.mintForApp(input);
+    } finally {
+      await close();
+    }
+  }
+
+  async mintPreview(input: MintPreviewInput): Promise<MintResult> {
+    const { gateway, close } = requestGateway(isolate(this.env));
+    try {
+      return await gateway.mintPreview(input);
     } finally {
       await close();
     }

@@ -9,6 +9,10 @@ export const SESSION_COOKIE = '280_session'; // SSO session, Domain=.<appDomain>
 export const STATE_COOKIE = '280_oauth'; // OIDC state, host-only on the auth host
 export const VIEW_COOKIE = '280_view'; // view-as preview, Domain=.<appDomain>
 export const ID_COOKIE = '280_id'; // per-app identity token, host-only on the app host
+// The dashboard-preview grant reference, host-only + CHIPS-partitioned so it rides
+// only inside the dashboard's cross-site iframe. Under the reserved 280_ prefix,
+// so the stampIdentity strip keeps it away from container code automatically.
+export const PREVIEW_COOKIE = '280_preview';
 
 // readCookie pulls one cookie value off a request's Cookie header, '' when absent.
 export function readCookie(request: Request, name: string): string {
@@ -26,16 +30,22 @@ export interface CookieOptions {
   maxAge: number;
   domain?: string; // omitted → host-only cookie
   secure?: boolean; // default true when a domain is set; overridable for local loops
+  // CHIPS: SameSite=None; Secure; Partitioned — the only cookie shape browsers
+  // still deliver inside a cross-site iframe, isolated per top-level site.
+  partitioned?: boolean;
 }
 
-// serializeCookie builds a Set-Cookie value. HttpOnly + SameSite=Lax always; a
-// host-only cookie (no Domain) is used for the per-app identity token so it never
-// leaks to another app host.
+// serializeCookie builds a Set-Cookie value. HttpOnly always; SameSite=Lax unless
+// partitioned (which requires None + Secure). A host-only cookie (no Domain) is
+// used for the per-app identity token so it never leaks to another app host.
 export function serializeCookie(name: string, value: string, opts: CookieOptions): string {
-  const parts = [`${name}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${opts.maxAge}`];
+  const partitioned = opts.partitioned === true;
+  const sameSite = partitioned ? 'None' : 'Lax';
+  const parts = [`${name}=${value}`, 'Path=/', 'HttpOnly', `SameSite=${sameSite}`, `Max-Age=${opts.maxAge}`];
   if (opts.domain !== undefined && opts.domain !== '') parts.push(`Domain=${opts.domain}`);
-  const secure = opts.secure ?? true;
+  const secure = partitioned || (opts.secure ?? true);
   if (secure) parts.push('Secure');
+  if (partitioned) parts.push('Partitioned');
   return parts.join('; ');
 }
 

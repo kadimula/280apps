@@ -115,6 +115,7 @@ export function requestGateway(s: GatewayStatics): { gateway: Gateway; close: ()
     signer: s.signer,
     authz: new Authorizer(store),
     audit: store,
+    previewStore: store,
     hosts: { appDomain: s.config.appDomain, authHost: s.config.authHost, hostSuffix: s.config.hostSuffix },
     authOrigin: s.config.authOrigin,
     cookieDomain: s.config.cookieDomain,

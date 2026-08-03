@@ -17,6 +17,15 @@ export type MintResult =
   // Signed in but not permitted to open this app.
   | { kind: 'deny'; reason: string };
 
+// The dashboard-preview mint: the grant is the opaque token the control plane
+// issued (carried in ?g= on the bootstrap hop, then in the partitioned
+// 280_preview cookie). Same MintResult; mintPreview never returns `login`.
+export interface MintPreviewInput {
+  grant: string;
+  script: string; // the app's stable script name
+  host: string; // the app host, becomes the token audience
+}
+
 export interface JwksDoc {
   keys: JsonWebKey[];
 }
@@ -25,5 +34,6 @@ export interface JwksDoc {
 // implements it; the middleware depends only on this interface.
 export interface GatewayBinding {
   mint(input: MintInput): Promise<MintResult>;
+  mintPreview(input: MintPreviewInput): Promise<MintResult>;
   jwks(): Promise<JwksDoc>;
 }

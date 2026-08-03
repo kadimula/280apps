@@ -5,8 +5,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleAppRequest, __resetJwksCache, type AppWorkerEnv, type AppWorkerDeps } from '../src/appworker.js';
-import type { GatewayBinding, JwksDoc, MintInput, MintResult } from '../src/mint.js';
-import { ID_COOKIE, SESSION_COOKIE } from '../src/cookies.js';
+import type { GatewayBinding, JwksDoc, MintInput, MintPreviewInput, MintResult } from '../src/mint.js';
+import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE } from '../src/cookies.js';
 import { IdentitySigner } from '../src/identity.js';
 import { genSigningKey, ISSUER } from './helpers.js';
 
@@ -43,6 +43,10 @@ function token(
 class FakeGateway implements GatewayBinding {
   jwksCalls = 0;
   mintCalls: MintInput[] = [];
+  mintPreviewCalls: MintPreviewInput[] = [];
+  onMintPreview: (input: MintPreviewInput) => Promise<MintResult> = async () => {
+    throw new Error('mintPreview not configured');
+  };
   constructor(
     private publicJwks: Record<string, JsonWebKey>,
     private onMint: (input: MintInput) => Promise<MintResult> = async () => {
@@ -58,6 +62,11 @@ class FakeGateway implements GatewayBinding {
   async mint(input: MintInput): Promise<MintResult> {
     this.mintCalls.push(input);
     return this.onMint(input);
+  }
+
+  async mintPreview(input: MintPreviewInput): Promise<MintResult> {
+    this.mintPreviewCalls.push(input);
+    return this.onMintPreview(input);
   }
 }
 
@@ -251,5 +260,145 @@ describe('app-worker middleware', () => {
     await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(container));
     await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(container));
     expect(gw.jwksCalls).toBe(1);
+  });
+});
+
+describe('dashboard preview (partitioned-cookie flow)', () => {
+  const PARTITIONED_ATTRS = ['HttpOnly', 'SameSite=None', 'Secure', 'Partitioned'];
+
+  it('the /__280/preview bootstrap exchanges ?g= for partitioned cookies and bounces to the app', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    gw.onMintPreview = async () => ({ kind: 'token', token: await token(signer), ttlSecs: 30 });
+
+    const res = await handleAppRequest(
+      new Request(`https://${HOST}/__280/preview?g=grant-1&to=/reports`),
+      env(gw),
+      deps(new FakeContainer()),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/reports');
+    expect(gw.mintPreviewCalls).toEqual([{ grant: 'grant-1', script: 'renewals', host: HOST }]);
+
+    const preview = setCookie(res, PREVIEW_COOKIE);
+    const id = setCookie(res, ID_COOKIE);
+    expect(preview).toContain(`${PREVIEW_COOKIE}=grant-1`);
+    for (const attr of PARTITIONED_ATTRS) {
+      expect(preview).toContain(attr);
+      expect(id).toContain(attr);
+    }
+    // Host-only, like every app-host cookie: never leaks to another app host.
+    expect(preview).not.toContain('Domain=');
+    expect(id).not.toContain('Domain=');
+  });
+
+  it('confines the bootstrap landing to a same-origin path', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    gw.onMintPreview = async () => ({ kind: 'token', token: await token(signer), ttlSecs: 30 });
+    for (const to of ['https://evil.example/', '//evil.example/', 'reports']) {
+      const res = await handleAppRequest(
+        new Request(`https://${HOST}/__280/preview?g=grant-1&to=${encodeURIComponent(to)}`),
+        env(gw),
+        deps(new FakeContainer()),
+      );
+      expect(res.headers.get('location')).toBe('/');
+    }
+  });
+
+  it('a dead grant at the bootstrap is a plain deny page', async () => {
+    const { publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    gw.onMintPreview = async () => ({ kind: 'deny', reason: 'This preview is no longer available.' });
+    const res = await handleAppRequest(
+      new Request(`https://${HOST}/__280/preview?g=stale`),
+      env(gw),
+      deps(new FakeContainer()),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain('no longer available');
+  });
+
+  it('refreshes an expired token from the preview grant, not the session, with a partitioned cookie', async () => {
+    const fresh = await newSigner(() => NOW);
+    const gw = new FakeGateway(fresh.publicJwks);
+    gw.onMintPreview = async () => ({ kind: 'token', token: await token(fresh.signer), ttlSecs: 30 });
+    const container = new FakeContainer();
+
+    // No usable 280_id, but the partitioned grant cookie rode in with the iframe request.
+    const res = await handleAppRequest(
+      req(`${PREVIEW_COOKIE}=grant-1`),
+      env(gw),
+      deps(container),
+    );
+    expect(res.status).toBe(200);
+    expect(gw.mintCalls).toHaveLength(0); // the session path was never consulted
+    expect(gw.mintPreviewCalls).toEqual([{ grant: 'grant-1', script: 'renewals', host: HOST }]);
+    const id = setCookie(res, ID_COOKIE);
+    for (const attr of PARTITIONED_ATTRS) expect(id).toContain(attr);
+  });
+
+  it('a revoked or demoted preview stops with a deny on the next refresh', async () => {
+    const { publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    gw.onMintPreview = async () => ({ kind: 'deny', reason: 'This preview is no longer available.' });
+    const res = await handleAppRequest(req(`${PREVIEW_COOKIE}=grant-1`), env(gw), deps(new FakeContainer()));
+    expect(res.status).toBe(403);
+  });
+
+  it('the preview cookie never reaches the container (reserved 280_ prefix strip)', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    const container = new FakeContainer();
+    const t = await token(signer);
+    const res = await handleAppRequest(
+      req(`${ID_COOKIE}=${t}; ${PREVIEW_COOKIE}=grant-1; app_theme=dark`),
+      env(gw),
+      deps(container),
+    );
+    expect(res.status).toBe(200);
+    expect(container.requests[0]!.headers.get('cookie')).toBe('app_theme=dark');
+  });
+});
+
+describe('gateway-owned framing', () => {
+  // A container that tries to control its own framing; the platform must win.
+  class FramedContainer {
+    async fetch(_request: Request): Promise<Response> {
+      return new Response('app', {
+        status: 200,
+        headers: {
+          'x-frame-options': 'DENY',
+          'content-security-policy': "frame-ancestors 'none'; img-src 'self'",
+        },
+      });
+    }
+  }
+
+  it('strips container framing headers and pins frame-ancestors to the dashboard origins', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    const t = await token(signer);
+    const res = await handleAppRequest(
+      req(`${ID_COOKIE}=${t}`),
+      env(gw),
+      deps(new FramedContainer() as unknown as FakeContainer),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-frame-options')).toBeNull();
+    const csp = res.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain('frame-ancestors https://www.280apps.com https://www-development.280apps.com');
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    expect(csp).toContain("img-src 'self'"); // the app's other directives survive
+  });
+
+  it('sets the dashboard frame-ancestors even when the container sends no framing headers', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    const t = await token(signer);
+    const res = await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(new FakeContainer()));
+    expect(res.headers.get('content-security-policy')).toBe(
+      'frame-ancestors https://www.280apps.com https://www-development.280apps.com',
+    );
   });
 });

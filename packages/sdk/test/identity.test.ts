@@ -122,3 +122,28 @@ describe('identity()', () => {
     expect(id.user.email).toBe('alice@evergreen.com');
   });
 });
+
+describe('anonymous identity (public apps)', () => {
+  it('exposes anonymous: true and an empty email for the platform-minted anonymous viewer', async () => {
+    const { privateJwk, jwks } = await keys();
+    const token = await sign(
+      privateJwk,
+      baseClaims({ sub: 'anon', email: '', name: 'Anonymous', appRole: 'viewer', role: '', caps: [], scope: {}, anon: true }),
+    );
+    const id = await identity(req(token), { jwks, issuer: ISSUER, audience: AUD });
+    expect(id.anonymous).toBe(true);
+    expect(id.user.email).toBe('');
+    expect(id.user.tenant).toBe('');
+    expect(id.appRole).toBe('viewer');
+    expect(id.can('manager')).toBe(false);
+  });
+
+  it('a real viewer is not anonymous, and an empty email without anon is rejected', async () => {
+    const { privateJwk, jwks } = await keys();
+    const real = await identity(req(await sign(privateJwk, baseClaims())), { jwks, issuer: ISSUER, audience: AUD });
+    expect(real.anonymous).toBe(false);
+
+    const forged = await sign(privateJwk, baseClaims({ email: '' }));
+    await expect(identity(req(forged), { jwks, issuer: ISSUER, audience: AUD })).rejects.toThrow(IdentityError);
+  });
+});

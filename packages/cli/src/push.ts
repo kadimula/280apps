@@ -40,12 +40,15 @@ export interface Options {
   backoffMs?: number;
 }
 
-// Result is what a completed push produced.
+// Result is what a completed push produced. notice is a server-side one-liner
+// the CLI relays verbatim (e.g. a dashboard access override diverging from
+// 280.json); '' when there is nothing to say.
 export interface Result {
   app: App;
   resolution: string;
   deployId: string;
   url: string;
+  notice: string;
 }
 
 // Events lets the caller narrate progress without push knowing about output.
@@ -127,7 +130,7 @@ export async function run(
     ev.onWait?.();
     const status = await poll(port, res.app, res.deployId, opts);
     if (status.failure) throw status.failure;
-    return { app: res.app, resolution, deployId: res.deployId, url: status.url };
+    return { app: res.app, resolution, deployId: res.deployId, url: status.url, notice: status.notice };
   }
 }
 
@@ -154,7 +157,7 @@ async function finish(port: Port, res: SyncResult, resolution: string, opts: Opt
   const status = await poll(port, res.app, res.deployId, opts);
   if (status.failure) throw status.failure;
   const url = status.url !== '' ? status.url : res.app.url;
-  return { app: res.app, resolution, deployId: res.deployId, url };
+  return { app: res.app, resolution, deployId: res.deployId, url, notice: status.notice };
 }
 
 // poll waits for a deploy to reach a terminal state.

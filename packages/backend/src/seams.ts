@@ -4,7 +4,7 @@
 // failures rejecting; conditional transitions that report a winner return boolean.
 
 import type { BlobBody } from '@280/contracts';
-import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy, PreviewGrant } from '@280/contracts';
+import type { Manifest, Digest, BlobInfo, DeployError, AppAccess, AppPolicy, PreviewGrant } from '@280/contracts';
 
 export type { AppPolicy, PreviewGrant, ViewAsTarget } from '@280/contracts';
 
@@ -86,6 +86,10 @@ export const EventKind = {
   GrantAdded: 'grant.added',
   GrantRevoked: 'grant.revoked',
   PolicyRegistered: 'policy.registered',
+  // The owner dialed the app's general-access mode from the dashboard; detail
+  // records {from, to, by}. The override outlives redeploys (registerPolicy
+  // never touches it).
+  PolicyAccessChanged: 'policy.access_changed',
   AppAccessed: 'app.accessed',
   AppAccessDenied: 'app.access_denied',
   // A "view as user" preview mint: an owner/admin rendered the app as another
@@ -209,6 +213,12 @@ export interface Store {
   // (see finishLive), read by the gateway to gate each request. Null until the app
   // has gone live at least once.
   appPolicy(appId: string): Promise<AppPolicy | null>;
+
+  // The dashboard's general-access override (design: Share modal "General
+  // access"). Writes access_override — never the manifest's access column — and
+  // audits policy.access_changed naming the actor. False when the app has no
+  // policy row yet (never gone live), which callers reject rather than create.
+  setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean>;
 
   // Records one gateway access decision (allowed/denied) for the permission audit.
   // kind overrides the event kind derived from `allowed` (e.g. app.previewed_as

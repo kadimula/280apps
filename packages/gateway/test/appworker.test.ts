@@ -4,7 +4,13 @@
 // central-unreachable 503, entirely under node with WebCrypto.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { handleAppRequest, __resetJwksCache, type AppWorkerEnv, type AppWorkerDeps } from '../src/appworker.js';
+import {
+  handleAppRequest,
+  __resetJwksCache,
+  __resetAnonTokenCache,
+  type AppWorkerEnv,
+  type AppWorkerDeps,
+} from '../src/appworker.js';
 import type { GatewayBinding, JwksDoc, MintInput, MintPreviewInput, MintResult } from '../src/mint.js';
 import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE } from '../src/cookies.js';
 import { IdentitySigner } from '../src/identity.js';
@@ -105,7 +111,10 @@ function setCookie(res: Response, name: string): string | null {
   return null;
 }
 
-beforeEach(() => __resetJwksCache());
+beforeEach(() => {
+  __resetJwksCache();
+  __resetAnonTokenCache();
+});
 
 describe('app-worker middleware', () => {
   it('serves a valid token entirely locally, stamping identity, with no central call', async () => {
@@ -400,5 +409,103 @@ describe('gateway-owned framing', () => {
     expect(res.headers.get('content-security-policy')).toBe(
       'frame-ancestors https://www.280apps.com https://www-development.280apps.com',
     );
+  });
+});
+
+// Public mode at the edge: a cookieless client is served with the gateway-minted
+// anonymous identity (no redirect), one central mint feeds every cookieless
+// request in the isolate until the token's TTL, and anonymous responses carry
+// X-Robots-Tag: noindex (public is unlisted).
+describe('public app: anonymous serving and the isolate token cache', () => {
+  function anonToken(signer: IdentitySigner): Promise<string> {
+    return signer.sign({
+      sub: 'anon',
+      email: '',
+      name: 'Anonymous',
+      aud: HOST,
+      app: 'app_renewals',
+      appRole: 'viewer',
+      anon: true,
+    });
+  }
+
+  it('serves a cookieless request 200 with the anonymous identity, noindex, and no redirect', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW, 120);
+    const gw = new FakeGateway(publicJwks, async () => ({
+      kind: 'token',
+      token: await anonToken(signer),
+      ttlSecs: 120,
+    }));
+    const container = new FakeContainer();
+
+    const res = await handleAppRequest(req(), env(gw), deps(container));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-robots-tag')).toBe('noindex');
+    expect(gw.mintCalls).toHaveLength(1);
+    expect(gw.mintCalls[0]!.sessionToken).toBe('');
+    // The container received the verified anonymous token as the identity header.
+    const stamped = container.requests[0]!.headers.get('X-280-Identity');
+    expect(stamped).not.toBeNull();
+  });
+
+  it('one central mint serves many cookieless requests until the TTL, then re-mints', async () => {
+    let clock = NOW;
+    const { privateJwk, publicJwks, kid } = await genSigningKey();
+    const signer = new IdentitySigner({ kid, privateJwk, issuer: ISSUER, ttlSecs: 120, now: () => clock });
+    const gw = new FakeGateway(publicJwks, async () => ({
+      kind: 'token',
+      token: await anonToken(signer),
+      ttlSecs: 120,
+    }));
+    const container = new FakeContainer();
+
+    for (let i = 0; i < 3; i++) {
+      const res = await handleAppRequest(req(), env(gw), deps(container, clock));
+      expect(res.status).toBe(200);
+    }
+    expect(gw.mintCalls).toHaveLength(1); // requests 2 and 3 hit the isolate cache
+
+    // Past the token TTL the cache is stale: the next request re-mints centrally,
+    // which is exactly the bound (~TTL + skew) on un-publicing an app.
+    clock = NOW + 121;
+    const res = await handleAppRequest(req(), env(gw), deps(container, clock));
+    expect(res.status).toBe(200);
+    expect(gw.mintCalls).toHaveLength(2);
+  });
+
+  it('a session-carrying request never uses the anonymous cache', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW, 120);
+    const gw = new FakeGateway(publicJwks, async () => ({
+      kind: 'token',
+      token: await anonToken(signer),
+      ttlSecs: 120,
+    }));
+    const container = new FakeContainer();
+
+    await handleAppRequest(req(), env(gw), deps(container)); // warms the cache
+    const withSession = await handleAppRequest(req(`${SESSION_COOKIE}=sess`), env(gw), deps(container));
+    expect(withSession.status).toBe(200);
+    // Both requests minted centrally: the cache only ever answers cookieless clients.
+    expect(gw.mintCalls).toHaveLength(2);
+    expect(gw.mintCalls[1]!.sessionToken).toBe('sess');
+  });
+
+  it('a signed-in (non-anonymous) response is not stamped noindex', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    const t = await token(signer);
+    const res = await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(new FakeContainer()));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+
+  it('a browser holding the anonymous cookie is served locally with noindex', async () => {
+    const { signer, publicJwks } = await newSigner(() => NOW);
+    const gw = new FakeGateway(publicJwks);
+    const t = await anonToken(signer);
+    const res = await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(new FakeContainer()));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-robots-tag')).toBe('noindex');
+    expect(gw.mintCalls).toHaveLength(0); // steady state stays fully local
   });
 });

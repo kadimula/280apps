@@ -65,7 +65,6 @@ Non-secret (safe to set literally in the dev environment):
 
 ```sh
 TWO80_RUNTIME=container
-TWO80_BUILDER=depot
 TWO80_API_ORIGIN=https://api-development.280apps.com
 TWO80_FRONTEND_ORIGIN=https://www-development.280apps.com
 TWO80_APP_DOMAIN=280apps.run

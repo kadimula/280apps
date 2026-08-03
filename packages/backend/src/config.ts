@@ -21,12 +21,6 @@ export interface ConfigVars {
   TWO80_MACHINE_TOKEN_TTL_DAYS?: string;
   TWO80_LOGIN_RATE_WINDOW_SECS?: string;
   TWO80_LOGIN_RATE_MAX?: string;
-  TWO80_BUILD_HOST?: string;
-  // TWO80_BUILDER selects the build home: 'http' (the self-hosted Docker build
-  // host, the default) or 'depot' (managed remote BuildKit). Unset falls back to
-  // 'depot' only when DEPOT_TOKEN is present, else 'http' — so a host with no Depot
-  // env keeps its current behavior.
-  TWO80_BUILDER?: string;
   // DEPOT_PROJECT_ID pins every Depot build to one project (isolated layer cache).
   // Unset resolves a project per app via the Depot API.
   DEPOT_PROJECT_ID?: string;
@@ -43,7 +37,6 @@ export interface ConfigVars {
 
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  TWO80_BUILD_TOKEN?: string;
   DEPOT_TOKEN?: string;
   // CLOUDFLARE_API_TOKEN pushes the built image to registry.cloudflare.com and
   // authorizes the wrangler roll. Required for the depot builder.
@@ -70,11 +63,7 @@ export interface Config {
   machineTokenTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
-  // builder selects which ContainerBuilder the runtime constructs.
-  builder: 'http' | 'depot';
-  // build is the self-hosted Docker build host the http builder calls.
-  build: { host: string; token: string };
-  // depot is the managed remote BuildKit build home (used when builder='depot').
+  // depot is the managed remote BuildKit build home, the sole build path.
   depot: { token: string; projectId: string };
   // cloudflare authenticates the registry push and the wrangler roll (depot builder).
   cloudflare: { accountId: string; apiToken: string };
@@ -115,24 +104,12 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
     },
     google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
-    builder: selectBuilder(vars),
-    build: { host: vars.TWO80_BUILD_HOST ?? '', token: vars.TWO80_BUILD_TOKEN ?? '' },
     depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
     cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
     workerEntry: str(vars.TWO80_WORKER_ENTRY, 'worker.js'),
     gatewayService: str(vars.TWO80_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
     idIssuer: str(vars.TWO80_ID_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
   };
-}
-
-// selectBuilder resolves the build home. An explicit TWO80_BUILDER wins; otherwise
-// Depot is chosen only when its token is present, so a host with no Depot env (the
-// live Railway service today) keeps the http builder unchanged.
-function selectBuilder(vars: ConfigVars): 'http' | 'depot' {
-  const explicit = vars.TWO80_BUILDER ?? '';
-  if (explicit === 'depot') return 'depot';
-  if (explicit === 'http') return 'http';
-  return (vars.DEPOT_TOKEN ?? '') !== '' ? 'depot' : 'http';
 }
 
 // RequestDeps is the I/O container the deps middleware puts on the context.

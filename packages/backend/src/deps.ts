@@ -12,28 +12,14 @@ import type { Config } from './config.js';
 // selectRuntime picks where apps run and which build home compiles their images.
 // Misconfiguration is a request failure rather than a degraded mode: a platform
 // that accepts pushes and hosts nothing is the one outcome with no honest error
-// message for the agent. The builder is config-driven (config.builder) so a new
-// build home is a new ContainerBuilder plus one branch here — nothing above this
-// seam changes. Depot only becomes active once its env is set; with none, the http
-// builder is chosen exactly as before.
+// message for the agent. Depot is the sole build home; nothing above this seam
+// changes if another is ever added.
 export function selectRuntime(config: Config, log: Logger): Runtime {
   if (config.runtime === 'memory') {
     log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
     return new MemoryRuntime();
   }
-  return new container.ContainerRuntime(
-    config.builder === 'depot' ? buildDepotBuilder(config, log) : buildHttpBuilder(config, log),
-  );
-}
-
-function buildHttpBuilder(config: Config, log: Logger): container.ContainerBuilder {
-  if (config.build.host === '') {
-    throw new Error('TWO80_BUILD_HOST is required (or set TWO80_RUNTIME=memory, or TWO80_BUILDER=depot)');
-  }
-  if (config.build.token === '') {
-    log.warn('TWO80_BUILD_TOKEN unset: the build host is reached without authentication');
-  }
-  return new container.HttpBuilder({ baseUrl: config.build.host, token: config.build.token });
+  return new container.ContainerRuntime(buildDepotBuilder(config, log));
 }
 
 function buildDepotBuilder(config: Config, log: Logger): container.ContainerBuilder {
@@ -43,7 +29,7 @@ function buildDepotBuilder(config: Config, log: Logger): container.ContainerBuil
     ['CLOUDFLARE_API_TOKEN', config.cloudflare.apiToken],
   ].filter(([, v]) => v === '').map(([k]) => k);
   if (missing.length > 0) {
-    throw new Error(`TWO80_BUILDER=depot requires ${missing.join(', ')}`);
+    throw new Error(`the depot builder requires ${missing.join(', ')} (or set TWO80_RUNTIME=memory)`);
   }
   if (config.depot.projectId === '') {
     log.warn('DEPOT_PROJECT_ID unset: a project is resolved per app via the Depot API');

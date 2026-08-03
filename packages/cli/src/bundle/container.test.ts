@@ -45,6 +45,10 @@ describe('buildNextContainer', () => {
     const body = new TextDecoder().decode(b.content.get(df.digest)!);
     expect(body).toContain('npm run build'); // builds the app unchanged, no adapter
     expect(body).toContain('280-entrypoint.sh');
+    // NODE_ENV=production would drop devDeps; next build needs them (typescript
+    // for a next.config.ts, @types). --include=dev keeps the build green.
+    expect(body).toContain('npm ci --include=dev');
+    expect(body).toContain('npm install --include=dev');
   });
 
   it('never uploads node_modules, VCS metadata, build output, or secrets', () => {

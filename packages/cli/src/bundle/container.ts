@@ -68,7 +68,9 @@ RUN apt-get update \\
  && apt-get install -y --no-install-recommends ca-certificates \\
  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# --include=dev: NODE_ENV=production above makes npm omit devDependencies, but
+# next build needs them (typescript for a next.config.ts, @types, etc.).
+RUN if [ -f package-lock.json ]; then npm ci --include=dev; else npm install --include=dev; fi
 COPY . .
 RUN npm run build
 RUN cp ${ENTRYPOINT_PATH} /280-entrypoint.sh && chmod +x /280-entrypoint.sh

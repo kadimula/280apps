@@ -1,8 +1,10 @@
-// The gateway: the only public entry to apps on *.280apps.run. Per request it
-// classifies the host, resolves the session, checks access, then mints a signed
-// identity header and proxies to the upstream. The OIDC handshake is the control
-// plane's Auth service (reused), configured only with the gateway's app-host
-// redirect guard. See README.md for the flow.
+// The gateway: the central identity authority on *.280apps.run. It serves the auth
+// host (OIDC handshake, JWKS, view-as, logout) over HTTP and, over a service binding,
+// mints signed identity tokens for the per-app Workers (mintForApp). App hosts are
+// served by each app's own Worker (appworker.ts), which calls mintForApp; the gateway
+// never proxies app traffic itself. The OIDC handshake is the control plane's Auth
+// service (reused), configured only with the gateway's app-host redirect guard. See
+// README.md for the flow.
 
 import type { Auth } from '@280/backend/authsvc';
 import { AuthError } from '@280/backend/authsvc';
@@ -11,9 +13,8 @@ import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
 import { IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
-import { readCookie, stampIdentity, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
+import { readCookie, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
 import type { MintInput, MintResult } from './mint.js';
-import type { Upstream } from './upstream.js';
 
 // The audit seam the gateway writes access decisions through. The pg Store
 // satisfies it; injected so the proxy stays unit-testable and audit stays optional.
@@ -41,7 +42,6 @@ export interface GatewayOptions {
   auth: Auth;
   signer: IdentitySigner;
   authz: Authorizer;
-  upstream: Upstream;
   hosts: HostConfig;
   authOrigin: string;
   cookieDomain: string;
@@ -73,7 +73,8 @@ export class Gateway {
     const url = new URL(request.url);
     const kind = classifyHost(url.hostname, this.o.hosts);
     if (kind.kind === 'auth') return this.handleAuthHost(request, url);
-    if (kind.kind === 'app') return this.handleAppHost(request, url, kind.script);
+    // App hosts are served by each app's own Worker, not this gateway; a request
+    // for one reaching here is misrouted and is not found.
     return Promise.resolve(notFound(request));
   }
 
@@ -187,55 +188,6 @@ export class Gateway {
         'cache-control': 'public, max-age=3600',
       },
     });
-  }
-
-  private async handleAppHost(request: Request, url: URL, script: string): Promise<Response> {
-    const viewer = await this.resolveViewer(request);
-    if (viewer === null) return this.loginBounce(request.url);
-
-    const viewAs = parseViewCookie(readCookie(request, VIEW_COOKIE));
-    const decision = await this.o.authz.evaluate({
-      viewer,
-      script,
-      host: url.hostname,
-      path: url.pathname,
-      viewAs,
-    });
-
-    if (!decision.allow) {
-      // Every denial is audited: a blocked attempt is the security-relevant event.
-      await this.audit(decision.appId, viewer.email, false, {
-        path: url.pathname,
-        reason: decision.reason,
-      });
-      return html(denyPage(decision.reason), 403);
-    }
-
-    // Allows are audited only for top-level navigations, so one page open is one row,
-    // not one per asset/API the page then fans out.
-    if (isNavigation(request)) {
-      await this.audit(decision.appId, viewer.email, true, {
-        path: url.pathname,
-        appRole: decision.effective.appRole,
-        role: decision.effective.featureRole,
-        viewAs: decision.viewAsApplied ? '1' : '',
-      });
-    }
-
-    const eff: EffectiveGrant = decision.effective;
-    const identityHeader = await this.o.signer.sign({
-      sub: viewer.id,
-      email: viewer.email,
-      name: viewer.name,
-      aud: url.hostname,
-      app: decision.appId,
-      appRole: eff.appRole,
-      role: eff.featureRole,
-      caps: eff.featureRole !== '' ? [eff.featureRole] : [],
-      scope: eff.dataScope ?? {},
-    });
-    const forwarded = stampIdentity(request, identityHeader);
-    return this.o.upstream.fetch({ request: forwarded, script, identityHeader });
   }
 
   // mintForApp is the container-only decision service, called over the service binding
@@ -353,16 +305,6 @@ export function confineRedirect(raw: string, hosts: HostConfig): string {
   const inZone = host === hosts.appDomain || host.endsWith('.' + hosts.appDomain);
   if (!inZone || host === hosts.authHost.toLowerCase()) return '';
   return u.toString();
-}
-
-// isNavigation reports a top-level document request (a page open), the granularity
-// the access audit records. Sec-Fetch-Dest is the precise signal; the Accept header
-// is the fallback for clients that omit it.
-function isNavigation(request: Request): boolean {
-  if (request.method !== 'GET') return false;
-  const dest = request.headers.get('sec-fetch-dest');
-  if (dest !== null) return dest === 'document';
-  return (request.headers.get('accept') ?? '').includes('text/html');
 }
 
 // The view cookie is a compact url-encoded JSON of {script, appRole, role}. Parsing

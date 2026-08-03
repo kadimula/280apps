@@ -1,7 +1,8 @@
 // Authorization: the gateway's answer to "may this viewer open this app, and may
 // they reach this path?" — the enforced core of the two-tier permission model
-// (design §5.4, §07). It runs before the identity header is minted or the request
-// is proxied, and it is unbypassable because the container has no other ingress.
+// (design §5.4, §07). It runs before the identity token is minted, and it is
+// unbypassable because the container has no ingress but its app Worker, which
+// forwards only a gateway-minted, locally-verified identity.
 //
 // Two layers, both fail-closed:
 //   1. Open access. A grant (by email or by org domain) always admits; otherwise

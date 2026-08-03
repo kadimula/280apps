@@ -1,5 +1,5 @@
-// The gateway's own HTML surfaces, rendered inline (dispatcher parity) so a
-// control-plane outage can't turn the front door into a timeout.
+// The gateway's own HTML surfaces, rendered inline so a control-plane outage
+// can't turn the front door into a timeout.
 
 const STYLE = `
   body{font:16px/1.6 ui-sans-serif,system-ui,sans-serif;color:#111;background:#fff;

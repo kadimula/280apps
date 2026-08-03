@@ -1,44 +1,52 @@
 # @280/gateway
 
-The edge identity gateway: the only public entry to apps on `*.280apps.run`. It
-authenticates a viewer, holds their session, and hands app code a verified
-identity. This is the dispatcher (`platform/dispatcher`) grown from a
-hostname→script pipe into a front door — same routing skeleton (`src/hosts.ts`),
-now with OIDC + sessions + a signed identity header in front of the proxy.
+The central identity authority for apps on `*.280apps.run`. It authenticates a
+viewer, holds their session, and mints a verified, app-scoped identity token.
+Container-only serving: the gateway is **not** an app proxy. It owns only the
+auth host (`auth.280apps.run`) over HTTP, and over a service binding it mints
+identity tokens for the per-app Workers. Each app is its own Cloudflare Worker on
+its own `<script>.280apps.run/*` route; that Worker's middleware (`appworker.ts`)
+calls the gateway to mint, verifies the token offline, enforces its route gates,
+and forwards to its own container.
 
 It runs on Cloudflare Workers as a **platform** piece, independent of the app
 container runtime. The deployable entrypoint is `src/worker.ts` (wrangler
-`main`); `src/index.ts` is the library surface tests and the future `@280/sdk`
-verify against.
+`main`): a `fetch` handler for the auth host plus `GatewayRPC` (the `mint`/`jwks`
+service-binding surface). `src/index.ts` is the library surface tests and
+`@280/sdk` verify against.
 
 ## Request flow
 
-Per request the gateway makes four moves, each a named seam:
+An app host is served by the app's own Worker. On a request with no valid local
+token, its middleware calls the gateway's `mint` over the service binding, which
+makes three moves — each a named seam:
 
-1. **Classify the host** (`hosts.ts`) — the canonical auth host, an app host, or
-   neither.
-2. **Resolve the session** — the control plane's `Auth` service (reused), over a
-   cookie scoped to `.280apps.run`. No session → bounce through OIDC.
-3. **Check access** (`access.ts`) — `GrantsAccess` reads the flat grants table
+1. **Resolve the session** — the control plane's `Auth` service (reused), over a
+   cookie scoped to `.280apps.run`. No session → return a login URL the app
+   Worker 302s the viewer to.
+2. **Admit** (`access.ts`) — `Authorizer.admit` reads the flat grants table
    (design §5.4): a viewer opens an app only with a grant naming them by email or
-   covering their org by domain. No grant is a hard 403, never proxied.
-4. **Mint identity + proxy** — sign a short-lived header for this app host, strip
-   any client-supplied `x-280-*` headers, and proxy to the app's running
-   Cloudflare Container (`ContainerUpstream`), addressed by its script name.
+   covering their org by domain, or the app's open-access mode. No grant is a hard
+   deny. Route gates are NOT applied here — one token serves many paths.
+3. **Mint identity** — sign a short-lived token bound to this app host and hand it
+   back. The app Worker delivers it as the host-only `280_id` cookie, then verifies
+   it offline and enforces its route gates locally against the token's roles.
 
 The OIDC handshake lives on one fixed host (`auth.280apps.run`) because an IdP
 `redirect_uri` must be a registered exact URL, and `*.280apps.run` has
 unboundedly many app hosts. Every login funnels through that host; the session
-cookie it sets (domain `.280apps.run`) is what every app host then reads.
+cookie it sets (domain `.280apps.run`) is what the app Workers then present when
+they call `mint`.
 
 ```
-viewer → renewals.280apps.run          (no session)
+viewer → renewals.280apps.run          (no session)  [app Worker → gateway.mint → login]
        ← 302 auth.280apps.run/login?return=…
        → auth.280apps.run/auth/<google|microsoft>/start
        ← 302 IdP consent
        → auth.280apps.run/auth/<provider>/callback   (sets 280_session on .280apps.run)
        ← 302 renewals.280apps.run
-       → renewals.280apps.run          (session ✓) → [grant?] → X-280-Identity → container
+       → renewals.280apps.run   (session ✓) → app Worker → gateway.mint → 280_id token
+                                            → verify offline → [route gate] → X-280-Identity → container
 ```
 
 ## Sign-in providers
@@ -71,8 +79,9 @@ and the app verifies **offline**, without calling the gateway.
     | `tenant` | org (email domain in MVP; see note)                            |
     | `name`   | display name                                                   |
     | `iat`/`exp` | minted-at / expiry                                          |
-- **TTL.** 120s (`TWO80_ID_TTL_SECS`). The header is re-minted on every proxied
-  request, so a leaked one dies in seconds. Verification allows 30s clock skew.
+- **TTL.** 30s in production (`TWO80_ID_TTL_SECS`; config default 120). The app
+  Worker re-mints once the `280_id` token expires, so a leaked one dies in seconds.
+  Verification allows a tight edge clock skew (5s).
 - **Key custody & rotation.** The private key is an ECDSA P-256 **JWK** held only
   as the `ID_SIGNING_JWK` Workers Secret, tagged with `kid`. The public JWK Set
   is served at `/.well-known/280-identity.jwks` and handed to apps at deploy.
@@ -82,8 +91,9 @@ and the app verifies **offline**, without calling the gateway.
   pins `alg` to `ES256` (closes `alg:none`/confusion), looks up the `kid`,
   verifies the signature, then checks `exp`/`iat` (with skew), `iss`, and `aud`
   against the app's own host.
-- **Anti-spoofing.** The gateway strips every inbound `x-280-*` header before
-  setting its own, so a viewer cannot inject a forged identity.
+- **Anti-spoofing.** The app Worker strips every inbound `x-280-*` header before
+  stamping the verified one (`stampIdentity`), so a viewer cannot inject a forged
+  identity.
 
 Generate a signing key:
 
@@ -97,24 +107,23 @@ Entra's stable tenant authority is the `tid` GUID; carrying it is a follow-up
 that needs `OidcIdentity` to surface `tid` — a claim addition, not a format
 change.
 
-## App access and the proxy
+## App access
 
-- **App-access check** (`access.ts`) — `GrantsAccess` reads the flat grants table
+- **App-access check** (`access.ts`) — `Authorizer` reads the flat grants table
   through the `Store` seam: `appByScript` resolves the host label to an app id,
   then a grant lookup on the viewer's email and their `domain:<org>` decides. Any
   match allows; none is a hard deny, and a missing app denies identically so app
-  existence is not probeable.
-- **Upstream** (`upstream.ts`) — `ContainerUpstream` proxies the allowed,
-  identity-stamped request to the app's running Cloudflare Container. The
-  container is reached through an `AppContainers` binding (`deps.ts`
-  `NamespaceContainers`: the `App280Container` Durable Object namespace addressed
-  by script name); the exact Cloudflare binding is a deploy concern (see
-  `wrangler.jsonc`), so the proxy stays testable against a fake container.
+  existence is not probeable. `admit` decides admission for `mint`; `evaluate`
+  additionally applies route gates and is the reference the app Worker's local
+  gating (`routegate.ts`) mirrors.
+- **Route gating** happens in the app Worker (`appworker.ts` + `routegate.ts`)
+  against the baked policy and the token's roles, so one 30s token serves many
+  paths without a central round-trip.
 
 ## Deploy
 
-`wrangler.jsonc` (prod) / `wrangler.development.jsonc` (dev) route
-`*.280apps.run/*`. The gateway **supersedes** `platform/dispatcher` on this
-route — only one Worker may own it, so cutover is a deploy-time step. It shares
-the control plane's Hyperdrive/Postgres (same user/session tables). Secrets:
+`wrangler.jsonc` (prod) / `wrangler.development.jsonc` (dev) route only the auth
+host (`auth[-development].280apps.run/*`); each app Worker owns its own
+`<script>.280apps.run/*` route (emitted by the roll). The gateway shares the
+control plane's Hyperdrive/Postgres (same user/session tables). Secrets:
 `GOOGLE_CLIENT_ID/SECRET`, `ENTRA_CLIENT_ID/SECRET`, `ID_SIGNING_JWK`.

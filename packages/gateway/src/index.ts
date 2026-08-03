@@ -6,7 +6,6 @@ export * from './identity.js';
 export * from './gateway.js';
 export * from './hosts.js';
 export * from './access.js';
-export * from './upstream.js';
 export * from './deps.js';
 export * from './config.js';
 export * from './cookies.js';

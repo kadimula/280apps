@@ -5,13 +5,18 @@
 //
 // The runtime itself owns no Docker and no Cloudflare API: it reads the build
 // context out of the blob store and hands it to a ContainerBuilder. That builder
-// is the one seam the build-home decision plugs into (self-hosted Docker builder,
-// reached over HTTP from the Workers control plane; run directly in a node
-// harness for the local proof). Splitting build/push/rollout further would be
-// fiction: wrangler does them as a unit, so the builder does too.
+// is the one seam the build-home decision plugs into (the live path is DepotBuilder
+// on the Node host; the self-hosted Docker/HTTP builders are retained but dormant).
+// Splitting build/push/rollout further would be fiction: wrangler does them as a
+// unit, so the builder does too.
 
-import { DeployCode, DeployErr, type BuildSpec } from '@280/contracts';
+import { DeployCode, DeployErr, appPolicyFromManifest, type BuildSpec } from '@280/contracts';
 import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult } from '../../seams.js';
+
+// RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
+// per-app Worker (TWO80_ROUTE_POLICY): access mode + feature roles + route gates +
+// declared secret names. It is exactly appPolicyFromManifest's output.
+export type RolloutPolicy = ReturnType<typeof appPolicyFromManifest>;
 
 // ContextFile is one file of the build context, read lazily so a large context
 // streams file by file instead of materializing in memory all at once.
@@ -28,6 +33,9 @@ export interface RolloutJob {
   deployId: string;
   build: BuildSpec;
   files: ContextFile[];
+  // The app's trust boundary (access + routes + roles + secret names), baked into
+  // the per-app Worker so its middleware can enforce the route gate locally.
+  policy: RolloutPolicy;
 }
 
 // RolloutResult is what a successful rollout reports back. imageRef is the pushed
@@ -79,6 +87,7 @@ export class ContainerRuntime implements RuntimeSeam {
         deployId: act.deployId,
         build: act.manifest.build,
         files,
+        policy: appPolicyFromManifest(act.manifest),
       });
     } catch (err) {
       throw buildFailed(err);

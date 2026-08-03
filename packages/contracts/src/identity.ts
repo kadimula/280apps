@@ -89,6 +89,11 @@ export class IdentitySigner {
     this.now = opts.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
+  // The configured token lifetime, so a caller can set a matching cookie Max-Age.
+  get ttlSeconds(): number {
+    return this.ttlSecs;
+  }
+
   private signingKey(): Promise<CryptoKey> {
     if (this.key === null) {
       this.key = crypto.subtle.importKey('jwk', this.privateJwk, EC_PARAMS, false, ['sign']);

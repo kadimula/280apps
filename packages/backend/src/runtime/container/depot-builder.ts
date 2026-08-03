@@ -19,7 +19,6 @@ import type { RuntimeApp } from '../../seams.js';
 import type { RolloutJob } from './container.js';
 import {
   RegistryContainerBuilder,
-  registryAuth,
   type RegistryBuilderConfig,
 } from './registry-builder.js';
 
@@ -101,7 +100,7 @@ export class DepotBuilder extends RegistryContainerBuilder {
   private async writeRegistryCredentials(ctx: string): Promise<string> {
     const dir = join(ctx, DOCKER_CONFIG_DIR);
     await mkdir(dir, { recursive: true });
-    const { username, password } = registryAuth(this.accountId, this.apiToken);
+    const { username, password } = await this.registryCredentials();
     const auth = Buffer.from(`${username}:${password}`).toString('base64');
     const config = { auths: { [this.registry]: { auth } } };
     await writeFile(join(dir, 'config.json'), JSON.stringify(config));

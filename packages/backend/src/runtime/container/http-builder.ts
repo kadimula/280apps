@@ -33,7 +33,7 @@ export class HttpBuilder implements ContainerBuilder {
     const form = new FormData();
     form.append(
       'job',
-      JSON.stringify({ app: job.app, deployId: job.deployId, build: job.build }),
+      JSON.stringify({ app: job.app, deployId: job.deployId, build: job.build, policy: job.policy }),
     );
     for (const f of job.files) {
       const bytes = await f.read();

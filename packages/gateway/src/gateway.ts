@@ -9,8 +9,10 @@ import { AuthError } from '@280/backend/authsvc';
 import { tenantFromEmail } from '@280/contracts';
 import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
-import { ID_HEADER, IdentitySigner } from './identity.js';
+import { IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
+import { readCookie, stampIdentity, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
+import type { MintInput, MintResult } from './mint.js';
 import type { Upstream } from './upstream.js';
 
 // The audit seam the gateway writes access decisions through. The pg Store
@@ -32,10 +34,6 @@ export interface VerifiedViewer {
   tenant: string;
 }
 
-export const SESSION_COOKIE = '280_session';
-export const STATE_COOKIE = '280_oauth';
-// One live "view as" preview, scoped to its app by the script inside it.
-export const VIEW_COOKIE = '280_view';
 const STATE_TTL_SECS = 600;
 const VIEW_TTL_SECS = 3600;
 
@@ -240,6 +238,49 @@ export class Gateway {
     return this.o.upstream.fetch({ request: forwarded, script, identityHeader });
   }
 
+  // mintForApp is the container-only decision service, called over the service binding
+  // by an app Worker (never a proxy hop). It resolves the viewer from the session,
+  // decides admission (DB), and on success mints an identity token audience-scoped to
+  // the app host. Route gating is NOT done here — the app Worker enforces it locally
+  // per path against the token's roles, so one 30s token serves many paths.
+  async mintForApp(input: MintInput): Promise<MintResult> {
+    const viewer = await this.viewerFromToken(input.sessionToken);
+    if (viewer === null) {
+      const url = new URL('/login', this.o.authOrigin);
+      url.searchParams.set('return', `https://${input.host}/`);
+      return { kind: 'login', url: url.toString() };
+    }
+
+    const viewAs = parseViewCookie(input.viewCookie);
+    const adm = await this.o.authz.admit({ viewer, script: input.script, viewAs });
+    if (!adm.allow) {
+      await this.audit(adm.appId, viewer.email, false, { reason: adm.reason });
+      return { kind: 'deny', reason: adm.reason };
+    }
+
+    // A mint is a coarse "opened the app" event (≤ once per token TTL per viewer/app),
+    // the container-only replacement for the per-navigation proxy audit.
+    await this.audit(adm.appId, viewer.email, true, {
+      appRole: adm.effective.appRole,
+      role: adm.effective.featureRole,
+      viewAs: adm.viewAsApplied ? '1' : '',
+    });
+
+    const eff: EffectiveGrant = adm.effective;
+    const token = await this.o.signer.sign({
+      sub: viewer.id,
+      email: viewer.email,
+      name: viewer.name,
+      aud: input.host,
+      app: adm.appId,
+      appRole: eff.appRole,
+      role: eff.featureRole,
+      caps: eff.featureRole !== '' ? [eff.featureRole] : [],
+      scope: eff.dataScope ?? {},
+    });
+    return { kind: 'token', token, ttlSecs: this.o.signer.ttlSeconds };
+  }
+
   // Access is audited only for top-level navigations (document requests), not every
   // asset/API hit a page fans out, so the log answers "who opened this app when"
   // without one page view becoming dozens of rows. Best-effort: a failed write is
@@ -258,8 +299,12 @@ export class Gateway {
     }
   }
 
-  private async resolveViewer(request: Request): Promise<VerifiedViewer | null> {
-    const user = await this.o.auth.me(readCookie(request, SESSION_COOKIE));
+  private resolveViewer(request: Request): Promise<VerifiedViewer | null> {
+    return this.viewerFromToken(readCookie(request, SESSION_COOKIE));
+  }
+
+  private async viewerFromToken(sessionToken: string): Promise<VerifiedViewer | null> {
+    const user = await this.o.auth.me(sessionToken);
     return user === null
       ? null
       : { id: user.id, email: user.email, name: user.name, tenant: tenantFromEmail(user.email) };
@@ -310,17 +355,6 @@ export function confineRedirect(raw: string, hosts: HostConfig): string {
   return u.toString();
 }
 
-// Strips client-supplied x-280-* headers (load-bearing: else a viewer forges
-// their own identity) and sets the gateway-minted one.
-function stampIdentity(request: Request, token: string): Request {
-  const headers = new Headers(request.headers);
-  for (const name of [...headers.keys()]) {
-    if (name.toLowerCase().startsWith('x-280-')) headers.delete(name);
-  }
-  headers.set(ID_HEADER, token);
-  return new Request(request, { headers });
-}
-
 // isNavigation reports a top-level document request (a page open), the granularity
 // the access audit records. Sec-Fetch-Dest is the precise signal; the Accept header
 // is the fallback for clients that omit it.
@@ -369,17 +403,6 @@ function matchProvider(path: string, tail: string): string | null {
   const mid = path.slice('/auth/'.length, path.length - tail.length);
   if (mid === '' || mid.includes('/')) return null;
   return decodeURIComponent(mid);
-}
-
-function readCookie(request: Request, name: string): string {
-  const raw = request.headers.get('cookie');
-  if (raw === null) return '';
-  for (const pair of raw.split(';')) {
-    const i = pair.indexOf('=');
-    if (i < 0) continue;
-    if (pair.slice(0, i).trim() === name) return pair.slice(i + 1).trim();
-  }
-  return '';
 }
 
 function clientIp(request: Request): string {

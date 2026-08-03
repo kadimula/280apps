@@ -25,6 +25,7 @@ import {
 } from '@280/contracts';
 import type { Grant } from '@280/backend/seams';
 import type { VerifiedViewer } from './gateway.js';
+import { gateDenyReason } from './routegate.js';
 
 const NO_ACCESS = 'Ask the app owner to share it with you, then reload.';
 
@@ -78,10 +79,21 @@ export interface AuthzInput {
   viewAs: ViewAs | null;
 }
 
+// The admission decision, split out of evaluate() so the central gateway can mint an
+// identity token from it WITHOUT a path (route gating is enforced later, locally, in
+// the app Worker against the token's roles). Admission needs the grants DB; route
+// gating is pure and per-path, so keeping them separate is what lets one minted token
+// serve many paths while gating stays real-time at the edge.
+export type Admission =
+  | { allow: false; reason: string; appId: string; effective: EffectiveGrant; viewAsApplied: boolean }
+  | { allow: true; appId: string; effective: EffectiveGrant; viewAsApplied: boolean };
+
 export class Authorizer {
   constructor(private readonly store: AccessReader) {}
 
-  async evaluate(input: AuthzInput): Promise<Authorization> {
+  // admit resolves whether a viewer may open an app at all, and the effective grant
+  // (app/feature role, scope) to snapshot into the identity token. No route gating.
+  async admit(input: { viewer: VerifiedViewer; script: string; viewAs: ViewAs | null }): Promise<Admission> {
     const app = await this.store.appByScript(input.script);
     // A missing app denies identically to a missing grant, so an outsider cannot
     // probe which apps are real.
@@ -112,27 +124,40 @@ export class Authorizer {
       ? { appRole: input.viewAs!.appRole || 'viewer', featureRole: input.viewAs!.role, dataScope: null }
       : admitted;
 
-    // Route gating engages only once the app declares at least one route: an app
-    // that declares none keeps the flat "a grant reaches everything" model, so
-    // Phase-2 apps and apps mid-adoption are not bricked. The moment any route is
-    // declared, the no-unguarded-route rule binds and an undeclared path resolves to
-    // the owner-only default (design §07).
-    const routes = policy?.routes ?? [];
-    if (routes.length === 0) {
-      return { allow: true, appId: app.id, effective, gate: OPEN_GATE, gateDeclared: true, viewAsApplied: useViewAs };
-    }
-    const { gate, declared } = resolveRouteGate(routes, input.path);
-    if (!routeGateSatisfied(gate, effective)) {
+    return { allow: true, appId: app.id, effective, viewAsApplied: useViewAs };
+  }
+
+  async evaluate(input: AuthzInput): Promise<Authorization> {
+    const adm = await this.admit({ viewer: input.viewer, script: input.script, viewAs: input.viewAs });
+    if (!adm.allow) {
       return {
         allow: false,
-        reason: gateDenyReason(gate, declared),
-        appId: app.id,
-        effective,
-        viewAsApplied: useViewAs,
+        reason: adm.reason,
+        appId: adm.appId,
+        effective: adm.effective,
+        viewAsApplied: adm.viewAsApplied,
       };
     }
 
-    return { allow: true, appId: app.id, effective, gate, gateDeclared: declared, viewAsApplied: useViewAs };
+    // Route gating is enforced here for the in-process path and, in the container-only
+    // model, locally in the app Worker (gateSatisfiesPath) against the token's roles.
+    const policy = await this.store.appPolicy(adm.appId);
+    const routes = policy?.routes ?? [];
+    if (routes.length === 0) {
+      return { allow: true, appId: adm.appId, effective: adm.effective, gate: OPEN_GATE, gateDeclared: true, viewAsApplied: adm.viewAsApplied };
+    }
+    const { gate, declared } = resolveRouteGate(routes, input.path);
+    if (!routeGateSatisfied(gate, adm.effective)) {
+      return {
+        allow: false,
+        reason: gateDenyReason(gate, declared),
+        appId: adm.appId,
+        effective: adm.effective,
+        viewAsApplied: adm.viewAsApplied,
+      };
+    }
+
+    return { allow: true, appId: adm.appId, effective: adm.effective, gate, gateDeclared: declared, viewAsApplied: adm.viewAsApplied };
   }
 
   // viewAsAllowed authorizes setting a "view as" preview: it returns the app id when
@@ -196,10 +221,4 @@ function grantPrincipals(email: string): string[] {
   const principals = [email];
   if (at >= 0) principals.push('domain:' + email.slice(at + 1).toLowerCase());
   return principals;
-}
-
-function gateDenyReason(gate: RouteGate, declared: boolean): string {
-  if (!declared) return 'This part of the app is limited to the owner.';
-  if (gate.role !== '') return `This needs the "${gate.role}" role. Ask the owner to grant it.`;
-  return NO_ACCESS;
 }

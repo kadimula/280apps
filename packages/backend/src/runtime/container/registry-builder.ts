@@ -44,6 +44,18 @@ const CONTAINER_BINDING = 'APP';
 const DEFAULT_REGISTRY = 'registry.cloudflare.com';
 const DEFAULT_COMPAT_DATE = '2026-06-01';
 const ROLL_CONFIG_FILE = 'wrangler.roll.json';
+const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+const REGISTRY_CRED_TTL_MINUTES = 60;
+
+const DEFAULT_APP_DOMAIN = '280apps.run';
+// The service binding every app Worker declares to the central identity gateway,
+// and the RPC class it targets (GatewayRPC.mint/jwks). Binding-only: the mint
+// decision is never a public HTTP path.
+const GATEWAY_BINDING = 'GATEWAY';
+const GATEWAY_ENTRYPOINT = 'GatewayRPC';
+// The tight edge-verify skew baked into each app Worker: with the 30s mint TTL it
+// bounds revocation to ~35s while absorbing benign edge clock jitter (design §1).
+const EDGE_SKEW_SECS = '5';
 
 export interface RegistryBuilderConfig {
   accountId: string;
@@ -58,7 +70,22 @@ export interface RegistryBuilderConfig {
   // explicit; the live roll needs the file to exist, unit tests do not.
   workerEntry?: string;
   compatibilityDate?: string; // default DEFAULT_COMPAT_DATE
+  // The serving topology the roll bakes into each per-app Worker (design §5):
+  //   appDomain      the zone app hosts live on (route zone_name); default 280apps.run
+  //   hostSuffix     '' in prod, '-development' in dev; the app host is
+  //                  <script><hostSuffix>.<appDomain>
+  //   gatewayService the central gateway Worker the GATEWAY binding targets; default
+  //                  280-gateway<hostSuffix>
+  //   idIssuer       the token issuer the middleware checks; default
+  //                  https://auth<hostSuffix>.<appDomain>
+  appDomain?: string;
+  hostSuffix?: string;
+  gatewayService?: string;
+  idIssuer?: string;
   exec?: ExecFn;
+  // fetch talks to the Cloudflare API to mint registry credentials; injected so the
+  // credential exchange is unit-testable without a Cloudflare account.
+  fetch?: typeof fetch;
 }
 
 // RegistryContainerBuilder is the template: rollout() runs materialize → buildAndPush
@@ -73,7 +100,12 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   protected readonly workdir: string;
   protected readonly workerEntry: string;
   protected readonly compatibilityDate: string;
+  protected readonly appDomain: string;
+  protected readonly hostSuffix: string;
+  protected readonly gatewayService: string;
+  protected readonly idIssuer: string;
   protected readonly exec: ExecFn;
+  protected readonly fetchImpl: typeof fetch;
 
   constructor(cfg: RegistryBuilderConfig) {
     this.accountId = cfg.accountId;
@@ -84,7 +116,19 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
     this.workdir = cfg.workdir ?? tmpdir();
     this.workerEntry = cfg.workerEntry ?? 'worker.js';
     this.compatibilityDate = cfg.compatibilityDate ?? DEFAULT_COMPAT_DATE;
+    this.appDomain = cfg.appDomain ?? DEFAULT_APP_DOMAIN;
+    this.hostSuffix = cfg.hostSuffix ?? '';
+    this.gatewayService = cfg.gatewayService ?? `280-gateway${this.hostSuffix}`;
+    this.idIssuer = cfg.idIssuer ?? `https://auth${this.hostSuffix}.${this.appDomain}`;
     this.exec = cfg.exec ?? spawnExec;
+    this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  }
+
+  // registryCredentials mints a short-lived push/pull credential for the registry.
+  // registry.cloudflare.com rejects the raw API token as a basic-auth password; the
+  // token is only authorized to exchange it for these scoped, expiring creds.
+  protected registryCredentials(): Promise<{ username: string; password: string }> {
+    return mintRegistryCredentials(this.accountId, this.apiToken, this.registry, this.fetchImpl);
   }
 
   imageRef(app: RuntimeApp, deployId: string): string {
@@ -122,7 +166,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   // no-oped while the deploy reported success. See report §7.)
   protected async roll(ctx: string, image: string, job: RolloutJob): Promise<void> {
     const configPath = join(ctx, ROLL_CONFIG_FILE);
-    await writeFile(configPath, JSON.stringify(this.rollConfig(job.app.script, image), null, 2));
+    await writeFile(configPath, JSON.stringify(this.rollConfig(job, image), null, 2));
     await this.run(
       ctx,
       'wrangler',
@@ -133,15 +177,25 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   }
 
   // rollConfig is the wrangler config the roll deploys: the App280Container harness
-  // Worker with its container pinned to the pre-built registry image. Because the
-  // container `image` is a registry reference (not a local path), wrangler
-  // reconciles the application without building anything.
-  protected rollConfig(script: string, image: string): Record<string, unknown> {
+  // Worker, now the app's own front door on its own route. It is pinned to the
+  // pre-built registry image (so wrangler reconciles the application without building
+  // anything) and additionally carries, per app:
+  //   - routes:   its own <script><suffix>.<appDomain>/* host, more specific than the
+  //               legacy wildcard so it wins during migration.
+  //   - services: the GATEWAY service binding to the central gateway's GatewayRPC
+  //               (mint/jwks), the only channel the middleware uses.
+  //   - vars:     the baked route policy plus the identity vars the middleware reads
+  //               (app id/script, host suffix/domain, issuer, edge skew).
+  protected rollConfig(job: RolloutJob, image: string): Record<string, unknown> {
+    const script = job.app.script;
+    const host = `${script}${this.hostSuffix}.${this.appDomain}`;
     return {
       name: script,
       main: this.workerEntry,
       compatibility_date: this.compatibilityDate,
       compatibility_flags: ['nodejs_compat'],
+      routes: [{ pattern: `${host}/*`, zone_name: this.appDomain }],
+      services: [{ binding: GATEWAY_BINDING, service: this.gatewayService, entrypoint: GATEWAY_ENTRYPOINT }],
       durable_objects: {
         bindings: [{ class_name: CONTAINER_CLASS, name: CONTAINER_BINDING }],
       },
@@ -154,6 +208,15 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         },
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
+      vars: {
+        TWO80_ROUTE_POLICY: JSON.stringify(job.policy),
+        TWO80_APP_ID: job.app.id,
+        TWO80_SCRIPT: script,
+        TWO80_APP_HOST_SUFFIX: this.hostSuffix,
+        TWO80_APP_DOMAIN: this.appDomain,
+        TWO80_ID_ISSUER: this.idIssuer,
+        TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
+      },
     };
   }
 
@@ -219,11 +282,36 @@ export async function materialize(dir: string, files: RolloutJob['files']): Prom
   }
 }
 
-// registryAuth is the basic-auth pair every push to registry.cloudflare.com uses:
-// the Cloudflare account id as the username and an API token as the password. Both
-// `docker login` and Depot's docker-config credentials provider consume it.
-export function registryAuth(accountId: string, apiToken: string): { username: string; password: string } {
-  return { username: accountId, password: apiToken };
+// mintRegistryCredentials exchanges the Cloudflare API token for a short-lived
+// basic-auth pair scoped to registry.cloudflare.com. The registry does not accept
+// the raw API token (or the account id) as a password; it requires these minted
+// credentials (username "v1", an expiring JWT). Both `docker login` and Depot's
+// docker-config credentials provider consume the returned pair.
+export async function mintRegistryCredentials(
+  accountId: string,
+  apiToken: string,
+  registry: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ username: string; password: string }> {
+  const url = `${CF_API_BASE}/accounts/${accountId}/containers/registries/${registry}/credentials`;
+  const res = await fetchImpl(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ permissions: ['push', 'pull'], expiration_minutes: REGISTRY_CRED_TTL_MINUTES }),
+  });
+  const body = (await res.json().catch(() => null)) as
+    | { success?: boolean; result?: { username?: string; password?: string } }
+    | null;
+  const username = body?.result?.username;
+  const password = body?.result?.password;
+  if (!res.ok || body?.success !== true || !username || !password) {
+    throw new DeployErr({
+      code: DeployCode.Unavailable,
+      message: `could not obtain registry credentials from Cloudflare (HTTP ${res.status})`,
+      retryable: true,
+    });
+  }
+  return { username, password };
 }
 
 export function tail(s: string, n = 25): string {

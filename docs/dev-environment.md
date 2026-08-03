@@ -1,5 +1,7 @@
 # Development environment
 
+For the serving and identity architecture (why apps are per-app Workers behind a central identity gateway), see [`architecture.md`](./architecture.md).
+
 How the 280apps dev environment is wired, and how to target it. It mirrors
 production but runs on parallel, isolated infrastructure so you can push and test
 apps without touching real users' deploys.

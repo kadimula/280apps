@@ -41,8 +41,8 @@ RUN pnpm --filter @280/backend deploy --prod --legacy /app
 #               image and pushes it to registry.cloudflare.com with no Docker here.
 #   - wrangler: rolls the app's container application onto the pre-built image
 #               (`wrangler deploy --containers-rollout immediate`).
-# The depot builder only activates when its env is set (TWO80_BUILDER=depot or
-# DEPOT_TOKEN); with none, the service behaves exactly as before.
+# Depot is the sole build home; it needs DEPOT_TOKEN and CLOUDFLARE_* set (or run
+# TWO80_RUNTIME=memory to record deploys without building).
 FROM node:22-slim
 WORKDIR /app
 

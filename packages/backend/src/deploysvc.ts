@@ -197,8 +197,8 @@ export class Service implements Port {
   private async createApp(id: Identity): Promise<App> {
     const slug = sanitizeSlug(id.slug);
     const appId = 'app_' + randomHex(6);
-    // The script name is the app's environment-independent identity in the dispatch
-    // namespace; the host suffix rides only on the URL host label, which staging
+    // The script name is the app's environment-independent identity: its Worker name
+    // and host label. The host suffix rides only on the URL host label, which staging
     // strips back to this bare name for lookup.
     const script = slug + '-' + urlToken(appId);
 

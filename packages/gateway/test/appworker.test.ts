@@ -105,13 +105,19 @@ describe('app-worker middleware', () => {
     const container = new FakeContainer();
     const t = await token(signer);
 
-    const res = await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(container));
+    // A client-supplied identity header must never reach the container: stampIdentity
+    // strips every inbound x-280-* before setting the genuine one (anti-spoofing).
+    const spoofed = new Request(`https://${HOST}/`, {
+      headers: { cookie: `${ID_COOKIE}=${t}`, 'x-280-identity': 'forged', 'x-280-user': 'admin@evergreen.com' },
+    });
+    const res = await handleAppRequest(spoofed, env(gw), deps(container));
     expect(res.status).toBe(200);
     expect(gw.mintCalls).toHaveLength(0); // steady state never mints
     const body = (await res.json()) as { id: string };
     expect(body.id).toBe(t);
-    // The container saw exactly the minted token, no client-supplied x-280-* leaks.
+    // The container saw exactly the minted token, not the forgery.
     expect(container.requests[0]!.headers.get('X-280-Identity')).toBe(t);
+    expect(container.requests[0]!.headers.get('x-280-user')).toBeNull();
   });
 
   it('re-mints silently when the token has expired and delivers a host-only cookie', async () => {

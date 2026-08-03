@@ -10,7 +10,6 @@ import { Authorizer } from './access.js';
 import { confineRedirect, Gateway, type Logger } from './gateway.js';
 import { IdentitySigner, publicJwkFromPrivate } from './identity.js';
 import type { ProviderLink } from './pages.js';
-import { ContainerUpstream, type AppContainers } from './upstream.js';
 import { readConfig, type Config, type Env } from './config.js';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -24,20 +23,7 @@ export interface GatewayStatics {
   links: ProviderLink[];
   signer: IdentitySigner;
   publicJwks: Record<string, JsonWebKey>;
-  containers: AppContainers;
   log: Logger;
-}
-
-// Reaches each app's container through the App280Container Durable Object
-// namespace, one instance per script name. Returns null when the binding is
-// absent so the proxy answers "not reachable" instead of throwing.
-class NamespaceContainers implements AppContainers {
-  constructor(private readonly ns: DurableObjectNamespace | undefined) {}
-
-  forScript(script: string): Fetcher | null {
-    if (this.ns === undefined) return null;
-    return this.ns.get(this.ns.idFromName(script));
-  }
 }
 
 // Throws on the two misconfigurations that would otherwise fail silently: no
@@ -49,8 +35,7 @@ export function buildStatics(env: Env, log: Logger): GatewayStatics {
     throw new Error('no OIDC provider configured: set GOOGLE_CLIENT_ID/SECRET and/or ENTRA_CLIENT_ID/SECRET');
   }
   const { signer, publicJwks } = buildSigner(config);
-  const containers = new NamespaceContainers(env.APP_CONTAINER);
-  return { config, registry, links, signer, publicJwks, containers, log };
+  return { config, registry, links, signer, publicJwks, log };
 }
 
 export function buildProviders(config: Config): {
@@ -130,7 +115,6 @@ export function requestGateway(s: GatewayStatics): { gateway: Gateway; close: ()
     signer: s.signer,
     authz: new Authorizer(store),
     audit: store,
-    upstream: new ContainerUpstream(s.containers),
     hosts: { appDomain: s.config.appDomain, authHost: s.config.authHost, hostSuffix: s.config.hostSuffix },
     authOrigin: s.config.authOrigin,
     cookieDomain: s.config.cookieDomain,

@@ -11,8 +11,8 @@
 	// Container-only serving: the gateway is now the identity mint/JWKS service, not
 	// an app proxy. It owns ONLY the auth host; each app is its own Worker on its own
 	// <script>-development.280apps.run/* route (emitted by the roll) that calls this
-	// gateway's GatewayRPC over a service binding. The dev dispatcher keeps the
-	// wildcard until the Phase 3 cutover removes it.
+	// gateway's GatewayRPC over a service binding. The legacy dispatch wildcard was
+	// removed in the Phase 3 cutover.
 	"routes": [{ "pattern": "auth-development.280apps.run/*", "zone_name": "280apps.run" }],
 
 	// The dev Hyperdrive config over the dev control-plane Postgres (the same Neon DB

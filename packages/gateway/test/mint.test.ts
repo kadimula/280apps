@@ -18,8 +18,8 @@ function encodeView(v: { script: string; appRole: string; role: string }): strin
 }
 
 describe('Gateway.mintForApp', () => {
-  it('mints an audience-scoped token for an admitted viewer', async () => {
-    const { gateway, publicJwks } = await newGateway();
+  it('mints an audience-scoped token for an admitted viewer and audits the access', async () => {
+    const { gateway, publicJwks, store } = await newGateway();
     const session = sessionValue(await signIn(gateway, 'google', 'alice@evergreen.com'));
 
     const res = await gateway.mintForApp({ sessionToken: session, viewCookie: '', script: 'renewals', host: HOST });
@@ -32,6 +32,12 @@ describe('Gateway.mintForApp', () => {
     expect(user.email).toBe('alice@evergreen.com');
     expect(claims.aud).toBe(HOST);
     expect(claims.app).toBe('app_renewals');
+
+    // A mint is the coarse "opened the app" audit event (the container-only
+    // replacement for the deleted per-navigation proxy audit).
+    const allowed = store.accessLog.filter((e) => e.allowed);
+    expect(allowed).toHaveLength(1);
+    expect(allowed[0]!).toMatchObject({ appId: 'app_renewals', principal: 'alice@evergreen.com' });
   });
 
   it('returns login (no token) when there is no session', async () => {
@@ -43,11 +49,12 @@ describe('Gateway.mintForApp', () => {
     expect(res.url).toContain(`return=${encodeURIComponent(`https://${HOST}/`)}`);
   });
 
-  it('denies a signed-in viewer with no grant', async () => {
-    const { gateway } = await newGateway({ grants: [] });
+  it('denies a signed-in viewer with no grant and audits the denial', async () => {
+    const { gateway, store } = await newGateway({ grants: [] });
     const session = sessionValue(await signIn(gateway, 'google', 'mallory@outsider.com'));
     const res = await gateway.mintForApp({ sessionToken: session, viewCookie: '', script: 'renewals', host: HOST });
     expect(res.kind).toBe('deny');
+    expect(store.accessLog.filter((e) => !e.allowed)).toHaveLength(1);
   });
 
   it('admits without route-gating: a viewer token is minted even for an admin-gated app', async () => {

@@ -272,6 +272,39 @@ export function describeGate(gate: RouteGate, declared: boolean): string {
   return 'Owner-only';
 }
 
+// ViewAsTarget is who a dashboard preview renders the app as: the owner
+// themselves (none), the owner's identity at a lower role (role), or a specific
+// person (user). Baked into the preview grant at creation and interpreted at mint.
+export const viewAsTargetSchema = z.union([
+  z.object({ kind: z.literal('none') }).passthrough(),
+  z.object({ kind: z.literal('role'), appRole: str(), featureRole: str() }).passthrough(),
+  z.object({ kind: z.literal('user'), email: str() }).passthrough(),
+]);
+export type ViewAsTarget = z.infer<typeof viewAsTargetSchema>;
+
+// The preview-grant request body; the app is in the path and the acting owner is
+// the session. An absent viewAs previews as the owner.
+export const previewGrantRequestSchema = z
+  .object({
+    viewAs: viewAsTargetSchema.nullish().transform((v) => v ?? ({ kind: 'none' } as ViewAsTarget)),
+  })
+  .passthrough();
+export type PreviewGrantRequest = z.infer<typeof previewGrantRequestSchema>;
+
+// PreviewGrant is one owner-authorized, short-lived, revocable permission to mint
+// preview identities for one app. Only the opaque token's hash is stored (the
+// device-code discipline); the control plane writes it and the gateway reads it
+// over the shared store, re-checking expiry, revocation, and the owner's role on
+// every mint.
+export interface PreviewGrant {
+  tokenHash: string;
+  appId: string;
+  ownerUserId: string;
+  viewAs: ViewAsTarget;
+  expiresAt: number; // unix seconds
+  revoked: boolean;
+}
+
 // Callers treat unknown states as "in progress".
 export const State = {
   Uploading: 'uploading',

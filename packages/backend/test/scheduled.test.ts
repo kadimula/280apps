@@ -46,10 +46,21 @@ describe('scheduled cleanup', () => {
     store.tokenClock = () => now;
     await store.addToken('u2', 'tok_new');
 
+    const previewGrant = (tokenHash: string, expiresAt: number) => ({
+      tokenHash,
+      appId: 'app_pv',
+      ownerUserId: 'u1',
+      viewAs: { kind: 'none' } as const,
+      expiresAt,
+      revoked: false,
+    });
+    await store.createPreviewGrant(previewGrant('pv_old', now - 1));
+    await store.createPreviewGrant(previewGrant('pv_new', now + 600));
+
     const { logger, records } = capturingLogger();
     const counts = await sweepExpired(store, logger, now, ttl);
 
-    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1 });
+    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1, previewGrants: 1 });
 
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.sessionByHash('sess_old')).toBeNull();
@@ -57,6 +68,8 @@ describe('scheduled cleanup', () => {
     expect(await store.deviceCodeByHash('dc_old')).toBeNull();
     expect(await store.userByToken('tok_new', now - ttl)).not.toBeNull();
     expect(await store.userByToken('tok_old', 0)).toBeNull();
+    expect(await store.previewGrantByHash('pv_new')).not.toBeNull();
+    expect(await store.previewGrantByHash('pv_old')).toBeNull();
 
     const line = records.find((r) => r.msg === 'scheduled cleanup');
     expect(line?.attrs).toMatchObject({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1 });
@@ -73,6 +86,7 @@ describe('scheduled cleanup', () => {
       deviceCodes: 0,
       rateLimits: 0,
       tokens: 0,
+      previewGrants: 0,
     });
     expect(await store.sessionByHash('s')).not.toBeNull();
   });

@@ -4,9 +4,9 @@
 // failures rejecting; conditional transitions that report a winner return boolean.
 
 import type { BlobBody } from '@280/contracts';
-import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy } from '@280/contracts';
+import type { Manifest, Digest, BlobInfo, DeployError, AppPolicy, PreviewGrant } from '@280/contracts';
 
-export type { AppPolicy } from '@280/contracts';
+export type { AppPolicy, PreviewGrant, ViewAsTarget } from '@280/contracts';
 
 // id is the OIDC-stable principal every resource keys on, so preserving ids across
 // the next-auth migration is what keeps existing users' apps attached to them.
@@ -88,6 +88,9 @@ export const EventKind = {
   PolicyRegistered: 'policy.registered',
   AppAccessed: 'app.accessed',
   AppAccessDenied: 'app.access_denied',
+  // A "view as user" preview mint: an owner/admin rendered the app as another
+  // principal. Detail names both the acting owner and the impersonated principal.
+  AppPreviewedAs: 'app.previewed_as',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
@@ -106,6 +109,7 @@ export interface ExpiryCounts {
   deviceCodes: number;
   rateLimits: number;
   tokens: number;
+  previewGrants: number;
 }
 
 // Tier 1 of the permission model: roles over the app as an object (open it, change
@@ -169,6 +173,13 @@ export interface Store {
   approveDeviceCode(userCode: string, userId: string, now: number): Promise<boolean>;
   claimDeviceCode(deviceHash: string): Promise<boolean>;
 
+  // Dashboard preview grants (the device-code discipline: only the hash is
+  // stored). The control plane writes them; the gateway reads and honors them over
+  // the same shared store, so revocation and expiry apply on the next mint.
+  createPreviewGrant(g: PreviewGrant): Promise<void>;
+  previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null>;
+  revokePreviewGrant(tokenHash: string): Promise<boolean>;
+
   app(userId: string, appId: string): Promise<App | null>;
   appsByFingerprint(userId: string, fingerprint: string): Promise<App[]>;
   appsByUser(userId: string): Promise<App[]>;
@@ -200,9 +211,16 @@ export interface Store {
   appPolicy(appId: string): Promise<AppPolicy | null>;
 
   // Records one gateway access decision (allowed/denied) for the permission audit.
-  // Best-effort by contract: the caller swallows its error so an audit-write fault
-  // never blocks serving a request.
-  recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void>;
+  // kind overrides the event kind derived from `allowed` (e.g. app.previewed_as
+  // for an impersonating preview mint). Best-effort by contract: the caller
+  // swallows its error so an audit-write fault never blocks serving a request.
+  recordAppAccess(e: {
+    appId: string;
+    principal: string;
+    allowed: boolean;
+    detail?: string;
+    kind?: string;
+  }): Promise<void>;
 }
 
 // Deploy content, addressed by digest and scoped to one app. get rejects

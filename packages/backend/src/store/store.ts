@@ -4,7 +4,7 @@
 // racy transition is a conditional UPDATE whose row count names the winner, every
 // uniqueness rule an index.
 
-import type { AppPolicy, Manifest, DeployError, RouteGate } from '@280/contracts';
+import type { AppPolicy, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
 import {
   APP_ACCESS,
   appPolicyFromManifest,
@@ -12,6 +12,7 @@ import {
   manifestSchema,
   errorSchema,
   tenantFromEmail,
+  viewAsTargetSchema,
   State,
 } from '@280/contracts';
 import pg from 'pg';
@@ -322,6 +323,21 @@ function rowToSession(r: Row): Session {
   return { tokenHash: r.token_hash, userId: r.user_id, expiresAt: toNum(r.expires_at) };
 }
 
+// A grant whose stored view_as no longer parses is treated as unknown (null):
+// failing closed beats minting a preview with a guessed target.
+function rowToPreviewGrant(r: Row): PreviewGrant | null {
+  const viewAs = viewAsTargetSchema.safeParse(r.view_as);
+  if (!viewAs.success) return null;
+  return {
+    tokenHash: r.token_hash,
+    appId: r.app_id,
+    ownerUserId: r.owner_user_id,
+    viewAs: viewAs.data,
+    expiresAt: toNum(r.expires_at),
+    revoked: r.revoked === true,
+  };
+}
+
 function rowToDeviceCode(r: Row): DeviceCode {
   return {
     deviceHash: r.device_hash,
@@ -542,11 +558,16 @@ class PgStore implements Store {
         `DELETE FROM ${this.t('tokens')} WHERE created_at <= $1`,
         [tokenCutoff],
       );
+      const previewGrants = await tx.query(
+        `DELETE FROM ${this.t('preview_grants')} WHERE expires_at <= $1`,
+        [now],
+      );
       return {
         sessions: sessions.rowCount ?? 0,
         deviceCodes: deviceCodes.rowCount ?? 0,
         rateLimits: rateLimits.rowCount ?? 0,
         tokens: tokens.rowCount ?? 0,
+        previewGrants: previewGrants.rowCount ?? 0,
       };
     });
   }
@@ -602,6 +623,32 @@ class PgStore implements Store {
       });
       return true;
     });
+  }
+
+  async createPreviewGrant(g: PreviewGrant): Promise<void> {
+    await this.db.query(
+      `INSERT INTO ${this.t('preview_grants')} (token_hash, app_id, owner_user_id, view_as, expires_at, revoked)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [g.tokenHash, g.appId, g.ownerUserId, JSON.stringify(g.viewAs), g.expiresAt, g.revoked],
+    );
+  }
+
+  async previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null> {
+    const res = await this.db.query(
+      `SELECT token_hash, app_id, owner_user_id, view_as, expires_at, revoked
+       FROM ${this.t('preview_grants')} WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    return res.rows.length ? rowToPreviewGrant(res.rows[0]) : null;
+  }
+
+  // Reports whether a live grant was there to revoke; revoking twice is not a failure.
+  async revokePreviewGrant(tokenHash: string): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE ${this.t('preview_grants')} SET revoked = TRUE WHERE token_hash = $1 AND NOT revoked`,
+      [tokenHash],
+    );
+    return res.rowCount === 1;
   }
 
   async app(userId: string, appId: string): Promise<App | null> {
@@ -949,8 +996,9 @@ class PgStore implements Store {
     principal: string;
     allowed: boolean;
     detail?: string;
+    kind?: string;
   }): Promise<void> {
-    const kind = e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied;
+    const kind = e.kind ?? (e.allowed ? EventKind.AppAccessed : EventKind.AppAccessDenied);
     const detail = e.detail ?? eventDetail({ principal: e.principal });
     await this.db.query(
       `INSERT INTO ${this.t('events')} (user_id, app_id, deploy_id, kind, detail)

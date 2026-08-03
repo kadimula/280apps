@@ -3,13 +3,28 @@
 // session is a portable bearer; untrusted container code must never see it).
 
 import { describe, expect, it } from 'vitest';
-import { stampIdentity } from '../src/cookies.js';
+import { serializeCookie, stampIdentity } from '../src/cookies.js';
 
 const TOKEN = 'minted-token';
 
 function stamped(headers: Record<string, string>): Request {
   return stampIdentity(new Request('https://renewals.280apps.run/', { headers }), TOKEN);
 }
+
+describe('serializeCookie', () => {
+  it('defaults to the Lax host-only shape', () => {
+    expect(serializeCookie('280_id', 'tok', { maxAge: 30 })).toBe(
+      '280_id=tok; Path=/; HttpOnly; SameSite=Lax; Max-Age=30; Secure',
+    );
+  });
+
+  it('a partitioned cookie is the full CHIPS shape: None + Secure + Partitioned', () => {
+    // Secure is forced even if a caller opts out: CHIPS requires it.
+    expect(serializeCookie('280_preview', 'g1', { maxAge: 600, partitioned: true, secure: false })).toBe(
+      '280_preview=g1; Path=/; HttpOnly; SameSite=None; Max-Age=600; Secure; Partitioned',
+    );
+  });
+});
 
 describe('stampIdentity', () => {
   it('strips every 280_* cookie and preserves app cookies', () => {

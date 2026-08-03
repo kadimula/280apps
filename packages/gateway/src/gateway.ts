@@ -6,20 +6,36 @@
 // service (reused), configured only with the gateway's app-host redirect guard. See
 // README.md for the flow.
 
+import { createHash } from 'node:crypto';
 import type { Auth } from '@280/backend/authsvc';
 import { AuthError } from '@280/backend/authsvc';
+import type { PreviewGrant, User } from '@280/backend/seams';
 import { tenantFromEmail } from '@280/contracts';
 import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
 import { IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
 import { readCookie, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
-import type { MintInput, MintResult } from './mint.js';
+import type { MintInput, MintPreviewInput, MintResult } from './mint.js';
 
 // The audit seam the gateway writes access decisions through. The pg Store
 // satisfies it; injected so the proxy stays unit-testable and audit stays optional.
 export interface AccessAudit {
-  recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void>;
+  recordAppAccess(e: {
+    appId: string;
+    principal: string;
+    allowed: boolean;
+    detail?: string;
+    kind?: string;
+  }): Promise<void>;
+}
+
+// The store slice mintPreview reads: the hashed grant plus the users it resolves
+// into identities. The full pg Store satisfies it structurally.
+export interface PreviewStore {
+  previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null>;
+  userById(id: string): Promise<User | null>;
+  userByEmail(email: string): Promise<User | null>;
 }
 
 export interface Logger {
@@ -50,6 +66,7 @@ export interface GatewayOptions {
   publicJwks: Record<string, JsonWebKey>;
   fallbackRedirect: string;
   audit?: AccessAudit;
+  previewStore?: PreviewStore;
   logger?: Logger;
 }
 
@@ -218,13 +235,113 @@ export class Gateway {
       viewAs: adm.viewAsApplied ? '1' : '',
     });
 
-    const eff: EffectiveGrant = adm.effective;
+    return this.signIdentity(viewer, adm.appId, adm.effective, input.host);
+  }
+
+  // mintPreview is mintForApp's sibling for the dashboard iframe: the viewer is
+  // proven not by a session cookie (none rides into a cross-site frame) but by an
+  // owner-authorized preview grant on the shared store. Every call — including
+  // each self-refresh past the token TTL — re-checks the grant is live and the
+  // acting owner is still admin+, so revocation and demotion stop a running preview.
+  async mintPreview(input: MintPreviewInput): Promise<MintResult> {
+    const store = this.o.previewStore;
+    if (store === undefined || input.grant === '') return previewDeny();
+
+    const grant = await store.previewGrantByHash(hashOpaque(input.grant));
+    const now = Math.floor(Date.now() / 1000);
+    if (grant === null || grant.revoked || now >= grant.expiresAt) return previewDeny();
+
+    const owner = await store.userById(grant.ownerUserId);
+    if (owner === null) return previewDeny();
+
+    // The same real-role rule /view-as applies, re-checked per mint; the grant
+    // must also name the app this script resolves to (no cross-app replay).
+    const appId = await this.o.authz.viewAsAllowed(input.script, owner.email);
+    if (appId === null || appId !== grant.appId) return previewDeny();
+
+    const ownerViewer: VerifiedViewer = {
+      id: owner.id,
+      email: owner.email,
+      name: owner.name,
+      tenant: tenantFromEmail(owner.email),
+    };
+
+    if (grant.viewAs.kind === 'user') {
+      return this.mintPreviewAsUser(ownerViewer, grant.viewAs.email, input);
+    }
+
+    const viewAs: ViewAs | null =
+      grant.viewAs.kind === 'role'
+        ? { script: input.script, appRole: grant.viewAs.appRole, role: grant.viewAs.featureRole }
+        : null;
+    const adm = await this.o.authz.admit({ viewer: ownerViewer, script: input.script, viewAs });
+    if (!adm.allow) {
+      await this.audit(adm.appId, ownerViewer.email, false, { reason: adm.reason, preview: '1' });
+      return { kind: 'deny', reason: adm.reason };
+    }
+    await this.audit(adm.appId, ownerViewer.email, true, {
+      appRole: adm.effective.appRole,
+      role: adm.effective.featureRole,
+      viewAs: adm.viewAsApplied ? '1' : '',
+      preview: '1',
+    });
+    return this.signIdentity(ownerViewer, adm.appId, adm.effective, input.host);
+  }
+
+  // A "view as user" preview renders as the target through the app's normal
+  // admission decision, so the owner sees exactly what that person would see —
+  // including a denial. A target with no users row yet gets a minimal synthesized
+  // identity (email as the stable subject, name from the local part).
+  private async mintPreviewAsUser(
+    owner: VerifiedViewer,
+    targetEmail: string,
+    input: MintPreviewInput,
+  ): Promise<MintResult> {
+    const targetUser = await this.o.previewStore!.userByEmail(targetEmail);
+    const target: VerifiedViewer =
+      targetUser !== null
+        ? { id: targetUser.id, email: targetUser.email, name: targetUser.name, tenant: tenantFromEmail(targetUser.email) }
+        : {
+            id: targetEmail,
+            email: targetEmail,
+            name: targetEmail.split('@')[0] ?? targetEmail,
+            tenant: tenantFromEmail(targetEmail),
+          };
+
+    const adm = await this.o.authz.admit({ viewer: target, script: input.script, viewAs: null });
+    if (!adm.allow) {
+      await this.audit(adm.appId, target.email, false, { reason: adm.reason, by: owner.email, as: target.email });
+      return { kind: 'deny', reason: adm.reason };
+    }
+    // The impersonation trail: who rendered as whom, always, for every allowed
+    // user view-as mint.
+    await this.audit(
+      adm.appId,
+      target.email,
+      true,
+      {
+        by: owner.email,
+        as: target.email,
+        appRole: adm.effective.appRole,
+        role: adm.effective.featureRole,
+      },
+      'app.previewed_as',
+    );
+    return this.signIdentity(target, adm.appId, adm.effective, input.host);
+  }
+
+  private async signIdentity(
+    viewer: VerifiedViewer,
+    appId: string,
+    eff: EffectiveGrant,
+    host: string,
+  ): Promise<MintResult> {
     const token = await this.o.signer.sign({
       sub: viewer.id,
       email: viewer.email,
       name: viewer.name,
-      aud: input.host,
-      app: adm.appId,
+      aud: host,
+      app: appId,
       appRole: eff.appRole,
       role: eff.featureRole,
       caps: eff.featureRole !== '' ? [eff.featureRole] : [],
@@ -242,10 +359,11 @@ export class Gateway {
     principal: string,
     allowed: boolean,
     detail: Record<string, string>,
+    kind?: string,
   ): Promise<void> {
     if (this.o.audit === undefined || appId === '') return;
     try {
-      await this.o.audit.recordAppAccess({ appId, principal, allowed, detail: JSON.stringify(detail) });
+      await this.o.audit.recordAppAccess({ appId, principal, allowed, detail: JSON.stringify(detail), kind });
     } catch (err) {
       this.o.logger?.warn('access audit failed', { error: err instanceof Error ? err.message : String(err) });
     }
@@ -288,6 +406,18 @@ export class Gateway {
     if (domain !== '') parts.push('Secure');
     return parts.join('; ');
   }
+}
+
+// One answer for every dead grant (unknown, expired, revoked, owner demoted, app
+// mismatch): distinguishing them is free reconnaissance on a guessed token.
+function previewDeny(): MintResult {
+  return { kind: 'deny', reason: 'This preview is no longer available. Reload the dashboard to start a new one.' };
+}
+
+// The grant travels opaque and is stored only as this hash, the same discipline as
+// sessions and device codes (authsvc/api hashToken).
+function hashOpaque(s: string): string {
+  return createHash('sha256').update(s, 'utf8').digest('hex');
 }
 
 // Allows only https hosts that are the app domain or a subdomain (never the auth

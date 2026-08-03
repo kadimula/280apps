@@ -4,7 +4,7 @@
 
 import { Auth } from '@280/backend/authsvc';
 import type { OidcIdentity, OidcProvider } from '@280/backend/auth/oidc';
-import type { AppPolicy, Grant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
+import type { AppPolicy, Grant, PreviewGrant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
 import { Authorizer } from '../src/access.js';
 import { confineRedirect, Gateway, type GatewayOptions } from '../src/gateway.js';
 import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '../src/identity.js';
@@ -53,7 +53,8 @@ class FakeStore {
   private readonly apps = new Map<string, { id: string }>();
   private readonly grants = new Map<string, Grant>();
   private readonly policies = new Map<string, AppPolicy>();
-  readonly accessLog: Array<{ appId: string; principal: string; allowed: boolean; detail: string }> = [];
+  private readonly previewGrants = new Map<string, PreviewGrant>();
+  readonly accessLog: Array<{ appId: string; principal: string; allowed: boolean; detail: string; kind: string }> = [];
 
   seedApp(script: string, id: string): void {
     this.apps.set(script, { id });
@@ -72,6 +73,9 @@ class FakeStore {
       grantedBy: 'test',
       grantedAt: 0,
     });
+  }
+  seedPreviewGrant(g: PreviewGrant): void {
+    this.previewGrants.set(g.tokenHash, { ...g });
   }
   seedPolicy(appId: string, over: Partial<AppPolicy> = {}): void {
     this.policies.set(appId, {
@@ -133,8 +137,24 @@ class FakeStore {
   async appPolicy(appId: string): Promise<AppPolicy | null> {
     return this.policies.get(appId) ?? null;
   }
-  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string }): Promise<void> {
-    this.accessLog.push({ appId: e.appId, principal: e.principal, allowed: e.allowed, detail: e.detail ?? '' });
+  async previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null> {
+    const g = this.previewGrants.get(tokenHash);
+    return g ? { ...g } : null;
+  }
+  async revokePreviewGrant(tokenHash: string): Promise<boolean> {
+    const g = this.previewGrants.get(tokenHash);
+    if (!g || g.revoked) return false;
+    g.revoked = true;
+    return true;
+  }
+  async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string; kind?: string }): Promise<void> {
+    this.accessLog.push({
+      appId: e.appId,
+      principal: e.principal,
+      allowed: e.allowed,
+      detail: e.detail ?? '',
+      kind: e.kind ?? (e.allowed ? 'app.accessed' : 'app.access_denied'),
+    });
   }
 }
 
@@ -202,6 +222,7 @@ export async function newGateway(
     signer,
     authz: new Authorizer(store),
     audit: store,
+    previewStore: store,
     hosts,
     authOrigin: AUTH_ORIGIN,
     cookieDomain: `.${APP_DOMAIN}`,

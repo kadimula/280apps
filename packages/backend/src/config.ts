@@ -34,6 +34,12 @@ export interface ConfigVars {
   // TWO80_WORKER_ENTRY is the App280Container harness Worker the generated roll
   // config points `main` at; supplied by the runtime image, not the app source.
   TWO80_WORKER_ENTRY?: string;
+  // TWO80_GATEWAY_SERVICE is the central identity gateway Worker the per-app roll
+  // binds (GATEWAY service binding). Default 280-gateway<hostSuffix>.
+  TWO80_GATEWAY_SERVICE?: string;
+  // TWO80_ID_ISSUER is the identity-token issuer the per-app middleware verifies
+  // against; it must match what the gateway signs. Default https://auth<suffix>.<domain>.
+  TWO80_ID_ISSUER?: string;
 
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
@@ -74,6 +80,10 @@ export interface Config {
   cloudflare: { accountId: string; apiToken: string };
   // workerEntry is the App280Container harness Worker the roll config references.
   workerEntry: string;
+  // The per-app serving topology the roll bakes in: the central gateway service the
+  // GATEWAY binding targets and the identity issuer the middleware verifies.
+  gatewayService: string;
+  idIssuer: string;
 }
 
 // resolveConfig turns raw vars into typed Config. dbConnectionString is injected
@@ -83,13 +93,16 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     v !== undefined && v !== '' ? v : fallback;
   const num = (v: string | undefined, fallback: number): number => Number(str(v, String(fallback))) || fallback;
 
+  const appDomain = str(vars.TWO80_APP_DOMAIN, '280apps.run');
+  const hostSuffix = vars.TWO80_APP_HOST_SUFFIX ?? '';
+
   return {
     runtime: str(vars.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
     logFormat: str(vars.TWO80_LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
     dbSchema: str(vars.TWO80_DB_SCHEMA, 'platform'),
     dbConnectionString,
-    appDomain: str(vars.TWO80_APP_DOMAIN, '280apps.run'),
-    hostSuffix: vars.TWO80_APP_HOST_SUFFIX ?? '',
+    appDomain,
+    hostSuffix,
     apiOrigin: str(vars.TWO80_API_ORIGIN, 'https://api.280apps.com'),
     frontendOrigin: str(vars.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
     verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
@@ -107,6 +120,8 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
     cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
     workerEntry: str(vars.TWO80_WORKER_ENTRY, 'worker.js'),
+    gatewayService: str(vars.TWO80_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
+    idIssuer: str(vars.TWO80_ID_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
   };
 }
 

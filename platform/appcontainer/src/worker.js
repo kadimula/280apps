@@ -1,23 +1,28 @@
-// Phase-1 proof Worker: the minimal front for App280Container. It applies the app's
-// egress policy to the container instance, then forwards every request to the app
-// (which listens on defaultPort) and returns the response. This is NOT the gateway
-// — no OIDC, no access checks, no identity injection; that is phase 2
-// (packages/gateway), which will import @280/egress and apply the same policy.
+// The per-app harness Worker: the roll config's `main`, one deployed Worker per app on
+// its own <script>[-development].280apps.run route. It is now the app's front door.
 //
-// The policy comes from EGRESS_POLICY (JSON) in the Worker env, which the platform
-// derives from the app's 280.json at deploy. Absent/empty => default-deny (the
-// container reaches nothing). In production the DockerBuilder generates the per-app
-// image and the gateway binds it by host; here this lets `wrangler dev` run one app
-// end to end with its egress boundary enforced.
+// It compiles in the @280/gateway verify-and-forward middleware (handleAppRequest):
+// the middleware reads the host-only 280_id cookie, verifies the short-TTL identity
+// token locally against the central gateway's public JWKS (fetched over the GATEWAY
+// service binding, cached), mints/refreshes over that binding when needed, enforces the
+// baked route gate, stamps X-280-Identity, and hands the request to this app's
+// App280Container. The private signing key, DB, and OIDC stay in the central gateway;
+// this Worker holds only the public verify path plus the container.
+//
+// The @280/egress data path is unchanged: the app's 280.json-derived egress policy is
+// applied to the container instance (fail-closed allowlist + in-flight credential
+// injection) the moment the middleware decides to serve, so an unauthenticated hit
+// never spins the container up.
 
 import { getContainer } from '@cloudflare/containers';
+import { handleAppRequest } from '@280/gateway/appworker';
 import { registerEgress, applyEgressPolicy } from './container.js';
 
 export { App280Container, ContainerProxy } from './container.js';
 
 registerEgress();
 
-function readPolicy(env) {
+function readEgressPolicy(env) {
   if (!env || typeof env.EGRESS_POLICY !== 'string' || env.EGRESS_POLICY === '') {
     return { allowedHosts: [], credentials: [] };
   }
@@ -31,8 +36,15 @@ function readPolicy(env) {
 
 export default {
   async fetch(request, env) {
-    const stub = getContainer(env.APP);
-    await applyEgressPolicy(stub, readPolicy(env), env.APP_ID || '');
-    return stub.fetch(request);
+    const container = getContainer(env.APP);
+    // Apply the egress boundary lazily, only when the middleware actually serves an
+    // authorized request, so unauthenticated visitors do not start the container.
+    const guarded = {
+      fetch: async (req) => {
+        await applyEgressPolicy(container, readEgressPolicy(env), env.APP_ID || '');
+        return container.fetch(req);
+      },
+    };
+    return handleAppRequest(request, env, { container: guarded });
   },
 };

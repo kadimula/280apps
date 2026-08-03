@@ -54,6 +54,10 @@ function buildDepotBuilder(config: Config, log: Logger): container.ContainerBuil
     depotToken: config.depot.token,
     projectId: config.depot.projectId || undefined,
     workerEntry: config.workerEntry,
+    appDomain: config.appDomain,
+    hostSuffix: config.hostSuffix,
+    gatewayService: config.gatewayService,
+    idIssuer: config.idIssuer,
   });
 }
 

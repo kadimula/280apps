@@ -12,7 +12,6 @@ import { DeployCode, DeployErr } from '@280/contracts';
 import type { RolloutJob } from './container.js';
 import {
   RegistryContainerBuilder,
-  registryAuth,
   tail,
   type ExecFn,
   type ExecResult,
@@ -36,7 +35,7 @@ export class DockerBuilder extends RegistryContainerBuilder {
   }
 
   private async login(ctx: string): Promise<void> {
-    const { username, password } = registryAuth(this.accountId, this.apiToken);
+    const { username, password } = await this.registryCredentials();
     const res = await this.exec(
       'docker',
       ['login', this.registry, '-u', username, '--password', password],

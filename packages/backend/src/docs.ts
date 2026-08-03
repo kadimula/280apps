@@ -293,6 +293,7 @@ flowchart TD
 | Websockets | Polling |
 | Committing \`.env\`, hardcoding keys | Declare in \`280.json\` secrets; owner fills in 280 |
 | An admin or mutation route with no gate | Declare it in \`280.json routes\`; undeclared routes are owner-only (fail closed) |
+| Cookies named \`280_*\` | Any other prefix. The \`280_\` cookie-name prefix is platform-reserved and stripped before requests reach your app |
 
 ## Reference code
 

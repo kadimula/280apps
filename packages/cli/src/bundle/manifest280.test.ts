@@ -41,8 +41,12 @@ describe('read280', () => {
     expect(p.routes).toEqual([]);
   });
 
-  it('rejects an unknown access mode', () => {
-    expect(() => read280(projectWith({ access: 'public' }))).toThrow(PreflightError);
+  it('accepts the public access mode', () => {
+    expect(read280(projectWith({ access: 'public' })).access).toBe('public');
+  });
+
+  it('rejects an unknown access mode (the retired link value included)', () => {
+    expect(() => read280(projectWith({ access: 'link' }))).toThrow(PreflightError);
   });
 
   it('rejects a route requiring an undeclared feature role', () => {

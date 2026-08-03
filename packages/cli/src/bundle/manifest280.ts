@@ -64,7 +64,7 @@ export function read280(root: string): Policy280 {
 function parseAccess(v: unknown): string {
   if (v === undefined || v === null || v === '') return APP_ACCESS.Invited;
   if (typeof v !== 'string' || !isAppAccess(v)) {
-    fail('280.json "access" must be one of invited, anyone-at-tenant, link', 'e.g. "access": "invited"');
+    fail('280.json "access" must be one of invited, anyone-at-tenant, public', 'e.g. "access": "invited"');
   }
   return v;
 }

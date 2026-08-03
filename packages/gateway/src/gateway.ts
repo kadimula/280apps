@@ -215,6 +215,13 @@ export class Gateway {
   async mintForApp(input: MintInput): Promise<MintResult> {
     const viewer = await this.viewerFromToken(input.sessionToken);
     if (viewer === null) {
+      // A public app serves its no-session visitors with a signed anonymous
+      // identity instead of the sign-in page. Signed-in visitors never take this
+      // branch: they flow through admit() below with their real identity, so
+      // grants still elevate on a public app.
+      const publicAppId = await this.o.authz.publicAppId(input.script);
+      if (publicAppId !== null) return this.signAnonymous(publicAppId, input.host);
+
       const url = new URL('/login', this.o.authOrigin);
       url.searchParams.set('return', `https://${input.host}/`);
       return { kind: 'login', url: url.toString() };
@@ -328,6 +335,27 @@ export class Gateway {
       'app.previewed_as',
     );
     return this.signIdentity(target, adm.appId, adm.effective, input.host);
+  }
+
+  // The anonymous identity for a public app's no-session visitors: a well-formed
+  // viewer-role identity (anon: true, empty email) so apps and route gates work
+  // unchanged. Deliberately not audited per visit: the access log answers "who",
+  // anonymous has no who, and crawlers would write unbounded rows — the mode
+  // change itself is audited (policy.access_changed).
+  private async signAnonymous(appId: string, host: string): Promise<MintResult> {
+    const token = await this.o.signer.sign({
+      sub: 'anon',
+      email: '',
+      name: 'Anonymous',
+      aud: host,
+      app: appId,
+      appRole: 'viewer',
+      role: '',
+      caps: [],
+      scope: {},
+      anon: true,
+    });
+    return { kind: 'token', token, ttlSecs: this.o.signer.ttlSeconds };
   }
 
   private async signIdentity(

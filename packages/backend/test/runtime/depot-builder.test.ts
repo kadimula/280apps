@@ -256,7 +256,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: credsFetch(),
     });
-    const policy = { access: 'link', roles: [], routes: [{ path: '/reports/*', appRole: '', role: 'analyst' }], secrets: ['API_KEY'] };
+    const policy = { access: 'public', roles: [], routes: [{ path: '/reports/*', appRole: '', role: 'analyst' }], secrets: ['API_KEY'] };
     await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { policy }));
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },

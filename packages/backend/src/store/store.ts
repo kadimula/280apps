@@ -4,7 +4,7 @@
 // racy transition is a conditional UPDATE whose row count names the winner, every
 // uniqueness rule an index.
 
-import type { AppPolicy, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
+import type { AppAccess, AppPolicy, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
 import {
   APP_ACCESS,
   appPolicyFromManifest,
@@ -218,7 +218,11 @@ const appCols =
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
 
-const policyCols = 'app_id, access, roles, routes, secrets, owner_tenant, updated_at';
+const policyCols = 'app_id, access, access_override, roles, routes, secrets, owner_tenant, updated_at';
+
+// The columns a live deploy (re)registers. access_override is deliberately
+// absent: the dashboard's dial survives every redeploy untouched (design D5).
+const registerPolicyCols = 'app_id, access, roles, routes, secrets, owner_tenant, updated_at';
 
 // Seconds since the epoch, for columns the store writes rather than defaults (it
 // holds no clock of its own). Mirrors migrations' epochDefault.
@@ -383,10 +387,15 @@ function rowToGrant(r: Row): Grant {
   };
 }
 
+// The dashboard override wins over the manifest's access; either value coerces
+// unknown modes to invited, so a stale or future wire value fails closed.
 function rowToAppPolicy(r: Row): AppPolicy {
+  const overridden = r.access_override !== '';
+  const effective = overridden ? r.access_override : r.access;
   return {
     appId: r.app_id,
-    access: isAppAccess(r.access) ? r.access : APP_ACCESS.Invited,
+    access: isAppAccess(effective) ? effective : APP_ACCESS.Invited,
+    accessSource: overridden ? 'dashboard' : 'manifest',
     roles: decodeStringArray(r.roles),
     routes: decodeRoutes(r.routes),
     secrets: decodeStringArray(r.secrets),
@@ -853,7 +862,7 @@ class PgStore implements Store {
     const ownerTenant = ownerEmail !== '' ? tenantFromEmail(ownerEmail) : '';
 
     await tx.query(
-      `INSERT INTO ${this.t('app_policies')} (${policyCols})
+      `INSERT INTO ${this.t('app_policies')} (${registerPolicyCols})
        VALUES ($1,$2,$3,$4,$5,$6, ${epochNow})
        ON CONFLICT (app_id) DO UPDATE SET
          access       = EXCLUDED.access,
@@ -986,6 +995,32 @@ class PgStore implements Store {
       [appId],
     );
     return res.rows.length ? rowToAppPolicy(res.rows[0]) : null;
+  }
+
+  // Writes the dashboard override and audits the change in one transaction. The
+  // `from` recorded is the previously effective mode, so the audit reads as what
+  // viewers actually experienced before and after.
+  async setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean> {
+    return this.inTx(async (tx) => {
+      const res = await tx.query(
+        `SELECT ${policyCols} FROM ${this.t('app_policies')} WHERE app_id = $1`,
+        [appId],
+      );
+      if (res.rows.length === 0) return false;
+      const from = rowToAppPolicy(res.rows[0]).access;
+      await tx.query(
+        `UPDATE ${this.t('app_policies')} SET access_override = $1, updated_at = ${epochNow} WHERE app_id = $2`,
+        [access, appId],
+      );
+      await this.insertAppEvent(
+        tx,
+        appId,
+        '',
+        EventKind.PolicyAccessChanged,
+        eventDetail({ from, to: access, by: setBy }),
+      );
+      return true;
+    });
   }
 
   // A single append to the events table, denormalizing the user from the app row.

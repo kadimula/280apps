@@ -104,17 +104,41 @@ const ZERO_EGRESS: EgressPolicy = { allowedHosts: [], credentials: [] };
 
 // The three ways an app decides who may open it at all, before any route gate:
 // invited (only principals with a grant), anyone-at-tenant (any signed-in viewer
-// whose email domain matches the owner's), link (any signed-in viewer). Absent or
-// unknown means invited, the fail-closed default.
+// whose email domain matches the owner's), public (anyone on the internet, no
+// sign-in; served with an anonymous viewer identity). Absent or unknown means
+// invited, the fail-closed default.
 export const APP_ACCESS = {
   Invited: 'invited',
   AnyoneAtTenant: 'anyone-at-tenant',
-  Link: 'link',
+  Public: 'public',
 } as const;
 export type AppAccess = (typeof APP_ACCESS)[keyof typeof APP_ACCESS];
 
 export function isAppAccess(v: string): v is AppAccess {
-  return v === APP_ACCESS.Invited || v === APP_ACCESS.AnyoneAtTenant || v === APP_ACCESS.Link;
+  return v === APP_ACCESS.Invited || v === APP_ACCESS.AnyoneAtTenant || v === APP_ACCESS.Public;
+}
+
+// Where an app's effective access mode came from: the live deploy's 280.json, or
+// the owner's dashboard override (which wins durably across redeploys).
+export type AppAccessSource = 'manifest' | 'dashboard';
+
+// Domains of consumer mail providers. An owner signed up with one of these has no
+// org, so anyone-at-tenant keyed to it would mean "anyone at gmail.com" — the
+// gateway refuses to admit on such a tenant and the share dialog warns/disables.
+const CONSUMER_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com',
+  'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+  'yahoo.com', 'ymail.com',
+  'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'proton.me', 'protonmail.com', 'pm.me',
+  'gmx.com', 'gmx.de', 'gmx.net', 'mail.com', 'zoho.com',
+  'yandex.com', 'yandex.ru', 'qq.com', '163.com', '126.com',
+  'naver.com', 'daum.net', 'web.de', 't-online.de',
+  'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'cox.net',
+]);
+
+export function isConsumerEmailDomain(domain: string): boolean {
+  return CONSUMER_EMAIL_DOMAINS.has(domain.trim().toLowerCase());
 }
 
 // The four app roles (tier 1), highest first. Ranked so a gate "at least admin" is
@@ -193,7 +217,8 @@ export type Manifest = z.infer<typeof manifestSchema>;
 // (for anyone-at-tenant). Persisted when a deploy goes live.
 export interface AppPolicy {
   appId: string;
-  access: AppAccess;
+  access: AppAccess; // effective mode: the dashboard override when set, else the manifest's
+  accessSource: AppAccessSource;
   roles: string[];
   routes: RouteGate[];
   secrets: string[];
@@ -202,8 +227,10 @@ export interface AppPolicy {
 }
 
 // appPolicyFromManifest lifts the enforced sections out of a manifest into the
-// shape the store persists. ownerTenant/updatedAt are filled by the caller.
-export function appPolicyFromManifest(m: Manifest): Omit<AppPolicy, 'appId' | 'ownerTenant' | 'updatedAt'> {
+// shape the store persists. ownerTenant/updatedAt/accessSource are filled by the caller.
+export function appPolicyFromManifest(
+  m: Manifest,
+): Omit<AppPolicy, 'appId' | 'ownerTenant' | 'updatedAt' | 'accessSource'> {
   return {
     access: isAppAccess(m.access ?? '') ? (m.access as AppAccess) : APP_ACCESS.Invited,
     roles: [...(m.roles ?? [])],
@@ -374,6 +401,9 @@ export const deployStatusSchema = z
   .object({
     state: str(),
     url: str(),
+    // A one-line server-side note the CLI relays verbatim (e.g. the dashboard
+    // access override diverging from 280.json). Empty means nothing to say.
+    notice: str(''),
     failure: errorSchema.nullish().transform((v) => v ?? undefined),
   })
   .passthrough();

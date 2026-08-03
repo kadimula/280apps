@@ -81,6 +81,7 @@ class FakeStore {
     this.policies.set(appId, {
       appId,
       access: over.access ?? 'invited',
+      accessSource: over.accessSource ?? 'manifest',
       roles: over.roles ?? [],
       routes: over.routes ?? [],
       secrets: over.secrets ?? [],

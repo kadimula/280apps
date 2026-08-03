@@ -166,14 +166,18 @@ export function migrations(schema: string): string[] {
     // dialog reads roles to offer them. JSON columns default '' so a bad decode is a
     // safe empty, not a broken row.
     `CREATE TABLE IF NOT EXISTS ${t('app_policies')} (
-       app_id       TEXT PRIMARY KEY,
-       access       TEXT NOT NULL DEFAULT 'invited',
-       roles        TEXT NOT NULL DEFAULT '',
-       routes       TEXT NOT NULL DEFAULT '',
-       secrets      TEXT NOT NULL DEFAULT '',
-       owner_tenant TEXT NOT NULL DEFAULT '',
-       updated_at   BIGINT NOT NULL DEFAULT (${epochDefault})
+       app_id          TEXT PRIMARY KEY,
+       access          TEXT NOT NULL DEFAULT 'invited',
+       access_override TEXT NOT NULL DEFAULT '',
+       roles           TEXT NOT NULL DEFAULT '',
+       routes          TEXT NOT NULL DEFAULT '',
+       secrets         TEXT NOT NULL DEFAULT '',
+       owner_tenant    TEXT NOT NULL DEFAULT '',
+       updated_at      BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,
+    // The dashboard's general-access dial: '' = no override (280.json's access
+    // applies); else a valid AppAccess that wins durably across redeploys.
+    `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS access_override TEXT NOT NULL DEFAULT ''`,
 
     // Owner-authorized dashboard preview grants, modeled on device_codes: only the
     // opaque token's hash is stored. The control plane inserts; the gateway reads

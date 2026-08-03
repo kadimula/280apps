@@ -6,7 +6,7 @@
 //
 // Two layers, both fail-closed:
 //   1. Open access. A grant (by email or by org domain) always admits; otherwise
-//      the app's access mode decides — link (any signed-in viewer, as viewer) or
+//      the app's access mode decides — public (anyone, as viewer) or
 //      anyone-at-tenant (viewers whose org matches the owner's). invited denies.
 //   2. Route gate. Every request path resolves to a gate: the most specific
 //      declared route, or the owner-only default for an undeclared one (no
@@ -19,6 +19,7 @@
 import {
   APP_ACCESS,
   appRoleAtLeast,
+  isConsumerEmailDomain,
   resolveRouteGate,
   routeGateSatisfied,
   type AppPolicy,
@@ -161,6 +162,17 @@ export class Authorizer {
     return { allow: true, appId: adm.appId, effective: adm.effective, gate, gateDeclared: declared, viewAsApplied: adm.viewAsApplied };
   }
 
+  // publicAppId reports whether a script resolves to an app whose effective
+  // access mode is public, returning its id (for the anonymous mint) or null.
+  // Missing app and missing policy both answer null: anonymous serving is opt-in
+  // by exactly one stored value, everything else fails closed to the login path.
+  async publicAppId(script: string): Promise<string | null> {
+    const app = await this.store.appByScript(script);
+    if (app === null) return null;
+    const policy = await this.store.appPolicy(app.id);
+    return policy !== null && policy.access === APP_ACCESS.Public ? app.id : null;
+  }
+
   // viewAsAllowed authorizes setting a "view as" preview: it returns the app id when
   // the viewer's real role on the app is admin or above, else null. This is the same
   // real-role check evaluate() re-applies before honoring the cookie.
@@ -174,15 +186,19 @@ export class Authorizer {
 
 // admit decides whether a viewer with real app role `have` may open the app under
 // its access mode, returning the app role to open with (their own, or an implicit
-// 'viewer' for link/anyone-at-tenant openers), or null to deny.
+// 'viewer' for public/anyone-at-tenant openers), or null to deny. A consumer-mail
+// ownerTenant (gmail.com, …) never opens anyone-at-tenant: that dial position
+// would mean "anyone at gmail.com", so it is treated as no-match even if a stale
+// UI let it be set.
 function admit(policy: AppPolicy | null, have: string, viewerTenant: string): string | null {
   if (have !== '') return have;
   const access = policy?.access ?? APP_ACCESS.Invited;
-  if (access === APP_ACCESS.Link) return 'viewer';
+  if (access === APP_ACCESS.Public) return 'viewer';
   if (
     access === APP_ACCESS.AnyoneAtTenant &&
     policy !== null &&
     policy.ownerTenant !== '' &&
+    !isConsumerEmailDomain(policy.ownerTenant) &&
     viewerTenant === policy.ownerTenant
   ) {
     return 'viewer';

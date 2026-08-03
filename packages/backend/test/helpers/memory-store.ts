@@ -8,7 +8,10 @@ import {
   State,
   stateTerminal,
   appPolicyFromManifest,
+  isAppAccess,
   tenantFromEmail,
+  APP_ACCESS,
+  type AppAccess,
   type AppPolicy,
   type DeployError,
   type PreviewGrant,
@@ -42,7 +45,8 @@ export class MemoryStore implements Store {
   private readonly loginRate = new Map<string, { count: number; expiresAt: number }>();
   private readonly previewGrants = new Map<string, PreviewGrant>(); // tokenHash -> grant
   private readonly grants = new Map<string, Grant>(); // `${appId}/${principal}`
-  private readonly policies = new Map<string, AppPolicy>(); // appId -> policy
+  private readonly policies = new Map<string, AppPolicy>(); // appId -> policy (manifest-declared access)
+  private readonly accessOverrides = new Map<string, string>(); // appId -> dashboard override
   private readonly events: Event[] = [];
 
   async close(): Promise<void> {}
@@ -357,6 +361,7 @@ export class MemoryStore implements Store {
     this.policies.set(appId, {
       appId,
       access: policy.access,
+      accessSource: 'manifest',
       roles: policy.roles,
       routes: policy.routes,
       secrets: policy.secrets,
@@ -382,9 +387,34 @@ export class MemoryStore implements Store {
     });
   }
 
+  // Mirrors rowToAppPolicy: the dashboard override wins, unknown modes coerce
+  // to invited (fail closed).
   async appPolicy(appId: string): Promise<AppPolicy | null> {
     const p = this.policies.get(appId);
-    return p ? { ...p, roles: [...p.roles], routes: [...p.routes], secrets: [...p.secrets] } : null;
+    if (!p) return null;
+    const override = this.accessOverrides.get(appId) ?? '';
+    const effective = override !== '' ? override : p.access;
+    return {
+      ...p,
+      access: isAppAccess(effective) ? effective : APP_ACCESS.Invited,
+      accessSource: override !== '' ? 'dashboard' : 'manifest',
+      roles: [...p.roles],
+      routes: [...p.routes],
+      secrets: [...p.secrets],
+    };
+  }
+
+  async setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean> {
+    const current = await this.appPolicy(appId);
+    if (current === null) return false;
+    this.accessOverrides.set(appId, access);
+    this.record({
+      userId: this.userIdFor(appId),
+      appId,
+      kind: EventKind.PolicyAccessChanged,
+      detail: JSON.stringify({ from: current.access, to: access, by: setBy }),
+    });
+    return true;
   }
 
   async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string; kind?: string }): Promise<void> {

@@ -72,6 +72,22 @@ export function __resetJwksCache(): void {
   jwksCache = null;
 }
 
+// The per-isolate anonymous-token cache, keyed by host. Cookieless clients on a
+// public app (curl, crawlers) would otherwise cost one central mint per request;
+// the anonymous identity is the same for all of them, so one token per TTL per
+// isolate serves them all. Bounded by the ~120s token TTL, so flipping the app
+// off public stops anonymous serving within TTL + skew.
+const anonTokenCache = new Map<string, { token: string; exp: number }>();
+
+// Test-only: clears the isolate anonymous-token cache between cases.
+export function __resetAnonTokenCache(): void {
+  anonTokenCache.clear();
+}
+
+// A cached token must outlive the request by a margin, or a token expiring
+// mid-verify would 500 instead of re-minting.
+const ANON_CACHE_MARGIN_SECS = 5;
+
 export async function handleAppRequest(
   request: Request,
   env: AppWorkerEnv,
@@ -119,13 +135,32 @@ export async function handleAppRequest(
   // session cookie ever arrives: refresh from the grant instead, which re-checks
   // it is live and the acting owner is still admin+ on every cycle.
   const previewGrant = readCookie(request, PREVIEW_COOKIE);
+  const sessionToken = readCookie(request, SESSION_COOKIE);
+
+  // A cookieless client (no session, no preview, no id cookie) on a public app is
+  // served from the isolate's cached anonymous token; a cache entry that fails
+  // verification is dropped and the request falls through to a central mint.
+  if (previewGrant === '' && sessionToken === '') {
+    const cached = anonTokenCache.get(host);
+    if (cached !== undefined && cached.exp > now() + ANON_CACHE_MARGIN_SECS) {
+      try {
+        const verified = await verifyToken(cached.token, { host, issuer, skew, gateway, now });
+        const setCookie = serializeCookie(ID_COOKIE, cached.token, { maxAge: cached.exp - now() });
+        return serveGated(request, cached.token, verified, routes, path, deps.container, setCookie);
+      } catch (err) {
+        if (!(err instanceof IdentityError)) throw err;
+        anonTokenCache.delete(host);
+      }
+    }
+  }
+
   let result: MintResult;
   try {
     result =
       previewGrant !== ''
         ? await gateway.mintPreview({ grant: previewGrant, script, host })
         : await gateway.mint({
-            sessionToken: readCookie(request, SESSION_COOKIE),
+            sessionToken,
             viewCookie: readCookie(request, VIEW_COOKIE),
             script,
             host,
@@ -149,6 +184,9 @@ export async function handleAppRequest(
     // A freshly minted token that fails local verification is a key/config mismatch
     // between the gateway and this Worker's JWKS, not a viewer problem.
     return html(errorPage(), 500);
+  }
+  if (verified.claims.anon === true) {
+    anonTokenCache.set(host, { token: result.token, exp: now() + result.ttlSecs });
   }
   const setCookie = serializeCookie(ID_COOKIE, result.token, {
     maxAge: result.ttlSecs,
@@ -221,6 +259,9 @@ async function serveGated(
   const res = await container.fetch(stamped);
   const headers = new Headers(res.headers);
   ownFraming(headers);
+  // Public means unlisted: everything a crawler can fetch is served anonymously,
+  // so stamping the anonymous responses noindex keeps public apps out of search.
+  if (claims.anon === true) headers.set('x-robots-tag', 'noindex');
   if (setCookie !== null) headers.append('set-cookie', setCookie);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }

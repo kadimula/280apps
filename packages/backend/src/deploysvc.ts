@@ -507,6 +507,10 @@ const NOT_SLUG_CHAR = /[^a-z0-9]+/g;
 export function sanitizeSlug(raw: string): string {
   let s = raw.toLowerCase().replace(NOT_SLUG_CHAR, '-');
   s = trimDash(s);
+  // Cloudflare rejects a container application (script) name that starts with a
+  // digit, and the script name is derived from this slug. Prefix before the
+  // length cap so the result stays within 40 chars.
+  if (/^[0-9]/.test(s)) s = 'app-' + s;
   if (s.length > 40) {
     s = trimDash(s.slice(0, 40));
   }

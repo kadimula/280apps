@@ -3,6 +3,11 @@
   "version": "0.4.1",
   "description": "Deploy and share your app. One verb: 280 push.",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kadimula/280apps.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"

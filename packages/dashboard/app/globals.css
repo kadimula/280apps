@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+@theme {
+  /* Surfaces */
+  --color-paper: #ffffff;
+  --color-paper-warm: #faf8f3;
+  --color-ink: #0a0a0a;
+  --color-ink-soft: #171614;
+
+  /* Text */
+  --color-body: #56534c;
+  --color-muted: #78746b;
+
+  /* Links */
+  --color-link: #6b3fc9;
+  --color-link-hover: #52309c;
+
+  /* Hairlines */
+  --color-line: #e9e5da;
+  --color-line-strong: #d7d1c1;
+
+  /* Gold */
+  --color-gold-50: #fbf7ec;
+  --color-gold-100: #f4ead0;
+  --color-gold-200: #e6d3a3;
+  --color-gold-300: #d9bd6e;
+  --color-gold-400: #d4af37;
+  --color-gold-500: #bd962b;
+  --color-gold-600: #98781d;
+
+  /* Terminal card — stays dark in both themes (light-on-dark internals). */
+  --color-terminal: #0a0a0a;
+  --color-terminal-line: transparent;
+
+  /* Type */
+  --font-display: var(--font-oranienbaum), Georgia, serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Decoration values that flip with the theme. Kept as vars (not selectors) so
+   the whole dark theme lives in one token block — one place flips everything. */
+:root {
+  --wash-image:
+    radial-gradient(36% 40% at 20% 16%, rgba(212, 175, 55, 0.165), transparent 70%),
+    radial-gradient(32% 36% at 80% 32%, rgba(201, 168, 96, 0.135), transparent 72%),
+    radial-gradient(44% 42% at 52% 84%, rgba(186, 162, 104, 0.105), transparent 70%);
+  --grain-opacity: 0.28;
+  --selection-bg: var(--color-gold-200);
+  --selection-fg: var(--color-ink);
+}
+
+/* Dark theme. Follows the OS by default; the dev-only toggle overrides it by
+   stamping data-theme on <html>. The token pair (ink = text/emphasis, paper =
+   page surface) flips wholesale; every utility reads it through var(), so
+   nearly the whole page comes along for free. The values live once, applied by
+   two selectors: OS-dark (unless the toggle forced light) and forced-dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-paper: #050505;
+    --color-paper-warm: #0e0e0e;
+    --color-ink: #f4f2ec;
+    --color-ink-soft: #e5e3dc;
+
+    --color-body: #c6c3ba;
+    --color-muted: #8a877e;
+
+    --color-link: #b79cf2;
+    --color-link-hover: #cdb8f7;
+
+    --color-line: #222222;
+    --color-line-strong: #333333;
+
+    --color-gold-500: #d4af37;
+    --color-gold-600: #dcc06f;
+
+    --color-terminal: #141414;
+    --color-terminal-line: rgba(255, 255, 255, 0.08);
+
+    --wash-image: none;
+    --grain-opacity: 0.12;
+    --selection-bg: var(--color-gold-400);
+    --selection-fg: #100f0d;
+  }
+}
+
+:root[data-theme="dark"] {
+  /* Near-pure black, neutral (no warm/brown cast). */
+  --color-paper: #050505;
+  --color-paper-warm: #0e0e0e;
+  --color-ink: #f4f2ec;
+  --color-ink-soft: #e5e3dc;
+
+  --color-body: #c6c3ba;
+  --color-muted: #8a877e;
+
+  --color-link: #b79cf2;
+  --color-link-hover: #cdb8f7;
+
+  --color-line: #222222;
+  --color-line-strong: #333333;
+
+  /* Deep golds go muddy on black; lift the two used as text accents. */
+  --color-gold-500: #d4af37;
+  --color-gold-600: #dcc06f;
+
+  /* Raised off the page so the hero card reads as a panel, not a hole. */
+  --color-terminal: #141414;
+  --color-terminal-line: rgba(255, 255, 255, 0.08);
+
+  /* No warm wash on dark; ease the grain; brighten the selection. */
+  --wash-image: none;
+  --grain-opacity: 0.12;
+  --selection-bg: var(--color-gold-400);
+  --selection-fg: #100f0d;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color-scheme: light;
+  /* Lives on html so the body::before wash paints above the page fill. */
+  background-color: var(--color-paper);
+}
+
+/* color-scheme tracks the same three states as the tokens above. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@keyframes gold-breathe {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.gold-breathe {
+  animation: gold-breathe 14s ease-in-out infinite;
+  transform-origin: 50% 0;
+}
+
+/* Per-page top glow (hardcoded gold radial in the utility) has no place on a
+   dark fill — kill it in both dark states. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .gold-breathe {
+    background-image: none !important;
+  }
+}
+
+:root[data-theme="dark"] .gold-breathe {
+  background-image: none !important;
+}
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Three warm pools drifting under the whole page. Oversized and
+   inset past the viewport so the edges never slide into view. The image flips
+   to none on dark via --wash-image. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--wash-image);
+  animation: wash-drift 52s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Static paper grain, keeps the gradients from banding on wide screens. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+}
+
+@keyframes wash-drift {
+  0%,
+  100% {
+    transform: translate3d(-1.5%, -1%, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(2%, 1.5%, 0) scale(1.07);
+  }
+  66% {
+    transform: translate3d(1%, -2%, 0) scale(1.03);
+  }
+}
+
+::selection {
+  background-color: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-gold-500);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Feature-card animations idle until the card is hovered. Each animation root
+   carries a `{prefix}-root` class; pausing every animated descendant freezes it
+   on its first frame, then hover resumes it. */
+.feature-card [class*="-root"] * {
+  animation-play-state: paused;
+}
+
+.feature-card:hover [class*="-root"] * {
+  animation-play-state: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Looping decoration stops outright rather than running at 0.01ms. */
+  .gold-breathe,
+  body::before {
+    animation: none !important;
+  }
+}

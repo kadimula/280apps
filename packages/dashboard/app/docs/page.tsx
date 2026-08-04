@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 import { InstallCommand } from "@/components/install-command";
 import { SiteHeader } from "@/components/site-header";
-import { setupPromptUrl } from "@/lib/api";
 import { fetchCapabilities, type DocsCapabilities } from "@/lib/docs";
 
 export const metadata: Metadata = {
@@ -138,7 +137,7 @@ export default async function Docs() {
 
 
         <Section title="Ask your agent">
-          <InstallCommand prompt={`Fetch ${setupPromptUrl()} and push`} />
+          <InstallCommand prompt="Fetch 280apps.com/setup.md and push" />
         </Section>
 
         <Section title="CLI">

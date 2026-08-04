@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 
 import { SiteHeader } from "@/components/site-header";
 import { UserMenu } from "@/components/user-menu";
-import { setupPromptUrl } from "@/lib/api";
 import { getApps } from "@/lib/apps";
 import { getMe, logoutHref } from "@/lib/session";
 
@@ -57,7 +56,7 @@ export default async function Dashboard() {
               Tell your agent to push, then reload.
             </p>
             <code className="mt-5 block w-fit rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-2.5 font-mono text-[13px] text-[var(--color-ink)]">
-              Fetch {setupPromptUrl()} and push
+              Fetch 280apps.com/setup.md and push
             </code>
           </div>
         ) : (

@@ -461,10 +461,8 @@ class PgStore implements Store {
     return res.rows.map(rowToEvent);
   }
 
-  // Every app joined to its owner and its effective access mode in one query.
-  // access_override wins over the manifest access (design D5); a missing policy row
-  // (LEFT JOIN null) reads as ''. INNER JOIN on users: owner identity is required,
-  // and every app has an owner.
+  // INNER JOIN on users: owner identity is required, and every app has an owner. A
+  // missing policy row (LEFT JOIN null) reads as ''.
   async allAppsWithOwners(): Promise<AdminAppRow[]> {
     const res = await this.db.query(
       `SELECT ap.id, ap.slug, ap.url, ap.created_at,
@@ -485,8 +483,6 @@ class PgStore implements Store {
     }));
   }
 
-  // Every user with the count of apps they own, computed in one grouped join rather
-  // than a per-user query. created_at is a real column, so it is always present.
   async allUsersWithAppCounts(): Promise<AdminUserRow[]> {
     const res = await this.db.query(
       `SELECT u.id, u.email, u.name, u.image, u.created_at, count(ap.id) AS app_count

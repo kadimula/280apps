@@ -42,7 +42,6 @@ export class MemoryStore implements Store {
   private readonly apps = new Map<string, StoredApp>();
   private readonly deploys = new Map<string, StoredDeploy>(); // `${appId}/${id}`
   private readonly users = new Map<string, User>(); // id -> user
-  private readonly userCreatedAt = new Map<string, number>(); // id -> creation order
   private readonly oauth = new Map<string, OAuthAccount>(); // `${provider}/${providerAccountId}`
   private readonly sessions = new Map<string, Session>(); // tokenHash -> session
   private readonly loginRate = new Map<string, { count: number; expiresAt: number }>();
@@ -80,21 +79,19 @@ export class MemoryStore implements Store {
     return rows;
   }
 
-  // Mirror PgStore.allUsersWithAppCounts: every user with the count of apps they
-  // own, newest-first.
+  // Mirror PgStore.allUsersWithAppCounts. created_at is untracked in the double, so
+  // it reads back null; the real store proves the column in store.test.ts.
   async allUsersWithAppCounts(): Promise<AdminUserRow[]> {
     const counts = new Map<string, number>();
     for (const a of this.apps.values()) counts.set(a.userId, (counts.get(a.userId) ?? 0) + 1);
-    return [...this.users.values()]
-      .sort((x, y) => (this.userCreatedAt.get(y.id) ?? 0) - (this.userCreatedAt.get(x.id) ?? 0) || cmp(x.id, y.id))
-      .map((u) => ({
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        image: u.image,
-        appCount: counts.get(u.id) ?? 0,
-        createdAt: this.userCreatedAt.get(u.id) ?? null,
-      }));
+    return [...this.users.values()].map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      image: u.image,
+      appCount: counts.get(u.id) ?? 0,
+      createdAt: null,
+    }));
   }
 
   private record(e: { userId?: string; appId?: string; kind: string; detail?: string }): void {
@@ -142,7 +139,6 @@ export class MemoryStore implements Store {
     }
     if (this.users.has(u.id)) throw new Error('duplicate user id');
     this.users.set(u.id, { ...u });
-    this.userCreatedAt.set(u.id, this.seq++);
   }
 
   async oauthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null> {

@@ -21,11 +21,10 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
-import { DEFAULT_ADMIN_EMAIL } from '../../src/admin.js';
 import { InProcessActivator } from '../../src/activator.js';
 import { Server } from '../../src/api.js';
 import type { Auth } from '../../src/authsvc.js';
-import type { RequestDeps } from '../../src/config.js';
+import { DEFAULT_ADMIN_EMAIL, type RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
 import { MemoryRuntime } from '../../src/runtime/index.js';

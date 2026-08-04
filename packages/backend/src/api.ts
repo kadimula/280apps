@@ -31,7 +31,6 @@ import {
   type ViewAsTarget,
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
-import { isAdmin } from './admin.js';
 import { docsRoutes } from './docs.js';
 import { sharePage } from './sharepage.js';
 import { Auth, AuthError } from './authsvc.js';
@@ -121,9 +120,7 @@ export class Server {
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
 
-    // Site-wide admin reads for the admin dashboard: every app across all owners and
-    // every user. Session-authenticated by this.route and gated to the admin
-    // allowlist server-side, independently of any frontend check.
+    // Site-wide admin reads: gated server-side by adminUser, not just the frontend.
     app.get('/internal/admin/apps', this.route((c) => this.handleAdminApps(c)));
     app.get('/internal/admin/users', this.route((c) => this.handleAdminUsers(c)));
 
@@ -350,12 +347,11 @@ export class Server {
     });
   }
 
-  // adminUser resolves the browser session and refuses anyone off the site-wide
-  // admin allowlist. The gate is here on the server, not in the frontend: these
-  // endpoints expose every user's data, so a non-admin session is a hard 403.
+  // The one choke point for every admin read: a non-admin session is a hard 403
+  // before any data is read, independent of any frontend check.
   private async adminUser(c: Context<HonoEnv>): Promise<User> {
     const user = await this.sessionUser(c);
-    if (!isAdmin(user.email, this.deps(c).adminEmails)) {
+    if (!this.deps(c).adminEmails.includes(user.email.trim().toLowerCase())) {
       throw forbidden('this endpoint is restricted to 280 administrators');
     }
     return user;

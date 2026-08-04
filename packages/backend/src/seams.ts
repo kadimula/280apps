@@ -141,8 +141,7 @@ export interface Grant {
   grantedAt: number; // unix seconds
 }
 
-// One row of the site-wide admin app listing: an app joined to its owner and its
-// effective access mode. access is '' when the app has no policy row yet.
+// access is '' when the app has no policy row yet.
 export interface AdminAppRow {
   id: string;
   slug: string;
@@ -152,8 +151,7 @@ export interface AdminAppRow {
   owner: { id: string; email: string; name: string };
 }
 
-// One row of the site-wide admin user listing: a user with the count of apps they
-// own. createdAt is null only if the users table has no created_at column.
+// createdAt is null only if the users table has no created_at column.
 export interface AdminUserRow {
   id: string;
   email: string;
@@ -168,10 +166,8 @@ export interface Store {
 
   recentEvents(limit: number): Promise<Event[]>;
 
-  // Cross-tenant admin reads for the site-wide admin dashboard (the API gates them
-  // to admins). Every app with its owner and effective access mode, newest-first,
-  // and every user with the count of apps they own — each a single join, never a
-  // per-user loop.
+  // Cross-tenant admin reads (the API gates them to admins). Each is a single join,
+  // never a per-row loop.
   allAppsWithOwners(): Promise<AdminAppRow[]>;
   allUsersWithAppCounts(): Promise<AdminUserRow[]>;
 

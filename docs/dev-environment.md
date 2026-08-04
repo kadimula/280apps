@@ -16,8 +16,14 @@ committed [`.env.example`](../.env.example) at the repo root.
 | Auth host (identity gateway) | `auth.280apps.run` | `auth-development.280apps.run` |
 | App URLs | `*.280apps.run` | `*-development.280apps.run` |
 | Control-plane API (`TWO80_API`) | `https://api.280apps.com` | `https://api-development.280apps.com` |
-| Frontend origin | `https://www.280apps.com` | `https://www-development.280apps.com` |
+| Frontend origin (dashboard, `TWO80_FRONTEND_ORIGIN`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
+| Frame-ancestors (`TWO80_FRAME_ANCESTORS`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
 | App host suffix (`TWO80_APP_HOST_SUFFIX`) | *(empty)* | `-development` |
+
+Note: the dev dashboard host `dev-console.280apps.com` uses a `dev-` prefix, not the
+`*-development` suffix every other dev host follows. Keep it in sync with wherever the
+dashboard is actually deployed; `TWO80_FRAME_ANCESTORS` must equal that origin or the
+dashboard iframe preview is blocked by CSP.
 
 Container-only serving: each dev app deploys as its own Cloudflare Worker and
 serves at `*-development.280apps.run`; production apps serve at `*.280apps.run`.
@@ -66,7 +72,8 @@ Non-secret (safe to set literally in the dev environment):
 ```sh
 TWO80_RUNTIME=container
 TWO80_API_ORIGIN=https://api-development.280apps.com
-TWO80_FRONTEND_ORIGIN=https://www-development.280apps.com
+TWO80_FRONTEND_ORIGIN=https://dev-console.280apps.com
+TWO80_FRAME_ANCESTORS=https://dev-console.280apps.com
 TWO80_APP_DOMAIN=280apps.run
 TWO80_APP_HOST_SUFFIX=-development
 TWO80_COOKIE_DOMAIN=.280apps.com

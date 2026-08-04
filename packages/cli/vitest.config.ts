@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+
+const { version } = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 // Resolve @280/contracts (and its adapter subpaths) to TS source so tests run
 // without a prior build. Subpath aliases must precede the bare package alias so a
@@ -16,6 +21,7 @@ export default defineConfig({
       { find: '@280/contracts', replacement: contracts('index.ts') },
     ],
   },
+  define: { __CLI_VERSION__: JSON.stringify(version) },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],

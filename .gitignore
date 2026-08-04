@@ -3,7 +3,6 @@ platform/data/
 platform/dispatcher/node_modules/
 .claude/
 .agents/
-.github/
 
 
 # TS rewrite workspace (packages/*)

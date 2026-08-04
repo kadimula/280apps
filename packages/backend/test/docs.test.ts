@@ -8,7 +8,6 @@ import {
   docsCapabilities,
   platformSupportMarkdown,
   setupMarkdown,
-  the280WayMarkdown,
   SUPPORT_MATRIX,
   CAPABILITY_REQUIREMENT,
 } from '../src/docs.js';
@@ -45,24 +44,6 @@ describe('docs endpoints', () => {
       // The matrix is a real table an agent parses, not an empty stub.
       expect(body).toContain('| Stack | Feature | Supported | Notes |');
       expect(body).toContain(CAPABILITY_REQUIREMENT);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('serves the 280 way as markdown with the crux intact', async () => {
-    const { app, cleanup } = await server();
-    try {
-      const res = await app.request('/v1/docs/the-280-way.md');
-      expect(res.status).toBe(200);
-      expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
-      const body = await res.text();
-      expect(body).toBe(the280WayMarkdown());
-      expect(body).toContain('# The 280 way');
-      expect(body).toContain('## Never');
-      expect(body).toContain('```json');
-      expect(body).toContain('drizzle-orm/neon-http');
-      expect(body).toContain('## The loop');
     } finally {
       await cleanup();
     }

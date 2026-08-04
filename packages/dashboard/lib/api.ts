@@ -15,12 +15,6 @@ export function apiBase(): string {
   return base;
 }
 
-// Where an agent fetches the entry prompt to get started, served by the backend
-// as an unauthenticated doc. Derived from the backend so it follows TWO80_API.
-export function setupPromptUrl(): string {
-  return `${apiBase()}/v1/docs/setup.md`;
-}
-
 // apiFetch calls the platform for a path like "/auth/me", forwarding init
 // unchanged, so callers parse .ok / .status / .json() / .text() as they would
 // any fetch.

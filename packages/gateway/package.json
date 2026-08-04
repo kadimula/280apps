@@ -15,10 +15,6 @@
       "types": "./dist/appworker.d.ts",
       "import": "./dist/appworker.js"
     },
-    "./routegate": {
-      "types": "./dist/routegate.d.ts",
-      "import": "./dist/routegate.js"
-    },
     "./cookies": {
       "types": "./dist/cookies.d.ts",
       "import": "./dist/cookies.js"

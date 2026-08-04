@@ -13,7 +13,7 @@ import {
 } from '../src/appworker.js';
 import type { GatewayBinding, JwksDoc, MintInput, MintPreviewInput, MintResult } from '../src/mint.js';
 import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE } from '../src/cookies.js';
-import { IdentitySigner } from '../src/identity.js';
+import { IdentitySigner } from '@280/contracts';
 import { genSigningKey, ISSUER } from './helpers.js';
 
 const HOST = 'renewals.280apps.run';
@@ -93,7 +93,6 @@ function env(gateway: GatewayBinding, over: Partial<AppWorkerEnv> = {}): AppWork
     GATEWAY: gateway,
     TWO80_SCRIPT: 'renewals',
     TWO80_ID_ISSUER: ISSUER,
-    TWO80_ID_SKEW_SECS: '5',
     ...over,
   };
 }

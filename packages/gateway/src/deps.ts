@@ -6,9 +6,9 @@ import { Auth } from '@280/backend/authsvc';
 import { GoogleProvider, EntraProvider, type OidcProvider } from '@280/backend/auth/oidc';
 import { newPgStore } from '@280/backend/store';
 import type { Store } from '@280/backend/seams';
+import { IdentitySigner, publicJwkFromPrivate } from '@280/contracts';
 import { Authorizer } from './access.js';
 import { confineRedirect, Gateway, type Logger } from './gateway.js';
-import { IdentitySigner, publicJwkFromPrivate } from './identity.js';
 import type { ProviderLink } from './pages.js';
 import { readConfig, type Config, type Env } from './config.js';
 

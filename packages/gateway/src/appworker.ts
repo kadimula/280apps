@@ -1,91 +1,86 @@
-// The thin verify-and-forward middleware compiled into every tenant Worker. It holds
-// only the public JWK set (fetched over the GATEWAY service binding and cached) plus
-// pure verify + route-gate logic. It never holds the private signing key, the DB, or
-// OIDC. See gateway-identity-token-design.md §3.
-//
-// Hot path: read the host-only 280_id cookie, verify it locally with zero network
-// (WebCrypto against the cached JWKS), enforce the route gate against the baked policy
-// and the token's roles, stamp X-280-Identity, hand off to the container. Login and
-// token mint/refresh are the only paths that call the central gateway.
+// The verify-and-forward middleware compiled into every tenant Worker. It holds only
+// the public JWK set (fetched over the GATEWAY binding and cached) plus pure verify +
+// route-gate logic: never the private signing key, the DB, or OIDC. See design §3.
 
 import { IdentityVerifier, IdentityError, type VerifiedIdentity } from '@280/contracts/identity';
-import type { RouteGate } from '@280/contracts';
-import { gateForPath } from './routegate.js';
+import { resolveRouteGate, routeGateSatisfied, type RouteGate } from '@280/contracts';
 import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE, VIEW_COOKIE, readCookie, serializeCookie, stampIdentity } from './cookies.js';
 import type { GatewayBinding, MintResult } from './mint.js';
 import { denyPage, errorPage, unavailablePage } from './pages.js';
 
-// Cloudflare edge clocks are NTP-tight; 5s absorbs real jitter without inflating the
-// revocation window (30s TTL + 5s = ~35s bound). It is the practical floor below which
-// benign jitter starts producing false "expired" re-mints.
-const DEFAULT_EDGE_SKEW_SECS = 5;
+const NO_ACCESS = 'Ask the app owner to share it with you, then reload.';
 
-// The public JWKS rarely changes; a 300s cache keeps steady-state verification fully
-// local. An unknown kid (a just-rotated key) forces one immediate refetch, so rotation
-// does not wait out the TTL.
+export interface GateRoles {
+  appRole: string;
+  featureRole: string;
+}
+
+export type GateDecision = { allow: true } | { allow: false; reason: string };
+
+// The two-tier route model against a path with roles already resolved from a verified
+// token (no DB). No declared routes → flat "any admitted viewer reaches everything";
+// once any route is declared, an undeclared path resolves to the owner-only default.
+export function gateForPath(routes: RouteGate[], roles: GateRoles, path: string): GateDecision {
+  if (routes.length === 0) return { allow: true };
+  const { gate, declared } = resolveRouteGate(routes, path);
+  if (routeGateSatisfied(gate, roles)) return { allow: true };
+  return { allow: false, reason: gateDenyReason(gate, declared) };
+}
+
+export function gateDenyReason(gate: RouteGate, declared: boolean): string {
+  if (!declared) return 'This part of the app is limited to the owner.';
+  if (gate.role !== '') return `This needs the "${gate.role}" role. Ask the owner to grant it.`;
+  return NO_ACCESS;
+}
+
+// 5s absorbs benign edge clock jitter without inflating the revocation window
+// (30s TTL + 5s ≈ 35s bound).
+const EDGE_SKEW_SECS = 5;
+
+// An unknown kid (a just-rotated key) forces one immediate refetch, so rotation does
+// not wait out this TTL.
 const JWKS_TTL_SECS = 300;
 
-// The platform-reserved path where the dashboard iframe exchanges its preview
-// grant (?g=) for partitioned cookies. Never forwarded to the container.
 const PREVIEW_PATH = '/__280/preview';
 
-// Outlives the grant on purpose: the server-side expires_at (re-checked on every
-// mint) is authoritative, so a lingering cookie only earns a clean deny.
+// Outlives the grant on purpose: the server-side expires_at (re-checked on every mint)
+// is authoritative, so a lingering cookie only earns a clean deny.
 const PREVIEW_COOKIE_TTL_SECS = 1800;
 
-// The platform, not the builder, decides who may frame an app host: only the 280
-// dashboard origins, applied to every served response in serveGated.
 const FRAME_ANCESTORS = 'https://www.280apps.com https://www-development.280apps.com';
 
 export interface AppWorkerEnv {
-  // This app's App280Container namespace. The harness Worker (not this middleware)
-  // resolves it into the container Fetcher and passes it in via deps.
-  APP?: DurableObjectNamespace;
-  // The service binding to the central gateway (RPC). A reference, never a secret.
   GATEWAY: GatewayBinding;
-  // The app's stable script name, becomes the mint `script`.
   TWO80_SCRIPT?: string;
-  TWO80_APP_HOST_SUFFIX?: string;
-  // The issuer the token must carry; unset skips the issuer check (audience-scoping is
-  // the cross-app firewall regardless).
+  // Unset skips the issuer check; audience-scoping is the cross-app firewall regardless.
   TWO80_ID_ISSUER?: string;
-  // The tight edge-verify skew in seconds; defaults to 5.
-  TWO80_ID_SKEW_SECS?: string;
-  // The baked JSON of appPolicyFromManifest(manifest): { access, roles, routes, secrets }.
-  // Unset means no declared routes (the flat model, open to any admitted viewer). Set
-  // but malformed fails closed.
+  // Baked appPolicyFromManifest JSON. Unset means no declared routes; set but malformed
+  // fails closed.
   TWO80_ROUTE_POLICY?: string;
 }
 
 export interface AppWorkerDeps {
-  // The Fetcher that reaches this app's running container (harness: getContainer(env.APP)).
   container: Fetcher;
-  // Epoch-seconds clock, injected for tests; defaults to wall clock.
   now?: () => number;
 }
 
-// A module-level cache so verification is local across requests in one isolate.
 let jwksCache: { keys: Record<string, JsonWebKey>; exp: number } | null = null;
 
-// Test-only: clears the isolate JWKS cache so each case starts from a fresh binding.
 export function __resetJwksCache(): void {
   jwksCache = null;
 }
 
-// The per-isolate anonymous-token cache, keyed by host. Cookieless clients on a
-// public app (curl, crawlers) would otherwise cost one central mint per request;
-// the anonymous identity is the same for all of them, so one token per TTL per
-// isolate serves them all. Bounded by the ~120s token TTL, so flipping the app
-// off public stops anonymous serving within TTL + skew.
-const anonTokenCache = new Map<string, { token: string; exp: number }>();
+// Cookieless clients on a public app (curl, crawlers) all get the same anonymous
+// identity, so one token per TTL per isolate serves them all. Bounded by the token
+// TTL, so un-publicing an app stops anonymous serving within TTL + skew.
+const anonTokenCache = new Map<string, { token: string; exp: number; verified: VerifiedIdentity }>();
 
-// Test-only: clears the isolate anonymous-token cache between cases.
 export function __resetAnonTokenCache(): void {
   anonTokenCache.clear();
 }
 
-// A cached token must outlive the request by a margin, or a token expiring
-// mid-verify would 500 instead of re-minting.
+// A cached token must outlive the request by a margin, or a token expiring mid-verify
+// would 500 instead of re-minting.
 const ANON_CACHE_MARGIN_SECS = 5;
 
 export async function handleAppRequest(
@@ -98,21 +93,19 @@ export async function handleAppRequest(
   const path = url.pathname;
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
   const issuer = env.TWO80_ID_ISSUER;
-  const skew = intOr(env.TWO80_ID_SKEW_SECS, DEFAULT_EDGE_SKEW_SECS);
+  const skew = EDGE_SKEW_SECS;
   const script = env.TWO80_SCRIPT ?? '';
 
   let routes: RouteGate[];
   try {
     routes = parseRoutes(env.TWO80_ROUTE_POLICY);
   } catch {
-    // A set-but-malformed policy fails closed: serving with unknown gates would be
-    // fail-open. Deploy produces this JSON, so this is a config bug, not a viewer input.
+    // Fail closed: serving with unknown gates would be fail-open. Deploy produces this
+    // JSON, so a malformed policy is a config bug, not viewer input.
     return html(errorPage(), 500);
   }
   const gateway = env.GATEWAY;
 
-  // The preview bootstrap: the dashboard iframe's first hop, carrying the grant in
-  // the URL exactly once before it moves into the partitioned cookie.
   if (path === PREVIEW_PATH) {
     return handlePreviewBootstrap(url, gateway, script, host);
   }
@@ -124,33 +117,24 @@ export async function handleAppRequest(
       const verified = await verifyToken(idCookie, { host, issuer, skew, gateway, now });
       return serveGated(request, idCookie, verified, routes, path, deps.container, null);
     } catch (err) {
-      // Any verification failure (expired, wrong audience, bad signature, unknown key
-      // after a refetch) means there is no usable local token: fall through to mint.
+      // Any verification failure means no usable local token: fall through to mint.
       if (!(err instanceof IdentityError)) throw err;
     }
   }
 
-  // Mint or refresh: resolve the session centrally into a token / login / deny. A
-  // present preview-grant cookie means this is the dashboard iframe, where no
-  // session cookie ever arrives: refresh from the grant instead, which re-checks
-  // it is live and the acting owner is still admin+ on every cycle.
+  // A present preview-grant cookie means the dashboard iframe, where no session cookie
+  // ever arrives: refresh from the grant, which re-checks it is live and the acting
+  // owner is still admin+ on every cycle.
   const previewGrant = readCookie(request, PREVIEW_COOKIE);
   const sessionToken = readCookie(request, SESSION_COOKIE);
 
-  // A cookieless client (no session, no preview, no id cookie) on a public app is
-  // served from the isolate's cached anonymous token; a cache entry that fails
-  // verification is dropped and the request falls through to a central mint.
+  // A cookieless client on a public app is served from the isolate's cached anonymous
+  // token by a plain expiry check; the identity was verified when the token was minted.
   if (previewGrant === '' && sessionToken === '') {
     const cached = anonTokenCache.get(host);
     if (cached !== undefined && cached.exp > now() + ANON_CACHE_MARGIN_SECS) {
-      try {
-        const verified = await verifyToken(cached.token, { host, issuer, skew, gateway, now });
-        const setCookie = serializeCookie(ID_COOKIE, cached.token, { maxAge: cached.exp - now() });
-        return serveGated(request, cached.token, verified, routes, path, deps.container, setCookie);
-      } catch (err) {
-        if (!(err instanceof IdentityError)) throw err;
-        anonTokenCache.delete(host);
-      }
+      const setCookie = serializeCookie(ID_COOKIE, cached.token, { maxAge: cached.exp - now() });
+      return serveGated(request, cached.token, cached.verified, routes, path, deps.container, setCookie);
     }
   }
 
@@ -186,21 +170,19 @@ export async function handleAppRequest(
     return html(errorPage(), 500);
   }
   if (verified.claims.anon === true) {
-    anonTokenCache.set(host, { token: result.token, exp: now() + result.ttlSecs });
+    anonTokenCache.set(host, { token: result.token, exp: now() + result.ttlSecs, verified });
   }
   const setCookie = serializeCookie(ID_COOKIE, result.token, {
     maxAge: result.ttlSecs,
-    // A cookie set from inside the cross-site iframe must be partitioned or the
-    // browser drops it, which would re-mint on every single request.
+    // A cookie set from inside the cross-site iframe must be partitioned (CHIPS) or the
+    // browser drops it, which would re-mint on every request.
     partitioned: previewGrant !== '',
   });
   return serveGated(request, result.token, verified, routes, path, deps.container, setCookie);
 }
 
-// handlePreviewBootstrap exchanges ?g=<grant> for the two partitioned cookies (the
-// grant reference and a first identity token), then bounces to the target path so
-// the grant never lingers in the iframe's address. Everything the grant authorizes
-// is decided centrally in mintPreview; a dead grant is a plain deny page.
+// Exchanges ?g=<grant> for the two partitioned cookies, then bounces to the target
+// path so the grant never lingers in the iframe's address. A dead grant is a plain deny.
 async function handlePreviewBootstrap(
   url: URL,
   gateway: GatewayBinding,
@@ -220,7 +202,7 @@ async function handlePreviewBootstrap(
     return html(denyPage(result.kind === 'deny' ? result.reason : 'This preview is not available.'), 403);
   }
 
-  const headers = new Headers({ location: confinePath(url.searchParams.get('to') ?? '') });
+  const headers = new Headers({ location: sameOriginPathOrRoot(url.searchParams.get('to') ?? '') });
   headers.append(
     'set-cookie',
     serializeCookie(PREVIEW_COOKIE, grant, { maxAge: PREVIEW_COOKIE_TTL_SECS, partitioned: true }),
@@ -232,16 +214,13 @@ async function handlePreviewBootstrap(
   return new Response(null, { status: 302, headers });
 }
 
-// Only a same-origin absolute path may be the bootstrap's landing: anything else
-// ("//evil", "https://…", relative) collapses to the app root.
-function confinePath(raw: string): string {
+// Anything but a same-origin absolute path ("//evil", "https://…", relative) collapses
+// to the app root.
+function sameOriginPathOrRoot(raw: string): string {
   if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
   return raw;
 }
 
-// serveGated enforces the route gate against the token's roles, then stamps the raw
-// token as X-280-Identity and forwards to the container. A minted-this-request token is
-// delivered back as the host-only 280_id cookie via setCookie.
 async function serveGated(
   request: Request,
   token: string,
@@ -259,17 +238,16 @@ async function serveGated(
   const res = await container.fetch(stamped);
   const headers = new Headers(res.headers);
   ownFraming(headers);
-  // Public means unlisted: everything a crawler can fetch is served anonymously,
-  // so stamping the anonymous responses noindex keeps public apps out of search.
+  // Public means unlisted: stamping anonymous responses noindex keeps public apps out
+  // of search.
   if (claims.anon === true) headers.set('x-robots-tag', 'noindex');
   if (setCookie !== null) headers.append('set-cookie', setCookie);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
-// ownFraming makes who-may-frame-an-app-host a platform guarantee: any
-// container-supplied X-Frame-Options or frame-ancestors is replaced with the 280
-// dashboard origins, so a builder's headers can neither break the dashboard embed
-// nor open the app to other embedders. Other CSP directives the app set survive.
+// Who-may-frame-an-app-host is a platform guarantee: any container-supplied
+// X-Frame-Options or frame-ancestors is replaced with the 280 dashboard origins. Other
+// CSP directives the app set survive.
 function ownFraming(headers: Headers): void {
   headers.delete('x-frame-options');
   const kept = (headers.get('content-security-policy') ?? '')
@@ -318,17 +296,11 @@ async function getJwks(
   return keys;
 }
 
-// parseRoutes reads the baked policy JSON and returns its route gates. Unset → no
-// routes (flat, open model). Malformed JSON throws so the caller can fail closed.
+// Unset → no routes (flat, open model). Malformed JSON throws so the caller fails closed.
 function parseRoutes(raw: string | undefined): RouteGate[] {
   if (raw === undefined || raw === '') return [];
   const parsed = JSON.parse(raw) as { routes?: unknown };
   return Array.isArray(parsed.routes) ? (parsed.routes as RouteGate[]) : [];
-}
-
-function intOr(v: string | undefined, fallback: number): number {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 function html(body: string, status: number): Response {

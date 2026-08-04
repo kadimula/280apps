@@ -18,10 +18,8 @@ function isolate(env: Env): GatewayStatics {
   return statics;
 }
 
-// GatewayRPC is the mint/jwks surface the per-app Workers call over a service binding
-// (never a public HTTP path, so the mint decision is unreachable from the auth-host
-// route). It reuses the same isolate statics and per-call request-scoped store as the
-// fetch handler; nothing of the private key, DB, or OIDC leaves this Worker.
+// The mint/jwks surface per-app Workers call over a service binding, never a public
+// HTTP path, so the mint decision is unreachable from the auth-host route.
 export class GatewayRPC extends WorkerEntrypoint<Env> {
   async mint(input: MintInput): Promise<MintResult> {
     const { gateway, close } = requestGateway(isolate(this.env));

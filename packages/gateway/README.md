@@ -113,10 +113,9 @@ change.
   through the `Store` seam: `appByScript` resolves the host label to an app id,
   then a grant lookup on the viewer's email and their `domain:<org>` decides. Any
   match allows; none is a hard deny, and a missing app denies identically so app
-  existence is not probeable. `admit` decides admission for `mint`; `evaluate`
-  additionally applies route gates and is the reference the app Worker's local
-  gating (`routegate.ts`) mirrors.
-- **Route gating** happens in the app Worker (`appworker.ts` + `routegate.ts`)
+  existence is not probeable. `admit` decides admission for `mint`, with no path;
+  route gating is applied later and locally by the app Worker.
+- **Route gating** happens in the app Worker (`appworker.ts` `gateForPath`)
   against the baked policy and the token's roles, so one 30s token serves many
   paths without a central round-trip.
 

@@ -1,25 +1,21 @@
-// The gateway: the central identity authority on *.280apps.run. It serves the auth
-// host (OIDC handshake, JWKS, view-as, logout) over HTTP and, over a service binding,
-// mints signed identity tokens for the per-app Workers (mintForApp). App hosts are
-// served by each app's own Worker (appworker.ts), which calls mintForApp; the gateway
-// never proxies app traffic itself. The OIDC handshake is the control plane's Auth
-// service (reused), configured only with the gateway's app-host redirect guard. See
-// README.md for the flow.
+// The central identity authority on *.280apps.run: it serves the auth host (OIDC,
+// JWKS, view-as, logout) over HTTP and mints signed identity tokens for the per-app
+// Workers over a service binding. App hosts are served by their own Workers, which
+// call mintForApp; the gateway never proxies app traffic. See README.md.
 
 import { createHash } from 'node:crypto';
 import type { Auth } from '@280/backend/authsvc';
 import { AuthError } from '@280/backend/authsvc';
 import type { PreviewGrant, User } from '@280/backend/seams';
-import { tenantFromEmail } from '@280/contracts';
+import { IdentitySigner, tenantFromEmail } from '@280/contracts';
 import { Authorizer, type EffectiveGrant, type ViewAs } from './access.js';
 import { classifyHost, type HostConfig } from './hosts.js';
-import { IdentitySigner } from './identity.js';
 import { denyPage, errorPage, loginPage, type ProviderLink } from './pages.js';
 import { readCookie, SESSION_COOKIE, STATE_COOKIE, VIEW_COOKIE } from './cookies.js';
 import type { MintInput, MintPreviewInput, MintResult } from './mint.js';
 
-// The audit seam the gateway writes access decisions through. The pg Store
-// satisfies it; injected so the proxy stays unit-testable and audit stays optional.
+// The audit seam the gateway writes access decisions through; injected so audit stays
+// optional and the gateway unit-testable.
 export interface AccessAudit {
   recordAppAccess(e: {
     appId: string;
@@ -30,8 +26,7 @@ export interface AccessAudit {
   }): Promise<void>;
 }
 
-// The store slice mintPreview reads: the hashed grant plus the users it resolves
-// into identities. The full pg Store satisfies it structurally.
+// The store slice mintPreview reads: the hashed grant plus the users it resolves.
 export interface PreviewStore {
   previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null>;
   userById(id: string): Promise<User | null>;
@@ -90,9 +85,8 @@ export class Gateway {
     const url = new URL(request.url);
     const kind = classifyHost(url.hostname, this.o.hosts);
     if (kind.kind === 'auth') return this.handleAuthHost(request, url);
-    // App hosts are served by each app's own Worker, not this gateway; a request
-    // for one reaching here is misrouted and is not found.
-    return Promise.resolve(notFound(request));
+    // App hosts are served by their own Workers; one reaching here is misrouted.
+    return Promise.resolve(notFound());
   }
 
   // The OIDC dance lives on one fixed host because an IdP redirect_uri must be a
@@ -111,7 +105,7 @@ export class Gateway {
     if (callback !== null && request.method === 'GET') return this.handleCallback(request, url, callback);
 
     if (path === '/logout') return this.handleLogout(request, url);
-    return notFound(request);
+    return notFound();
   }
 
   private handleLogin(url: URL): Response {
@@ -167,13 +161,12 @@ export class Gateway {
     return new Response(null, { status: 303, headers });
   }
 
-  // handleViewAs is how the share dialog's "View as" button previews the app as a
-  // role. It sets a scoped preview cookie only after confirming the signed-in viewer
-  // is admin or above on the app, then bounces to the app; the app-host path re-checks
-  // that real role before honoring the cookie, so the cookie alone grants nothing.
-  // as = "clear" | "app:<role>" | "role:<featureRole>".
+  // The share dialog's "View as": sets a scoped preview cookie only after confirming
+  // the signed-in viewer is admin or above, then bounces to the app; the app-host path
+  // re-checks that real role before honoring the cookie, so the cookie alone grants
+  // nothing. as = "clear" | "app:<role>" | "role:<featureRole>".
   private async handleViewAs(request: Request, url: URL): Promise<Response> {
-    const viewer = await this.resolveViewer(request);
+    const viewer = await this.viewerFromToken(readCookie(request, SESSION_COOKIE));
     if (viewer === null) return this.loginBounce(url.toString());
 
     const script = url.searchParams.get('app') ?? '';
@@ -207,18 +200,13 @@ export class Gateway {
     });
   }
 
-  // mintForApp is the container-only decision service, called over the service binding
-  // by an app Worker (never a proxy hop). It resolves the viewer from the session,
-  // decides admission (DB), and on success mints an identity token audience-scoped to
-  // the app host. Route gating is NOT done here — the app Worker enforces it locally
-  // per path against the token's roles, so one 30s token serves many paths.
+  // The decision service an app Worker calls over the service binding: resolve viewer,
+  // decide admission, mint an app-scoped token. Route gating is enforced later, locally.
   async mintForApp(input: MintInput): Promise<MintResult> {
     const viewer = await this.viewerFromToken(input.sessionToken);
     if (viewer === null) {
-      // A public app serves its no-session visitors with a signed anonymous
-      // identity instead of the sign-in page. Signed-in visitors never take this
-      // branch: they flow through admit() below with their real identity, so
-      // grants still elevate on a public app.
+      // A public app serves no-session visitors a signed anonymous identity. Signed-in
+      // visitors skip this branch, so a grant still elevates them on a public app.
       const publicAppId = await this.o.authz.publicAppId(input.script);
       if (publicAppId !== null) return this.signAnonymous(publicAppId, input.host);
 
@@ -234,8 +222,7 @@ export class Gateway {
       return { kind: 'deny', reason: adm.reason };
     }
 
-    // A mint is a coarse "opened the app" event (≤ once per token TTL per viewer/app),
-    // the container-only replacement for the per-navigation proxy audit.
+    // A mint is a coarse "opened the app" event, at most once per token TTL per viewer.
     await this.audit(adm.appId, viewer.email, true, {
       appRole: adm.effective.appRole,
       role: adm.effective.featureRole,
@@ -245,11 +232,9 @@ export class Gateway {
     return this.signIdentity(viewer, adm.appId, adm.effective, input.host);
   }
 
-  // mintPreview is mintForApp's sibling for the dashboard iframe: the viewer is
-  // proven not by a session cookie (none rides into a cross-site frame) but by an
-  // owner-authorized preview grant on the shared store. Every call — including
-  // each self-refresh past the token TTL — re-checks the grant is live and the
-  // acting owner is still admin+, so revocation and demotion stop a running preview.
+  // mintForApp's sibling for the dashboard iframe: the viewer is proven by an
+  // owner-authorized preview grant, re-checked live and admin+ on every refresh, so
+  // revocation and demotion stop a running preview.
   async mintPreview(input: MintPreviewInput): Promise<MintResult> {
     const store = this.o.previewStore;
     if (store === undefined || input.grant === '') return previewDeny();
@@ -266,12 +251,7 @@ export class Gateway {
     const appId = await this.o.authz.viewAsAllowed(input.script, owner.email);
     if (appId === null || appId !== grant.appId) return previewDeny();
 
-    const ownerViewer: VerifiedViewer = {
-      id: owner.id,
-      email: owner.email,
-      name: owner.name,
-      tenant: tenantFromEmail(owner.email),
-    };
+    const ownerViewer = this.toViewer(owner);
 
     if (grant.viewAs.kind === 'user') {
       return this.mintPreviewAsUser(ownerViewer, grant.viewAs.email, input);
@@ -295,10 +275,8 @@ export class Gateway {
     return this.signIdentity(ownerViewer, adm.appId, adm.effective, input.host);
   }
 
-  // A "view as user" preview renders as the target through the app's normal
-  // admission decision, so the owner sees exactly what that person would see —
-  // including a denial. A target with no users row yet gets a minimal synthesized
-  // identity (email as the stable subject, name from the local part).
+  // Renders as the target through normal admission, so the owner sees exactly what that
+  // person would, including a denial. A target with no users row gets a synthesized id.
   private async mintPreviewAsUser(
     owner: VerifiedViewer,
     targetEmail: string,
@@ -307,7 +285,7 @@ export class Gateway {
     const targetUser = await this.o.previewStore!.userByEmail(targetEmail);
     const target: VerifiedViewer =
       targetUser !== null
-        ? { id: targetUser.id, email: targetUser.email, name: targetUser.name, tenant: tenantFromEmail(targetUser.email) }
+        ? this.toViewer(targetUser)
         : {
             id: targetEmail,
             email: targetEmail,
@@ -320,8 +298,7 @@ export class Gateway {
       await this.audit(adm.appId, target.email, false, { reason: adm.reason, by: owner.email, as: target.email });
       return { kind: 'deny', reason: adm.reason };
     }
-    // The impersonation trail: who rendered as whom, always, for every allowed
-    // user view-as mint.
+    // The impersonation trail: who rendered as whom, for every allowed user view-as mint.
     await this.audit(
       adm.appId,
       target.email,
@@ -337,11 +314,9 @@ export class Gateway {
     return this.signIdentity(target, adm.appId, adm.effective, input.host);
   }
 
-  // The anonymous identity for a public app's no-session visitors: a well-formed
-  // viewer-role identity (anon: true, empty email) so apps and route gates work
-  // unchanged. Deliberately not audited per visit: the access log answers "who",
-  // anonymous has no who, and crawlers would write unbounded rows — the mode
-  // change itself is audited (policy.access_changed).
+  // A well-formed viewer-role identity (anon: true, empty email) so apps and route
+  // gates work unchanged. Not audited per visit: anonymous has no "who" and crawlers
+  // would write unbounded rows; the mode change itself is audited instead.
   private async signAnonymous(appId: string, host: string): Promise<MintResult> {
     const token = await this.o.signer.sign({
       sub: 'anon',
@@ -378,10 +353,7 @@ export class Gateway {
     return { kind: 'token', token, ttlSecs: this.o.signer.ttlSeconds };
   }
 
-  // Access is audited only for top-level navigations (document requests), not every
-  // asset/API hit a page fans out, so the log answers "who opened this app when"
-  // without one page view becoming dozens of rows. Best-effort: a failed write is
-  // logged and swallowed, never surfaced to the viewer.
+  // Best-effort: a failed write is logged and swallowed, never surfaced to the viewer.
   private async audit(
     appId: string,
     principal: string,
@@ -397,15 +369,13 @@ export class Gateway {
     }
   }
 
-  private resolveViewer(request: Request): Promise<VerifiedViewer | null> {
-    return this.viewerFromToken(readCookie(request, SESSION_COOKIE));
-  }
-
   private async viewerFromToken(sessionToken: string): Promise<VerifiedViewer | null> {
     const user = await this.o.auth.me(sessionToken);
-    return user === null
-      ? null
-      : { id: user.id, email: user.email, name: user.name, tenant: tenantFromEmail(user.email) };
+    return user === null ? null : this.toViewer(user);
+  }
+
+  private toViewer(user: User): VerifiedViewer {
+    return { id: user.id, email: user.email, name: user.name, tenant: tenantFromEmail(user.email) };
   }
 
   private confineRedirect(raw: string): string {
@@ -465,9 +435,8 @@ export function confineRedirect(raw: string, hosts: HostConfig): string {
   return u.toString();
 }
 
-// The view cookie is a compact url-encoded JSON of {script, appRole, role}. Parsing
-// tolerates any malformed value as "no preview" — a bad cookie must never break
-// serving.
+// A url-encoded JSON {script, appRole, role}; any malformed value is "no preview", so
+// a bad cookie never breaks serving.
 function parseViewCookie(raw: string): ViewAs | null {
   if (raw === '') return null;
   try {
@@ -483,9 +452,7 @@ function encodeView(v: ViewAs): string {
   return encodeURIComponent(JSON.stringify(v));
 }
 
-// parseViewTarget reads the /view-as `as` param: "app:<role>" previews an app role,
-// "role:<featureRole>" previews a feature role (at viewer app-level). Unknown forms
-// yield null.
+// The /view-as `as` param: "app:<role>" or "role:<featureRole>"; unknown forms null.
 function parseViewTarget(script: string, as: string): ViewAs | null {
   if (as.startsWith('app:')) {
     const role = as.slice('app:'.length);
@@ -520,13 +487,7 @@ function text(body: string, status = 200): Response {
   return new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } });
 }
 
-function notFound(request: Request): Response {
-  if (request.headers.get('accept')?.includes('application/json')) {
-    return new Response(JSON.stringify({ error: 'app_not_found' }), {
-      status: 404,
-      headers: { 'content-type': 'application/json' },
-    });
-  }
+function notFound(): Response {
   return new Response('This link is wrong, or the app was deleted.\n', {
     status: 404,
     headers: { 'content-type': 'text/plain; charset=utf-8' },

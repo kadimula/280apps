@@ -1,39 +1,18 @@
-// Authorization: the gateway's answer to "may this viewer open this app, and may
-// they reach this path?" — the enforced core of the two-tier permission model
-// (design §5.4, §07). It runs before the identity token is minted, and it is
-// unbypassable because the container has no ingress but its app Worker, which
-// forwards only a gateway-minted, locally-verified identity.
-//
-// Two layers, both fail-closed:
-//   1. Open access. A grant (by email or by org domain) always admits; otherwise
-//      the app's access mode decides — public (anyone, as viewer) or
-//      anyone-at-tenant (viewers whose org matches the owner's). invited denies.
-//   2. Route gate. Every request path resolves to a gate: the most specific
-//      declared route, or the owner-only default for an undeclared one (no
-//      unguarded route). The viewer's effective app/feature role must satisfy it.
-//
-// "View as" lets an owner/admin preview the app as a lower role; it only ever
-// changes what they see, never a stored grant, and is honored only when their real
-// role is admin or above.
+// Admission: may this viewer open this app, and at what effective role? The enforced
+// core of the two-tier model (design §5.4). A grant admits; otherwise the access mode
+// decides (public, or anyone-at-tenant). Route gating is enforced later, per path.
 
 import {
   APP_ACCESS,
   appRoleAtLeast,
   isConsumerEmailDomain,
-  resolveRouteGate,
-  routeGateSatisfied,
   type AppPolicy,
-  type RouteGate,
 } from '@280/contracts';
 import type { Grant } from '@280/backend/seams';
 import type { VerifiedViewer } from './gateway.js';
-import { gateDenyReason } from './routegate.js';
 
 const NO_ACCESS = 'Ask the app owner to share it with you, then reload.';
 
-// The access the gateway resolved for one viewer on one app: the effective app role
-// and feature role that drive gating and get minted into the identity, plus the
-// advisory data scope.
 export interface EffectiveGrant {
   appRole: string;
   featureRole: string;
@@ -42,50 +21,23 @@ export interface EffectiveGrant {
 
 const EMPTY_EFFECTIVE: EffectiveGrant = { appRole: '', featureRole: '', dataScope: null };
 
-// The gate reported for an app that declares no routes: satisfied by any admitted
-// viewer. Never used for matching, only to describe the decision.
-const OPEN_GATE: RouteGate = { path: '', appRole: '', role: '' };
-
-// A preview request parsed from the 280_view cookie: show the app as this app role
-// and/or feature role. Honored only when the real viewer is admin or above.
+// A preview target from the 280_view cookie, honored only when the real viewer is
+// admin or above.
 export interface ViewAs {
   script: string;
   appRole: string;
   role: string;
 }
 
-// The store slice the authorizer needs. The full pg Store satisfies it
-// structurally; a test double implements just these three.
 export interface AccessReader {
   appByScript(script: string): Promise<{ id: string } | null>;
   grant(appId: string, principal: string): Promise<Grant | null>;
   appPolicy(appId: string): Promise<AppPolicy | null>;
 }
 
-export type Authorization =
-  | { allow: false; reason: string; appId: string; effective: EffectiveGrant; viewAsApplied: boolean }
-  | {
-      allow: true;
-      appId: string;
-      effective: EffectiveGrant;
-      gate: RouteGate;
-      gateDeclared: boolean;
-      viewAsApplied: boolean;
-    };
-
-export interface AuthzInput {
-  viewer: VerifiedViewer;
-  script: string;
-  host: string;
-  path: string;
-  viewAs: ViewAs | null;
-}
-
-// The admission decision, split out of evaluate() so the central gateway can mint an
-// identity token from it WITHOUT a path (route gating is enforced later, locally, in
-// the app Worker against the token's roles). Admission needs the grants DB; route
-// gating is pure and per-path, so keeping them separate is what lets one minted token
-// serve many paths while gating stays real-time at the edge.
+// The admission decision, carried to the mint site WITHOUT a path: route gating is
+// enforced later and locally in the app Worker against the token's roles, so one
+// minted token serves many paths while gating stays real-time at the edge.
 export type Admission =
   | { allow: false; reason: string; appId: string; effective: EffectiveGrant; viewAsApplied: boolean }
   | { allow: true; appId: string; effective: EffectiveGrant; viewAsApplied: boolean };
@@ -93,8 +45,6 @@ export type Admission =
 export class Authorizer {
   constructor(private readonly store: AccessReader) {}
 
-  // admit resolves whether a viewer may open an app at all, and the effective grant
-  // (app/feature role, scope) to snapshot into the identity token. No route gating.
   async admit(input: { viewer: VerifiedViewer; script: string; viewAs: ViewAs | null }): Promise<Admission> {
     const app = await this.store.appByScript(input.script);
     // A missing app denies identically to a missing grant, so an outsider cannot
@@ -108,16 +58,13 @@ export class Authorizer {
       this.store.appPolicy(app.id),
     ]);
 
-    // Open access: a real grant always admits; otherwise the access mode may admit
-    // the viewer at an implicit viewer role. No admission → hard deny.
     const openRole = admit(policy, real.appRole, input.viewer.tenant);
     if (openRole === null) {
       return { allow: false, reason: NO_ACCESS, appId: app.id, effective: real, viewAsApplied: false };
     }
     const admitted: EffectiveGrant = { ...real, appRole: openRole };
 
-    // View-as overrides what an owner/admin sees, for this app only. Gated on the
-    // REAL app role so a lower-privileged cookie has no effect.
+    // Gated on the REAL app role, so a lower-privileged cookie has no effect.
     const useViewAs =
       input.viewAs !== null &&
       input.viewAs.script === input.script &&
@@ -129,43 +76,8 @@ export class Authorizer {
     return { allow: true, appId: app.id, effective, viewAsApplied: useViewAs };
   }
 
-  async evaluate(input: AuthzInput): Promise<Authorization> {
-    const adm = await this.admit({ viewer: input.viewer, script: input.script, viewAs: input.viewAs });
-    if (!adm.allow) {
-      return {
-        allow: false,
-        reason: adm.reason,
-        appId: adm.appId,
-        effective: adm.effective,
-        viewAsApplied: adm.viewAsApplied,
-      };
-    }
-
-    // Route gating is enforced here for the in-process path and, in the container-only
-    // model, locally in the app Worker (gateSatisfiesPath) against the token's roles.
-    const policy = await this.store.appPolicy(adm.appId);
-    const routes = policy?.routes ?? [];
-    if (routes.length === 0) {
-      return { allow: true, appId: adm.appId, effective: adm.effective, gate: OPEN_GATE, gateDeclared: true, viewAsApplied: adm.viewAsApplied };
-    }
-    const { gate, declared } = resolveRouteGate(routes, input.path);
-    if (!routeGateSatisfied(gate, adm.effective)) {
-      return {
-        allow: false,
-        reason: gateDenyReason(gate, declared),
-        appId: adm.appId,
-        effective: adm.effective,
-        viewAsApplied: adm.viewAsApplied,
-      };
-    }
-
-    return { allow: true, appId: adm.appId, effective: adm.effective, gate, gateDeclared: declared, viewAsApplied: adm.viewAsApplied };
-  }
-
-  // publicAppId reports whether a script resolves to an app whose effective
-  // access mode is public, returning its id (for the anonymous mint) or null.
-  // Missing app and missing policy both answer null: anonymous serving is opt-in
-  // by exactly one stored value, everything else fails closed to the login path.
+  // Missing app and missing policy both answer null: anonymous serving is opt-in by
+  // exactly one stored value, everything else fails closed to the login path.
   async publicAppId(script: string): Promise<string | null> {
     const app = await this.store.appByScript(script);
     if (app === null) return null;
@@ -173,9 +85,7 @@ export class Authorizer {
     return policy !== null && policy.access === APP_ACCESS.Public ? app.id : null;
   }
 
-  // viewAsAllowed authorizes setting a "view as" preview: it returns the app id when
-  // the viewer's real role on the app is admin or above, else null. This is the same
-  // real-role check evaluate() re-applies before honoring the cookie.
+  // The same real-role check admit() re-applies before honoring a view-as cookie.
   async viewAsAllowed(script: string, email: string): Promise<string | null> {
     const app = await this.store.appByScript(script);
     if (app === null) return null;
@@ -184,12 +94,8 @@ export class Authorizer {
   }
 }
 
-// admit decides whether a viewer with real app role `have` may open the app under
-// its access mode, returning the app role to open with (their own, or an implicit
-// 'viewer' for public/anyone-at-tenant openers), or null to deny. A consumer-mail
-// ownerTenant (gmail.com, …) never opens anyone-at-tenant: that dial position
-// would mean "anyone at gmail.com", so it is treated as no-match even if a stale
-// UI let it be set.
+// A consumer-mail ownerTenant (gmail.com, …) never opens anyone-at-tenant: that dial
+// position would mean "anyone at gmail.com", so it is treated as no-match.
 function admit(policy: AppPolicy | null, have: string, viewerTenant: string): string | null {
   if (have !== '') return have;
   const access = policy?.access ?? APP_ACCESS.Invited;
@@ -206,10 +112,8 @@ function admit(policy: AppPolicy | null, have: string, viewerTenant: string): st
   return null;
 }
 
-// resolveEffectiveGrant merges the grants that could name this viewer — their exact
-// address and their org by domain — into one effective grant: the higher app role
-// wins, and the more specific (direct email) grant supplies the feature role and
-// data scope, falling back to the domain grant.
+// The higher app role wins; the more specific (direct email) grant supplies the
+// feature role and data scope, falling back to the domain grant.
 export async function resolveEffectiveGrant(
   store: AccessReader,
   appId: string,
@@ -231,8 +135,6 @@ export async function resolveEffectiveGrant(
   };
 }
 
-// The principals a grant could name this viewer under: their exact address and,
-// when the address has one, their org by domain.
 function grantPrincipals(email: string): string[] {
   const at = email.lastIndexOf('@');
   const principals = [email];

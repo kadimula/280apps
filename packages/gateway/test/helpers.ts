@@ -7,7 +7,7 @@ import type { OidcIdentity, OidcProvider } from '@280/backend/auth/oidc';
 import type { AppPolicy, Grant, PreviewGrant, Session, Store, User, OAuthAccount } from '@280/backend/seams';
 import { Authorizer } from '../src/access.js';
 import { confineRedirect, Gateway, type GatewayOptions } from '../src/gateway.js';
-import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '../src/identity.js';
+import { IdentitySigner, IdentityVerifier, publicJwkFromPrivate } from '@280/contracts';
 import type { ProviderLink } from '../src/pages.js';
 
 const APP_DOMAIN = '280apps.run';

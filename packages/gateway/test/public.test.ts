@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { APP_DOMAIN, ISSUER, newGateway, signIn } from './helpers.js';
-import { IdentityVerifier } from '../src/identity.js';
+import { IdentityVerifier } from '@280/contracts';
 
 const HOST = `renewals.${APP_DOMAIN}`;
 
@@ -101,7 +101,7 @@ describe('public app, signed-in visitor (D3: no anonymizing branch)', () => {
 
 describe('anonymous identity verification rules', () => {
   it('rejects an empty email on a non-anonymous token (the relaxation is anon-only)', async () => {
-    const { IdentitySigner } = await import('../src/identity.js');
+    const { IdentitySigner } = await import('@280/contracts');
     const { genSigningKey } = await import('./helpers.js');
     const { privateJwk, publicJwks, kid } = await genSigningKey();
     const signer = new IdentitySigner({ kid, privateJwk, issuer: ISSUER, ttlSecs: 120 });

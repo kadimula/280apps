@@ -53,9 +53,6 @@ const DEFAULT_APP_DOMAIN = '280apps.run';
 // decision is never a public HTTP path.
 const GATEWAY_BINDING = 'GATEWAY';
 const GATEWAY_ENTRYPOINT = 'GatewayRPC';
-// The tight edge-verify skew baked into each app Worker: with the 30s mint TTL it
-// bounds revocation to ~35s while absorbing benign edge clock jitter (design §1).
-const EDGE_SKEW_SECS = '5';
 
 export interface RegistryBuilderConfig {
   accountId: string;
@@ -215,7 +212,6 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,
         TWO80_APP_DOMAIN: this.appDomain,
         TWO80_ID_ISSUER: this.idIssuer,
-        TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
       },
     };
   }

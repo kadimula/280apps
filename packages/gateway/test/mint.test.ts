@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { APP_DOMAIN, ISSUER, newGateway, signIn } from './helpers.js';
-import { IdentityVerifier } from '../src/identity.js';
+import { IdentityVerifier } from '@280/contracts';
 
 const HOST = `renewals.${APP_DOMAIN}`;
 

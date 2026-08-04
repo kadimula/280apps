@@ -1,6 +1,5 @@
-// Host classification: what a hostname is (the canonical auth host, an app host,
-// or reserved/unknown). Used by the gateway to route the auth host; app hosts are
-// served by their own Workers.
+// Host classification: the auth host, an app host, or reserved/unknown. The gateway
+// routes the auth host; app hosts are served by their own Workers.
 
 export const RESERVED = new Set(['www', 'api', 'app', 'admin', 'dashboard', 'status', 'assets', 'auth']);
 

@@ -5,7 +5,7 @@ import {
   IdentitySigner,
   IdentityVerifier,
   tenantFromEmail,
-} from '../src/identity.js';
+} from '@280/contracts';
 import { genSigningKey } from './helpers.js';
 
 const ISSUER = 'https://auth.280apps.run';

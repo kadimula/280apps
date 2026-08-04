@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { PreviewGrant } from '@280/backend/seams';
-import { IdentityVerifier } from '../src/identity.js';
+import { IdentityVerifier } from '@280/contracts';
 import { APP_DOMAIN, ISSUER, newGateway, signIn, type GatewayHarness } from './helpers.js';
 
 const HOST = `renewals.${APP_DOMAIN}`;

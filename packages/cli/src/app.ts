@@ -17,9 +17,10 @@ import { cmdLogin } from './login.js';
 import { cmdHome } from './homeview.js';
 import { cmdSetup } from './setup/index.js';
 
-// VERSION is this CLI's release, kept in lockstep with package.json (a test
-// guards the two).
-export const VERSION = '0.4.2';
+// VERSION is injected from package.json at build time (tsup) and test time
+// (vitest) via a define, so package.json is the single source of truth.
+declare const __CLI_VERSION__: string;
+export const VERSION = __CLI_VERSION__;
 
 // DEFAULT_API is the platform endpoint; override with TWO80_API.
 const DEFAULT_API = 'https://api.280apps.com';

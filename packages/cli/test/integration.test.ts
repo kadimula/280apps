@@ -2,13 +2,9 @@
 // static bundler and real Fake port, the closest a unit test gets to `280 push`.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Fake } from '@280/contracts/deploy/fake';
 import { build } from '../src/bundle/index.js';
 import * as config from '../src/config.js';
-import { VERSION } from '../src/app.js';
 import { parseToon, runCli, tmpHome, tmpProject } from './helpers.js';
 
 const prev = process.env.TWO80_HOME;
@@ -67,13 +63,5 @@ describe('fake push (real bundler + real Fake, through app.run)', () => {
     expect(r.code).toBe(1);
     expect(parseToon(r.out).error).toBe('preflight_rejected');
     expect(fake.appCount()).toBe(0);
-  });
-});
-
-describe('version drift guard', () => {
-  it('app VERSION matches package.json (fixtures normalize the version, so keep them aligned)', () => {
-    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version: string };
-    expect(VERSION).toBe(pkg.version);
   });
 });

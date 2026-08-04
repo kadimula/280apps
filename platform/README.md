@@ -1,22 +1,21 @@
 # platform/
 
-The server side of the deploy seam now lives in `packages/backend/` (TS). This
-directory holds the app container substrate.
+## `appcontainer/` — the app container harness
 
-- `appcontainer/` : `App280Container`, the Cloudflare Container each app runs in
-  (locked defaults: `enableInternet=false`, `interceptHttps=true`, a
-  buildpack-injected CA entrypoint). See `appcontainer/BUILD_HOME.md`.
+`App280Container` (`src/container.js`): the container class every 280 app runs
+in, with the platform security defaults locked on. `src/worker.js` is the per-app
+harness Worker that fronts it (verify-and-forward via `@280/gateway`, then the
+egress boundary). This is live production code: the backend image copies it in as
+`TWO80_WORKER_ENTRY` and the roll (`packages/backend/.../registry-builder.ts`)
+deploys `App280Container` as the container class. Both files document their own
+defaults and wiring; read them.
 
-Container-only serving: `*.280apps.run` is served by each app's own Worker (built
-by the roll), which calls the identity gateway (`packages/gateway/`) to mint a
-signed identity and forwards to its container. The legacy edge dispatcher
-(Workers for Platforms) and its dispatch namespaces were removed in the Phase 3
-cutover.
+`container.js` mirrors the tested `@280/egress` (`packages/egress`) wiring inline
+rather than importing it. Keep the two in step — `packages/egress/test/exfil.test.ts`
+is the CI guard.
 
-The control plane itself is a Node service deployed on Railway from
-`packages/backend/` (`Dockerfile`, env in `.env.example`). One-time resources (R2
-buckets, Hyperdrive configs with query caching disabled) are created by
-`packages/backend/scripts/bootstrap-resources.sh`.
+## Server side
 
-Server behavior, store, blobstore, runtime, API, and run/deploy docs: see
-`packages/backend/`.
+The control plane, store, runtime (build via the depot pipeline), and serving all
+live in `packages/backend/`. `*.280apps.run` is served container-only by each
+app's own Worker fronting the identity gateway (`packages/gateway/`).

@@ -1,6 +1,6 @@
 // App280Container: the container class every 280 app runs in, with the platform
-// security defaults locked on (spike-confirmed on real Cloudflare Containers, see
-// _spike/280-p0-egress-spike). These are class-level, never the app's to set:
+// security defaults locked on (confirmed on real Cloudflare Containers). These are
+// class-level, never the app's to set:
 //
 //   enableInternet = false  Default-deny egress. The @cloudflare/containers base
 //                           class defaults this to TRUE, so leaving it unset would
@@ -15,9 +15,8 @@
 //
 // The egress DATA PATH — the credential-injecting outbound handler, the vault
 // read, the call-log, the fail-closed allowlist wiring — is the tested @280/egress
-// package (packages/egress), which the production gateway imports. This proof front
-// mirrors that same wiring inline so it runs standalone under `wrangler dev` with
-// only @cloudflare/containers; keep the two in step.
+// package (packages/egress). This harness mirrors that same wiring inline rather
+// than importing it; keep the two in step (packages/egress/test/exfil.test.ts).
 
 import { Container } from '@cloudflare/containers';
 

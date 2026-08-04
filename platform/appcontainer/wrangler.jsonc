@@ -5,18 +5,17 @@
 	"compatibility_date": "2026-06-01",
 	"compatibility_flags": ["nodejs_compat"],
 
-	// The container class every 280 app runs in, with the locked security defaults
-	// (enableInternet=false, interceptHttps=true) in src/container.js. `image`
-	// points at the build context the CLI buildpack produces — for the local proof,
-	// materialize a hello-world app's context there (see README.md); in production
-	// the build home supplies the app's own image.
+	// Reference binding shape for the harness. The roll generates the real per-app
+	// config (packages/backend/.../registry-builder.ts), pointing `image` at the
+	// pushed registry ref; this file is not deployed directly. Locked security
+	// defaults (enableInternet=false, interceptHttps=true) live in src/container.js.
 	"durable_objects": {
 		"bindings": [{ "class_name": "App280Container", "name": "APP" }]
 	},
 	"containers": [
 		{
 			"class_name": "App280Container",
-			"image": "./proof-context",
+			"image": "registry.cloudflare.com/<app-image>",
 			"instance_type": "dev",
 			"max_instances": 1
 		}

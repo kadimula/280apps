@@ -2,10 +2,6 @@
   "name": "280-appcontainer",
   "version": "0.0.0",
   "private": true,
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
-  },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
     "zod": "^3.24.0"

@@ -29,3 +29,11 @@ Fetch 280apps.com/setup.md and push.
 ## Docs
 
 Agent facing docs are served live under `/v1/docs/*`. Start at [280apps.com/setup.md](https://www.280apps.com/setup.md).
+
+## License
+
+280 is source-available under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md) (FSL-1.1-ALv2). You may read, audit, modify, and run the code for any permitted purpose, including running it for yourself or your team. Offering a competing hosted service is not permitted. Each release additionally becomes available under the Apache License 2.0 two years after it ships.
+
+**Self-hosting vs. managed:** the source is open so you can audit exactly what runs and secures your apps. Running your own instance requires your own Cloudflare, Depot, and Postgres accounts and is currently unsupported. The managed service at [280apps.com](https://www.280apps.com) is the recommended path.
+
+**Trademarks:** the "280" and "280apps" names and logo are trademarks of Kishore Adimulam and may not be used for forks or derived services without permission.

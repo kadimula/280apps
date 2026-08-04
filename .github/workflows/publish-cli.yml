@@ -1,0 +1,65 @@
+name: Publish CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: write # cut the GitHub Release
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # npm OIDC trusted publishing needs >=22.14
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Assert tag matches packages/cli version
+        run: |
+          tag_version="${GITHUB_REF_NAME#cli-v}"
+          pkg_version="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "Tag ${GITHUB_REF_NAME} implies ${tag_version} but packages/cli/package.json is ${pkg_version}" >&2
+            exit 1
+          fi
+          echo "Publishing two80@${pkg_version}"
+
+      - name: Assert version is not already published
+        run: |
+          pkg_version="$(node -p "require('./packages/cli/package.json').version")"
+          if npm view "two80@${pkg_version}" version >/dev/null 2>&1; then
+            echo "two80@${pkg_version} is already on npm; bump the version before tagging" >&2
+            exit 1
+          fi
+
+      - name: Build (contracts, then cli)
+        run: |
+          pnpm --filter @280/contracts build
+          pnpm --filter two80 build
+
+      - run: pnpm --filter two80 test
+
+      # Auth is OIDC trusted publishing: no NPM_TOKEN. Requires a Trusted
+      # Publisher (repo kadimula/280apps, workflow publish-cli.yml) configured
+      # on the two80 package at npmjs.com. Provenance is implied by OIDC.
+      - name: Publish to npm
+        run: pnpm --filter two80 publish --no-git-checks --provenance --access public
+
+      - name: Cut GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "CLI ${GITHUB_REF_NAME#cli-v}" \
+            --generate-notes

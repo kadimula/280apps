@@ -182,7 +182,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   //   - services: the GATEWAY service binding to the central gateway's GatewayRPC
   //               (mint/jwks), the only channel the middleware uses.
   //   - vars:     the baked route policy plus the identity vars the middleware reads
-  //               (app id/script, host suffix/domain, issuer, edge skew).
+  //               (script, issuer) and the app id/host vars kept for the container side.
   protected rollConfig(job: RolloutJob, image: string): Record<string, unknown> {
     const script = job.app.script;
     const host = `${script}${this.hostSuffix}.${this.appDomain}`;

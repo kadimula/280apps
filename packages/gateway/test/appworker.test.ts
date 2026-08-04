@@ -304,7 +304,7 @@ describe('dashboard preview (partitioned-cookie flow)', () => {
     const { signer, publicJwks } = await newSigner(() => NOW);
     const gw = new FakeGateway(publicJwks);
     gw.onMintPreview = async () => ({ kind: 'token', token: await token(signer), ttlSecs: 30 });
-    for (const to of ['https://evil.example/', '//evil.example/', 'reports']) {
+    for (const to of ['https://evil.example/', '//evil.example/', '/\\evil.example/', 'reports']) {
       const res = await handleAppRequest(
         new Request(`https://${HOST}/__280/preview?g=grant-1&to=${encodeURIComponent(to)}`),
         env(gw),

@@ -93,7 +93,6 @@ export async function handleAppRequest(
   const path = url.pathname;
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
   const issuer = env.TWO80_ID_ISSUER;
-  const skew = EDGE_SKEW_SECS;
   const script = env.TWO80_SCRIPT ?? '';
 
   let routes: RouteGate[];
@@ -114,7 +113,7 @@ export async function handleAppRequest(
   const idCookie = readCookie(request, ID_COOKIE);
   if (idCookie !== '') {
     try {
-      const verified = await verifyToken(idCookie, { host, issuer, skew, gateway, now });
+      const verified = await verifyToken(idCookie, { host, issuer, skew: EDGE_SKEW_SECS, gateway, now });
       return serveGated(request, idCookie, verified, routes, path, deps.container, null);
     } catch (err) {
       // Any verification failure means no usable local token: fall through to mint.
@@ -163,7 +162,7 @@ export async function handleAppRequest(
 
   let verified: VerifiedIdentity;
   try {
-    verified = await verifyToken(result.token, { host, issuer, skew, gateway, now });
+    verified = await verifyToken(result.token, { host, issuer, skew: EDGE_SKEW_SECS, gateway, now });
   } catch {
     // A freshly minted token that fails local verification is a key/config mismatch
     // between the gateway and this Worker's JWKS, not a viewer problem.
@@ -215,9 +214,10 @@ async function handlePreviewBootstrap(
 }
 
 // Anything but a same-origin absolute path ("//evil", "https://…", relative) collapses
-// to the app root.
+// to the app root. "/\" is rejected too: URL parsing treats \ as /, so a
+// "Location: /\evil.com" would resolve protocol-relative to evil.com.
 function sameOriginPathOrRoot(raw: string): string {
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
   return raw;
 }
 

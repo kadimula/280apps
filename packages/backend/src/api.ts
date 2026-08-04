@@ -31,6 +31,7 @@ import {
   type ViewAsTarget,
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
+import { isAdmin } from './admin.js';
 import { docsRoutes } from './docs.js';
 import { sharePage } from './sharepage.js';
 import { Auth, AuthError } from './authsvc.js';
@@ -119,6 +120,12 @@ export class Server {
     app.post('/internal/device/approve', this.route((c) => this.handleDeviceApprove(c)));
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
+
+    // Site-wide admin reads for the admin dashboard: every app across all owners and
+    // every user. Session-authenticated by this.route and gated to the admin
+    // allowlist server-side, independently of any frontend check.
+    app.get('/internal/admin/apps', this.route((c) => this.handleAdminApps(c)));
+    app.get('/internal/admin/users', this.route((c) => this.handleAdminUsers(c)));
 
     // The share dialog and its data: list/grant/revoke access (both tiers) and the
     // rendered page. Session-authenticated, scoped to an app the caller owns.
@@ -339,6 +346,57 @@ export class Server {
         // ActiveDeploy is set only once a deploy has gone live, so it doubles as
         // "is this URL serving anything".
         live: a.activeDeploy !== '',
+      })),
+    });
+  }
+
+  // adminUser resolves the browser session and refuses anyone off the site-wide
+  // admin allowlist. The gate is here on the server, not in the frontend: these
+  // endpoints expose every user's data, so a non-admin session is a hard 403.
+  private async adminUser(c: Context<HonoEnv>): Promise<User> {
+    const user = await this.sessionUser(c);
+    if (!isAdmin(user.email, this.deps(c).adminEmails)) {
+      throw forbidden('this endpoint is restricted to 280 administrators');
+    }
+    return user;
+  }
+
+  private async handleAdminApps(c: Context<HonoEnv>): Promise<Response> {
+    await this.adminUser(c);
+    let apps;
+    try {
+      apps = await this.deps(c).platform.store.allAppsWithOwners();
+    } catch {
+      throw unavailable('could not list apps');
+    }
+    return c.json({
+      apps: apps.map((a) => ({
+        id: a.id,
+        slug: a.slug,
+        url: a.url,
+        access: a.access,
+        createdAt: a.createdAt,
+        owner: { id: a.owner.id, email: a.owner.email, name: a.owner.name },
+      })),
+    });
+  }
+
+  private async handleAdminUsers(c: Context<HonoEnv>): Promise<Response> {
+    await this.adminUser(c);
+    let users;
+    try {
+      users = await this.deps(c).platform.store.allUsersWithAppCounts();
+    } catch {
+      throw unavailable('could not list users');
+    }
+    return c.json({
+      users: users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        image: u.image,
+        appCount: u.appCount,
+        createdAt: u.createdAt,
       })),
     });
   }
@@ -907,6 +965,10 @@ function noAccount(): DeployErr {
 
 function badRequest(message: string): DeployErr {
   return new DeployErr({ code: DeployCode.PreflightRejected, message });
+}
+
+function forbidden(message: string): DeployErr {
+  return new DeployErr({ code: DeployCode.Forbidden, message });
 }
 
 // normalizePrincipal canonicalizes a grant principal so it matches what the gateway

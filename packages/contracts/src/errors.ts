@@ -7,6 +7,7 @@ import { z } from 'zod';
 // Deploy error codes.
 export const DeployCode = {
   Unauthorized: 'unauthorized',
+  Forbidden: 'forbidden',
   AmbiguousIdentity: 'ambiguous_identity',
   NoSuchApp: 'no_such_app',
   PreflightRejected: 'preflight_rejected',
@@ -54,6 +55,7 @@ export type DeployError = {
 // Any code not listed maps to 400 (the default arm), which includes the device-flow codes.
 export const HTTP_STATUS: Readonly<Record<string, number>> = {
   [DeployCode.Unauthorized]: 401,
+  [DeployCode.Forbidden]: 403,
   [DeployCode.NoSuchApp]: 404,
   [DeployCode.NotFound]: 404,
   [DeployCode.AmbiguousIdentity]: 409,

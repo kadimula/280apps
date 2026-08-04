@@ -141,10 +141,39 @@ export interface Grant {
   grantedAt: number; // unix seconds
 }
 
+// One row of the site-wide admin app listing: an app joined to its owner and its
+// effective access mode. access is '' when the app has no policy row yet.
+export interface AdminAppRow {
+  id: string;
+  slug: string;
+  url: string;
+  access: string;
+  createdAt: number;
+  owner: { id: string; email: string; name: string };
+}
+
+// One row of the site-wide admin user listing: a user with the count of apps they
+// own. createdAt is null only if the users table has no created_at column.
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  image: string;
+  appCount: number;
+  createdAt: number | null;
+}
+
 export interface Store {
   close(): Promise<void>;
 
   recentEvents(limit: number): Promise<Event[]>;
+
+  // Cross-tenant admin reads for the site-wide admin dashboard (the API gates them
+  // to admins). Every app with its owner and effective access mode, newest-first,
+  // and every user with the count of apps they own — each a single join, never a
+  // per-user loop.
+  allAppsWithOwners(): Promise<AdminAppRow[]>;
+  allUsersWithAppCounts(): Promise<AdminUserRow[]>;
 
   // Resolves the token's user only if it is still valid: minCreatedAt is the
   // caller's now - ttl, and a token created at or before it is expired (null),

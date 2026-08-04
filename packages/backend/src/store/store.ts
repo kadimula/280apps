@@ -20,6 +20,8 @@ import type { QueryResult } from 'pg';
 import {
   DeviceStatus,
   EventKind,
+  type AdminAppRow,
+  type AdminUserRow,
   type App,
   type Deploy,
   type DeviceCode,
@@ -404,6 +406,15 @@ function rowToAppPolicy(r: Row): AppPolicy {
   };
 }
 
+// The mode a viewer actually experiences: the dashboard override wins over the
+// manifest access, and a null policy (no row) reads as ''. Unlike rowToAppPolicy
+// this does not coerce to invited: the admin view reports the raw stored mode.
+function effectiveAccess(access: unknown, override: unknown): string {
+  const ov = typeof override === 'string' ? override : '';
+  if (ov !== '') return ov;
+  return typeof access === 'string' ? access : '';
+}
+
 function eventDetail(kv: Record<string, string>): string {
   if (Object.keys(kv).length === 0) {
     return '';
@@ -448,6 +459,50 @@ class PgStore implements Store {
       [limit],
     );
     return res.rows.map(rowToEvent);
+  }
+
+  // Every app joined to its owner and its effective access mode in one query.
+  // access_override wins over the manifest access (design D5); a missing policy row
+  // (LEFT JOIN null) reads as ''. INNER JOIN on users: owner identity is required,
+  // and every app has an owner.
+  async allAppsWithOwners(): Promise<AdminAppRow[]> {
+    const res = await this.db.query(
+      `SELECT ap.id, ap.slug, ap.url, ap.created_at,
+              p.access, p.access_override,
+              u.id AS owner_id, u.email AS owner_email, u.name AS owner_name
+       FROM ${this.t('apps')} ap
+       JOIN ${this.t('users')} u ON u.id = ap.user_id
+       LEFT JOIN ${this.t('app_policies')} p ON p.app_id = ap.id
+       ORDER BY ap.created_at DESC, ap.id`,
+    );
+    return res.rows.map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      url: r.url,
+      access: effectiveAccess(r.access, r.access_override),
+      createdAt: toNum(r.created_at),
+      owner: { id: r.owner_id, email: r.owner_email, name: r.owner_name },
+    }));
+  }
+
+  // Every user with the count of apps they own, computed in one grouped join rather
+  // than a per-user query. created_at is a real column, so it is always present.
+  async allUsersWithAppCounts(): Promise<AdminUserRow[]> {
+    const res = await this.db.query(
+      `SELECT u.id, u.email, u.name, u.image, u.created_at, count(ap.id) AS app_count
+       FROM ${this.t('users')} u
+       LEFT JOIN ${this.t('apps')} ap ON ap.user_id = u.id
+       GROUP BY u.id, u.email, u.name, u.image, u.created_at
+       ORDER BY u.created_at DESC, u.id`,
+    );
+    return res.rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      name: r.name,
+      image: r.image,
+      appCount: toNum(r.app_count),
+      createdAt: toNum(r.created_at),
+    }));
   }
 
   async userByToken(tokenHash: string, minCreatedAt: number): Promise<User | null> {

@@ -60,6 +60,7 @@ async function run(log: Logger): Promise<void> {
     verificationUri: config.verificationUri,
     minCliVersion: config.minCliVersion,
     machineTokenTtlSecs: config.machineTokenTtlDays * 24 * 60 * 60,
+    adminEmails: config.adminEmails,
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
   };

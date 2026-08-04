@@ -21,6 +21,7 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
+import { DEFAULT_ADMIN_EMAIL } from '../../src/admin.js';
 import { InProcessActivator } from '../../src/activator.js';
 import { Server } from '../../src/api.js';
 import type { Auth } from '../../src/authsvc.js';
@@ -113,6 +114,7 @@ export interface TestServerOpts {
   verificationUri?: string;
   minCliVersion?: string;
   machineTokenTtlSecs?: number;
+  adminEmails?: string[];
   logger?: Logger;
 }
 
@@ -130,6 +132,7 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
     verificationUri: opts.verificationUri ?? '',
     minCliVersion: opts.minCliVersion ?? '',
     machineTokenTtlSecs: opts.machineTokenTtlSecs ?? DEFAULT_TEST_TOKEN_TTL_SECS,
+    adminEmails: opts.adminEmails ?? [DEFAULT_ADMIN_EMAIL],
     appDomain: '280apps.run',
     viewAsOrigin: 'https://auth.280apps.run',
   };

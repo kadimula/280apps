@@ -474,6 +474,65 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(liveEvents).toHaveLength(2);
   });
 
+  it('allAppsWithOwners joins the owner and effective access, newest-first', async () => {
+    await store.createUser({ id: 'usr_a', email: 'a@firm.com', name: 'Alice', image: '' });
+    await store.createUser({ id: 'usr_b', email: 'b@firm.com', name: 'Bob', image: '' });
+    const app1 = appFixture({ userId: 'usr_a', slug: 'one', script: 'one-x', clientRef: 'r1' });
+    const app2 = appFixture({ userId: 'usr_b', slug: 'two', script: 'two-x', clientRef: 'r2' });
+    await store.createApp(app1);
+    await store.createApp(app2);
+
+    // app2 goes live → registers a policy with the manifest's (default) access.
+    await store.openDeploy({
+      appId: app2.id,
+      id: 'dep',
+      manifest: manifestFor('a'.repeat(64)),
+      state: State.Uploading,
+      failure: null,
+    });
+    await store.claimActivation(app2.id, 'dep');
+    await store.finishLive(app2.id, 'dep');
+
+    const rows = await store.allAppsWithOwners();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(app1.id)?.owner).toEqual({ id: 'usr_a', email: 'a@firm.com', name: 'Alice' });
+    expect(byId.get(app1.id)?.access).toBe(''); // never live → no policy row
+    expect(byId.get(app2.id)?.owner.email).toBe('b@firm.com');
+    expect(byId.get(app2.id)?.access).toBe('invited'); // live → policy access
+    const times = rows.map((r) => r.createdAt);
+    expect(times).toEqual([...times].sort((x, y) => y - x));
+  });
+
+  it('allAppsWithOwners reflects the dashboard access override', async () => {
+    await store.createUser({ id: 'usr_c', email: 'c@firm.com', name: '', image: '' });
+    const app = appFixture({ userId: 'usr_c', slug: 'o', script: 'o-x', clientRef: 'rc' });
+    await store.createApp(app);
+    await store.openDeploy({
+      appId: app.id,
+      id: 'dep',
+      manifest: manifestFor('b'.repeat(64)),
+      state: State.Uploading,
+      failure: null,
+    });
+    await store.claimActivation(app.id, 'dep');
+    await store.finishLive(app.id, 'dep');
+    await store.setAppAccess(app.id, 'public', 'c@firm.com');
+    expect((await store.allAppsWithOwners()).find((r) => r.id === app.id)?.access).toBe('public');
+  });
+
+  it('allUsersWithAppCounts counts owned apps and carries created_at', async () => {
+    await store.createUser({ id: 'usr_x', email: 'x@firm.com', name: 'X', image: 'img' });
+    await store.createUser({ id: 'usr_y', email: 'y@firm.com', name: 'Y', image: '' });
+    await store.createApp(appFixture({ userId: 'usr_x', slug: 'x1', script: 'x1', clientRef: 'x1' }));
+    await store.createApp(appFixture({ userId: 'usr_x', slug: 'x2', script: 'x2', clientRef: 'x2' }));
+
+    const byId = new Map((await store.allUsersWithAppCounts()).map((u) => [u.id, u]));
+    expect(byId.get('usr_x')?.appCount).toBe(2);
+    expect(byId.get('usr_y')?.appCount).toBe(0);
+    expect(byId.get('usr_x')?.image).toBe('img');
+    expect(typeof byId.get('usr_x')?.createdAt).toBe('number');
+  });
+
   it('finishFailed records the failure and a deploy.failed event with the code only', async () => {
     const a = appFixture();
     await store.createApp(a);

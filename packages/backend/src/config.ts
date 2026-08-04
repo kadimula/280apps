@@ -3,6 +3,7 @@
 
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
+import { parseAdminEmails } from './admin.js';
 
 // ConfigVars is the raw environment the host reads: non-secret tunables and
 // secrets, all optional strings (absent ⇒ undefined).
@@ -21,6 +22,9 @@ export interface ConfigVars {
   TWO80_MACHINE_TOKEN_TTL_DAYS?: string;
   TWO80_LOGIN_RATE_WINDOW_SECS?: string;
   TWO80_LOGIN_RATE_MAX?: string;
+  // Comma-separated allowlist of site-wide admin emails (the cross-tenant admin
+  // read endpoints). Unset resolves to the single default in admin.ts.
+  TWO80_ADMIN_EMAILS?: string;
   // DEPOT_PROJECT_ID pins every Depot build to one project (isolated layer cache).
   // Unset resolves a project per app via the Depot API.
   DEPOT_PROJECT_ID?: string;
@@ -62,6 +66,8 @@ export interface Config {
   // a change applies retroactively, so shortening it revokes older tokens at once.
   machineTokenTtlDays: number;
   loginRate: { windowSecs: number; max: number };
+  // The site-wide admin allowlist, lowercased; the cross-tenant admin endpoints gate on it.
+  adminEmails: string[];
   google: { clientId: string; clientSecret: string };
   // depot is the managed remote BuildKit build home, the sole build path.
   depot: { token: string; projectId: string };
@@ -103,6 +109,7 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       windowSecs: num(vars.TWO80_LOGIN_RATE_WINDOW_SECS, 600),
       max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
     },
+    adminEmails: parseAdminEmails(vars.TWO80_ADMIN_EMAILS),
     google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
     depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
     cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
@@ -123,6 +130,8 @@ export interface RequestDeps {
   // now - this is the created_at cutoff authorize() passes to userByToken: a token
   // created before it is expired and answers exactly like an unknown one.
   machineTokenTtlSecs: number;
+  // The site-wide admin allowlist the /internal/admin/* endpoints gate on.
+  adminEmails: string[];
   // The zone app URLs live on, and the gateway origin the share dialog's "view as"
   // links point at (the gateway owns view-as; the control plane only links to it).
   appDomain: string;

@@ -50,11 +50,20 @@ jobs:
 
       - run: pnpm --filter two80 test
 
-      # Auth is OIDC trusted publishing: no NPM_TOKEN. Requires a Trusted
-      # Publisher (repo kadimula/280apps, workflow publish-cli.yml) configured
-      # on the two80 package at npmjs.com. Provenance is implied by OIDC.
+      # OIDC trusted publishing is performed by the npm CLI (>=11.5.1); pnpm's
+      # own publish does not do the OIDC token exchange and fails with a 404.
+      # So we pack with pnpm (which rewrites the workspace: devDependency to a
+      # concrete version) and publish that tarball with npm. Auth needs no
+      # NPM_TOKEN: it comes from the Trusted Publisher (repo kadimula/280apps,
+      # workflow publish-cli.yml) configured on the two80 package at npmjs.com.
+      - name: Ensure an OIDC-capable npm
+        run: npm install -g npm@latest
+
+      - name: Pack (pnpm rewrites the workspace dependency)
+        run: pnpm --filter two80 pack --pack-destination "$RUNNER_TEMP"
+
       - name: Publish to npm
-        run: pnpm --filter two80 publish --no-git-checks --provenance --access public
+        run: npm publish "$RUNNER_TEMP"/two80-*.tgz --provenance --access public
 
       - name: Cut GitHub Release
         env:

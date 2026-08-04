@@ -6,6 +6,13 @@
     "node": ">=20"
   },
   "packageManager": "pnpm@10.20.0",
+  "pnpm": {
+    "overrides": {
+      "undici@>=7.0.0 <7.29.0": "7.29.0",
+      "sharp@<0.35.0": "0.35.0",
+      "esbuild@>=0.27.3 <0.28.1": "0.28.1"
+    }
+  },
   "scripts": {
     "build": "pnpm -r build",
     "lint": "eslint packages",

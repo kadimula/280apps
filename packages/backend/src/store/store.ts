@@ -738,6 +738,8 @@ class PgStore implements Store {
       // inherits another life's access or route gates.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
       await tx.query(`DELETE FROM ${this.t('app_policies')} WHERE app_id = $1`, [appId]);
+      // Drop preview grants too, else a deleted app's view-as links stay live until the TTL sweep.
+      await tx.query(`DELETE FROM ${this.t('preview_grants')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row it would read the user
       // from no longer exists.
       await this.insertEvent(tx, {

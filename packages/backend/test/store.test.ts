@@ -343,9 +343,12 @@ describe.skipIf(!hasDatabase())('store', () => {
       state: State.Uploading,
       failure: null,
     });
+    await store.createPreviewGrant(previewGrantFixture({ tokenHash: 'pv-del', appId: a.id }));
     expect(await store.deleteApp('usr_test', a.id)).toBe(true);
     expect(await store.app('usr_test', a.id)).toBeNull();
     expect(await store.deploy(a.id, 'dep_1')).toBeNull();
+    // preview grants for the app go with it, not left for the TTL sweep to reap later
+    expect(await store.previewGrantByHash('pv-del')).toBeNull();
     // the history stays behind; deleting twice is not a failure
     expect(await store.deleteApp('usr_test', a.id)).toBe(false);
     const kinds = (await store.recentEvents(50)).map((e) => e.kind);

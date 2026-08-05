@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist_Mono, Oranienbaum, Inter } from "next/font/google";
 import "./globals.css";
 
+import { MockAuthControl } from "@/components/mock-auth-control";
+
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
@@ -34,7 +36,10 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${oranienbaum.variable} ${geistMono.variable} h-full`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <MockAuthControl />
+      </body>
     </html>
   );
 }

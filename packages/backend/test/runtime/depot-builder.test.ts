@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DeployErr, digestBytes, type Digest, type Manifest } from '@280/contracts';
 import type { Activation, RuntimeApp } from '../../src/seams.js';
+import type { Logger } from '../../src/observe.js';
 import { DepotBuilder, type DepotApi } from '../../src/runtime/container/depot-builder.js';
 import type { ExecFn } from '../../src/runtime/container/registry-builder.js';
 
@@ -293,5 +294,107 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec: boom, api });
     await expect(builder.teardown(app())).rejects.toBeInstanceOf(DeployErr);
+  });
+
+  // imagesExec dispatches by command so one exec can answer the worker delete, the
+  // `containers images list --json` (with a supplied repo/tag map), and each
+  // `containers images delete <ref> -y` independently — recordingExec keys only on
+  // cmd, so every `wrangler` call would otherwise share a code and output.
+  function imagesExec(
+    repos: Record<string, string[]>,
+    over: { deleteCode?: number; deleteOutput?: string; listCode?: number } = {},
+  ): { exec: ExecFn; calls: Call[] } {
+    const calls: Call[] = [];
+    const exec: ExecFn = async (cmd, args, opts) => {
+      calls.push({ cmd, args, cwd: opts.cwd, env: opts.env });
+      if (args[0] === 'containers' && args[1] === 'images' && args[2] === 'list') {
+        if (over.listCode && over.listCode !== 0) return { code: over.listCode, output: 'registry unreachable' };
+        const list = Object.entries(repos).map(([name, tags]) => ({ name, tags }));
+        return { code: 0, output: JSON.stringify(list) };
+      }
+      if (args[0] === 'containers' && args[1] === 'images' && args[2] === 'delete') {
+        return { code: over.deleteCode ?? 0, output: over.deleteOutput ?? 'Deleted' };
+      }
+      return { code: 0, output: `${cmd} output` }; // worker delete
+    };
+    return { exec, calls };
+  }
+
+  function recordingLog(): { log: Logger; warns: { msg: string; attrs?: Record<string, unknown> }[] } {
+    const warns: { msg: string; attrs?: Record<string, unknown> }[] = [];
+    const log: Logger = { info: () => {}, error: () => {}, warn: (msg, attrs) => warns.push({ msg, attrs }) };
+    return { log, warns };
+  }
+
+  it('teardown reaps the app images: lists the repo then deletes each tag', async () => {
+    const { exec, calls } = imagesExec({ 'demo-abc': ['dep_1', 'dep_2'] });
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'acct1', apiToken: 'tok1', depotToken: 'd', projectId: 'p', exec, api });
+    await builder.teardown(app({ script: 'demo-abc' }));
+
+    // Worker delete first, then a list scoped to this script, then one delete per tag.
+    expect(calls.map((c) => c.args.join(' '))).toEqual([
+      'delete demo-abc --force',
+      'containers images list --json --filter demo-abc',
+      'containers images delete demo-abc:dep_1 -y',
+      'containers images delete demo-abc:dep_2 -y',
+    ]);
+    // The registry commands carry the same Cloudflare env as the worker delete.
+    const list = calls.find((c) => c.args[2] === 'list')!;
+    expect(list.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 'tok1', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
+  });
+
+  it('teardown deletes only the exact repository, not other filter regex matches', async () => {
+    // `--filter` is a regex, so the list can echo sibling repos; only the app's own
+    // <script> repo is deleted.
+    const { exec, calls } = imagesExec({ 'demo-abc': ['dep_1'], 'demo-abc-staging': ['dep_9'] });
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
+    await builder.teardown(app({ script: 'demo-abc' }));
+    const deletes = calls.filter((c) => c.args[2] === 'delete').map((c) => c.args[3]);
+    expect(deletes).toEqual(['demo-abc:dep_1']);
+  });
+
+  it('teardown treats a gone repository (empty image list) as nothing to delete', async () => {
+    const { exec, calls } = imagesExec({});
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
+    await expect(builder.teardown(app({ script: 'demo-abc' }))).resolves.toBeUndefined();
+    expect(calls.some((c) => c.args[2] === 'delete')).toBe(false);
+  });
+
+  it('teardown treats a not-found image delete as success (idempotent)', async () => {
+    const { exec } = imagesExec(
+      { 'demo-abc': ['dep_1'] },
+      { deleteCode: 1, deleteOutput: 'Failed to retrieve info for demo-abc:dep_1: 404 Not Found' },
+    );
+    const { log, warns } = recordingLog();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api, log });
+    await expect(builder.teardown(app({ script: 'demo-abc' }))).resolves.toBeUndefined();
+    expect(warns).toEqual([]); // a 404 is not a warning
+  });
+
+  it('image cleanup is best-effort: a listing failure warns but never fails teardown', async () => {
+    const { exec, calls } = imagesExec({ 'demo-abc': ['dep_1'] }, { listCode: 1 });
+    const { log, warns } = recordingLog();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api, log });
+    // Worker delete succeeded; only the registry list failed, so teardown still resolves.
+    await expect(builder.teardown(app({ script: 'demo-abc' }))).resolves.toBeUndefined();
+    expect(calls.some((c) => c.args[2] === 'delete')).toBe(false); // never got to delete
+    expect(warns.map((w) => w.msg)).toEqual(['image cleanup: could not list app images']);
+  });
+
+  it('image cleanup is best-effort: a genuine delete failure warns but never fails teardown', async () => {
+    const { exec } = imagesExec(
+      { 'demo-abc': ['dep_1'] },
+      { deleteCode: 1, deleteOutput: 'registry 500 internal error' },
+    );
+    const { log, warns } = recordingLog();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api, log });
+    await expect(builder.teardown(app({ script: 'demo-abc' }))).resolves.toBeUndefined();
+    expect(warns.map((w) => w.msg)).toEqual(['image cleanup: could not delete app image tag']);
   });
 });

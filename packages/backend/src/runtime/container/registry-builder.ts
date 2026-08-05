@@ -20,6 +20,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DeployCode, DeployErr } from '@280/contracts';
 import type { RuntimeApp } from '../../seams.js';
+import type { Logger } from '../../observe.js';
 import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
 
 export interface ExecResult {
@@ -90,6 +91,10 @@ export interface RegistryBuilderConfig {
   // fetch talks to the Cloudflare API to mint registry credentials; injected so the
   // credential exchange is unit-testable without a Cloudflare account.
   fetch?: typeof fetch;
+  // log records the best-effort image-cleanup warnings teardown emits when it cannot
+  // reap the app's registry tags. Optional so tests and callers that do not care can
+  // omit it; defaults to a no-op.
+  log?: Logger;
 }
 
 // RegistryContainerBuilder is the template: rollout() runs materialize → buildAndPush
@@ -111,6 +116,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   protected readonly frameAncestors: string;
   protected readonly exec: ExecFn;
   protected readonly fetchImpl: typeof fetch;
+  protected readonly log: Logger;
 
   constructor(cfg: RegistryBuilderConfig) {
     this.accountId = cfg.accountId;
@@ -128,6 +134,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
     this.frameAncestors = cfg.frameAncestors ?? 'https://console.280apps.com';
     this.exec = cfg.exec ?? spawnExec;
     this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+    this.log = cfg.log ?? NOOP_LOG;
   }
 
   // registryCredentials mints a short-lived push/pull credential for the registry.
@@ -256,6 +263,60 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         retryable: true,
       });
     }
+
+    // Then reap the images the app pushed. Every deploy pushed one tag to
+    // <registry>/<accountId>/<script>:<deployId>, so an app accumulates one tag per
+    // historical deploy; deleting the Worker leaves them all behind (they cost
+    // registry storage but no longer serve or grant anything). The app itself does
+    // not carry its deploy-id list, so the tags are resolved from the registry by
+    // repository, which is keyed on <script>.
+    //
+    // Best-effort by design: unlike the Worker delete (whose failure must retry, or
+    // the app keeps serving), leftover tags are pure housekeeping. A registry hiccup
+    // here must not throw, because teardown runs before the store row is dropped
+    // (activator runTail: runtime.delete -> blobs.deleteApp -> store.deleteApp); a
+    // throw would wedge the whole delete and strand the app row. So a failure is
+    // logged and swallowed, and the hourly reconcile can retry another day.
+    await this.deleteImages(app);
+  }
+
+  // deleteImages removes every registry tag under the app's repository (<script>).
+  // It never throws: enumerate failures and per-tag delete failures are warned and
+  // skipped so image cleanup can never block the rest of teardown.
+  private async deleteImages(app: RuntimeApp): Promise<void> {
+    const env = { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId };
+    const listed = await this.exec(
+      'wrangler',
+      ['containers', 'images', 'list', '--json', '--filter', app.script],
+      { cwd: this.workdir, env },
+    );
+    if (listed.code !== 0) {
+      // A gone repository lists as an empty array with a zero exit, so a non-zero
+      // exit is a genuine registry/auth failure, not "nothing to delete".
+      this.log.warn('image cleanup: could not list app images', {
+        script: app.script,
+        output: tail(listed.output),
+      });
+      return;
+    }
+    // `--filter` is a regex over the repository name, so it can match more than this
+    // app; select the exact repository by name before deleting anything.
+    const tags = imageTags(listed.output, app.script);
+    for (const tag of tags) {
+      const ref = `${app.script}:${tag}`;
+      const del = await this.exec('wrangler', ['containers', 'images', 'delete', ref, '-y'], {
+        cwd: this.workdir,
+        env,
+      });
+      // A tag already gone (404 / not found) is success; anything else is warned and
+      // left for a later sweep rather than failing the delete.
+      if (del.code !== 0 && !/not found|does not exist|404/i.test(del.output)) {
+        this.log.warn('image cleanup: could not delete app image tag', {
+          image: ref,
+          output: tail(del.output),
+        });
+      }
+    }
   }
 
   // run executes a build/roll step and turns a non-zero exit into the seam's
@@ -337,6 +398,35 @@ async function mintRegistryCredentials(
 export function tail(s: string, n = 25): string {
   const lines = s.split('\n').filter((l) => l.trim() !== '');
   return (lines.length > n ? lines.slice(-n) : lines).join('\n');
+}
+
+// A logger sink for callers that inject none; image cleanup's warnings are then
+// dropped rather than crashing on an undefined logger.
+const NOOP_LOG: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+// imageTags pulls the tag list for exactly `script` out of the JSON `wrangler
+// containers images list --json` prints: an array of { name, tags } where name is
+// the repository (the app's <script>). The JSON is sliced from the first '[' to the
+// last ']' so a stray wrangler notice merged onto the same stream (exec combines
+// stdout+stderr) cannot break the parse. Any parse miss yields no tags: image
+// cleanup then simply deletes nothing rather than throwing.
+export function imageTags(output: string, script: string): string[] {
+  const start = output.indexOf('[');
+  const end = output.lastIndexOf(']');
+  if (start === -1 || end < start) return [];
+  let repos: unknown;
+  try {
+    repos = JSON.parse(output.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(repos)) return [];
+  const repo = repos.find(
+    (r): r is { name: string; tags?: unknown } =>
+      typeof r === 'object' && r !== null && (r as { name?: unknown }).name === script,
+  );
+  const tags = repo?.tags;
+  return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === 'string') : [];
 }
 
 // spawnExec is the production ExecFn: it runs the command and collects combined

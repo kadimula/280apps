@@ -296,10 +296,8 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     await expect(builder.teardown(app())).rejects.toBeInstanceOf(DeployErr);
   });
 
-  // imagesExec dispatches by command so one exec can answer the worker delete, the
-  // `containers images list --json` (with a supplied repo/tag map), and each
-  // `containers images delete <ref> -y` independently — recordingExec keys only on
-  // cmd, so every `wrangler` call would otherwise share a code and output.
+  // Dispatches by command so worker delete, `images list`, and each `images delete`
+  // answer independently (recordingExec keys only on cmd, so all wrangler calls share one).
   function imagesExec(
     repos: Record<string, string[]>,
     over: { deleteCode?: number; deleteOutput?: string; listCode?: number } = {},
@@ -332,21 +330,20 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const builder = new DepotBuilder({ accountId: 'acct1', apiToken: 'tok1', depotToken: 'd', projectId: 'p', exec, api });
     await builder.teardown(app({ script: 'demo-abc' }));
 
-    // Worker delete first, then a list scoped to this script, then one delete per tag.
+    // Worker delete, then a list scoped to this script, then one delete per tag.
     expect(calls.map((c) => c.args.join(' '))).toEqual([
       'delete demo-abc --force',
       'containers images list --json --filter demo-abc',
       'containers images delete demo-abc:dep_1 -y',
       'containers images delete demo-abc:dep_2 -y',
     ]);
-    // The registry commands carry the same Cloudflare env as the worker delete.
+    // Registry commands carry the same Cloudflare env as the worker delete.
     const list = calls.find((c) => c.args[2] === 'list')!;
     expect(list.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 'tok1', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
   });
 
   it('teardown deletes only the exact repository, not other filter regex matches', async () => {
-    // `--filter` is a regex, so the list can echo sibling repos; only the app's own
-    // <script> repo is deleted.
+    // --filter is a regex, so the list can echo sibling repos; only <script> is deleted.
     const { exec, calls } = imagesExec({ 'demo-abc': ['dep_1'], 'demo-abc-staging': ['dep_9'] });
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });

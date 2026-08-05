@@ -265,11 +265,24 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
+    expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://console.280apps.com');
     await rm(workdir, { recursive: true, force: true });
   });
 
-  it('teardown treats a missing container application as success', async () => {
-    const notFound: ExecFn = async () => ({ code: 1, output: 'container not found' });
+  it('teardown deletes the app worker by name: wrangler delete <script> --force', async () => {
+    const { exec, calls } = recordingExec();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'acct1', apiToken: 'tok1', depotToken: 'd', projectId: 'p', exec, api });
+    await builder.teardown(app({ script: 'demo-abc' }));
+    const del = calls.find((c) => c.cmd === 'wrangler');
+    // Not `containers delete <id>` (which rejects --force and needs a container id) —
+    // the roll deploys a Worker named <script>, so teardown deletes that Worker.
+    expect(del?.args).toEqual(['delete', 'demo-abc', '--force']);
+    expect(del?.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 'tok1', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
+  });
+
+  it('teardown treats a missing app worker as success', async () => {
+    const notFound: ExecFn = async () => ({ code: 1, output: 'Workers Script Not Found [code: 10007]' });
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec: notFound, api });
     await expect(builder.teardown(app())).resolves.toBeUndefined();

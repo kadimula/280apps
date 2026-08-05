@@ -91,9 +91,7 @@ export interface RegistryBuilderConfig {
   // fetch talks to the Cloudflare API to mint registry credentials; injected so the
   // credential exchange is unit-testable without a Cloudflare account.
   fetch?: typeof fetch;
-  // log records the best-effort image-cleanup warnings teardown emits when it cannot
-  // reap the app's registry tags. Optional so tests and callers that do not care can
-  // omit it; defaults to a no-op.
+  // log receives teardown's best-effort image-cleanup warnings; defaults to a no-op.
   log?: Logger;
 }
 
@@ -264,25 +262,14 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
       });
     }
 
-    // Then reap the images the app pushed. Every deploy pushed one tag to
-    // <registry>/<accountId>/<script>:<deployId>, so an app accumulates one tag per
-    // historical deploy; deleting the Worker leaves them all behind (they cost
-    // registry storage but no longer serve or grant anything). The app itself does
-    // not carry its deploy-id list, so the tags are resolved from the registry by
-    // repository, which is keyed on <script>.
-    //
-    // Best-effort by design: unlike the Worker delete (whose failure must retry, or
-    // the app keeps serving), leftover tags are pure housekeeping. A registry hiccup
-    // here must not throw, because teardown runs before the store row is dropped
-    // (activator runTail: runtime.delete -> blobs.deleteApp -> store.deleteApp); a
-    // throw would wedge the whole delete and strand the app row. So a failure is
-    // logged and swallowed, and the hourly reconcile can retry another day.
+    // Then reap the app's registry tags (one per historical deploy). Best-effort: this
+    // runs before store.deleteApp, so a throw would strand the app row — leftover tags
+    // are only storage, so a failure is logged and swallowed, not retried.
     await this.deleteImages(app);
   }
 
-  // deleteImages removes every registry tag under the app's repository (<script>).
-  // It never throws: enumerate failures and per-tag delete failures are warned and
-  // skipped so image cleanup can never block the rest of teardown.
+  // deleteImages removes every registry tag under the app's repository (<script>). It
+  // never throws, so image cleanup can never block the rest of teardown.
   private async deleteImages(app: RuntimeApp): Promise<void> {
     const env = { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId };
     const listed = await this.exec(
@@ -291,16 +278,14 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
       { cwd: this.workdir, env },
     );
     if (listed.code !== 0) {
-      // A gone repository lists as an empty array with a zero exit, so a non-zero
-      // exit is a genuine registry/auth failure, not "nothing to delete".
+      // A gone repo lists as [] with exit 0, so a non-zero exit is a real failure.
       this.log.warn('image cleanup: could not list app images', {
         script: app.script,
         output: tail(listed.output),
       });
       return;
     }
-    // `--filter` is a regex over the repository name, so it can match more than this
-    // app; select the exact repository by name before deleting anything.
+    // --filter is a regex, so match the exact repository by name before deleting.
     const tags = imageTags(listed.output, app.script);
     for (const tag of tags) {
       const ref = `${app.script}:${tag}`;
@@ -308,8 +293,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         cwd: this.workdir,
         env,
       });
-      // A tag already gone (404 / not found) is success; anything else is warned and
-      // left for a later sweep rather than failing the delete.
+      // A tag already gone (404) is success; anything else is warned and left behind.
       if (del.code !== 0 && !/not found|does not exist|404/i.test(del.output)) {
         this.log.warn('image cleanup: could not delete app image tag', {
           image: ref,
@@ -400,16 +384,13 @@ export function tail(s: string, n = 25): string {
   return (lines.length > n ? lines.slice(-n) : lines).join('\n');
 }
 
-// A logger sink for callers that inject none; image cleanup's warnings are then
-// dropped rather than crashing on an undefined logger.
+// Logger sink for callers that inject none.
 const NOOP_LOG: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
-// imageTags pulls the tag list for exactly `script` out of the JSON `wrangler
-// containers images list --json` prints: an array of { name, tags } where name is
-// the repository (the app's <script>). The JSON is sliced from the first '[' to the
-// last ']' so a stray wrangler notice merged onto the same stream (exec combines
-// stdout+stderr) cannot break the parse. Any parse miss yields no tags: image
-// cleanup then simply deletes nothing rather than throwing.
+// imageTags pulls the tags for exactly `script` out of `containers images list --json`
+// (an array of { name, tags }). The JSON is sliced from first '[' to last ']' so a
+// wrangler notice merged onto the stream (exec combines stdout+stderr) can't break the
+// parse; any parse miss yields no tags, so cleanup deletes nothing rather than throwing.
 export function imageTags(output: string, script: string): string[] {
   const start = output.indexOf('[');
   const end = output.lastIndexOf(']');

@@ -45,6 +45,7 @@ function buildDepotBuilder(config: Config, log: Logger): container.ContainerBuil
     gatewayService: config.gatewayService,
     idIssuer: config.idIssuer,
     frameAncestors: config.frameAncestors,
+    log,
   });
 }
 

@@ -29,21 +29,9 @@ import {
 // question: who may open the app without a grant at all. It writes the
 // dashboard override, which wins over 280.json on every future deploy.
 
-// The general-access popover's key in the one-popover-at-a-time state. Person
-// rows key by principal, which is always an email, so this can't collide.
-const ACCESS_MENU = "general-access";
-
-function accessLabel(access: AppAccess, tenant: string): string {
-  if (access === "public") return "Anyone with the link";
-  if (access === "anyone-at-tenant") return `Anyone at ${tenant}`;
-  return "Restricted";
-}
-
-function accessHint(access: AppAccess, tenant: string): string {
+function accessHint(access: AppAccess): string {
   if (access === "public")
     return "Anyone on the internet with the link can open the app, no sign-in.";
-  if (access === "anyone-at-tenant")
-    return `Anyone at ${tenant} signed in to 280 can open the app.`;
   return "Only people with access can sign in and open the app.";
 }
 
@@ -60,11 +48,10 @@ export function ShareDialog({
   // The platform's grant rows, null while the first load is in flight. The
   // rendered list is derived from this, so it can only show what is persisted.
   const [grants, setGrants] = useState<Grant[] | null>(null);
-  // The general-access mode and the facts that shape its menu, from the same
-  // load as the grants. Null until the first load lands.
+  // The general-access mode and its source, from the same load as the grants.
+  // Null until the first load lands.
   const [access, setAccess] = useState<AccessInfo | null>(null);
-  // Which popover is open, if any: a person's principal, or ACCESS_MENU for the
-  // general-access dial. One at a time.
+  // Which person-row popover is open, if any. One at a time.
   const [menu, setMenu] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -211,8 +198,10 @@ export function ShareDialog({
   const loading = grants === null;
   // Fail closed while the first load is in flight: the strictest mode is the
   // safest thing to claim about an app we haven't heard back about.
-  const current: AppAccess = access?.access ?? "invited";
-  const tenant = access?.ownerTenant || "your organization";
+  // Existing domain access is presented as Google Login while the domain
+  // option is retired from this setting. Choosing that tab converts it to the
+  // explicit invited mode.
+  const current: AppAccess = access?.access === "public" ? "public" : "invited";
 
   return (
     <>
@@ -228,7 +217,7 @@ export function ShareDialog({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-50 flex items-start justify-center bg-[rgba(10,10,10,0.34)] px-6 py-[68px] backdrop-blur-[1px]"
+            className="fixed inset-0 z-50 flex items-start justify-center bg-[rgba(10,10,10,0.66)] px-6 py-[68px] backdrop-blur-[1px]"
             onClick={(event) => {
               if (event.target === event.currentTarget) close();
             }}
@@ -243,7 +232,7 @@ export function ShareDialog({
               <div className="flex items-center justify-between gap-3">
                 <h2
                   id={headingId}
-                  className="min-w-0 truncate font-display text-[1.5rem] leading-tight tracking-tight text-[var(--color-ink)]"
+                  className="min-w-0 truncate font-sans text-[1.5rem] leading-tight tracking-tight text-[var(--color-ink)]"
                 >
                   Share{" "}
                   <span className="text-[var(--color-muted)]">
@@ -252,11 +241,11 @@ export function ShareDialog({
                 </h2>
                 <button
                   type="button"
-                  onClick={close}
-                  aria-label="Close"
-                  className="shrink-0 cursor-pointer rounded-lg p-1.5 text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]"
+                  onClick={copyLink}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-line-strong)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-link)] transition-colors hover:border-[var(--color-link)]"
                 >
-                  <CloseIcon />
+                  <LinkIcon />
+                  {copied ? "Copied" : "Copy link"}
                 </button>
               </div>
 
@@ -272,7 +261,7 @@ export function ShareDialog({
                   placeholder="Add people by email"
                   autoComplete="off"
                   disabled={busy}
-                  className="w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 text-[14.5px] text-[var(--color-ink)] outline-none transition-colors placeholder:text-[var(--color-muted)] focus:border-[var(--color-link)] disabled:opacity-60"
+                  className="w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 text-[14.5px] text-[var(--color-ink)] outline-none transition-colors placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] disabled:opacity-60"
                 />
               </form>
               {error && (
@@ -285,14 +274,6 @@ export function ShareDialog({
                 <h3 className="text-[14px] font-semibold text-[var(--color-ink)]">
                   People with access
                 </h3>
-                <div className="flex gap-0.5">
-                  <IconButton label="Copy list" onClick={copyLink}>
-                    <CopyIcon />
-                  </IconButton>
-                  <IconButton label="Email link" onClick={copyLink}>
-                    <MailIcon />
-                  </IconButton>
-                </div>
               </div>
 
               <div className="mt-1.5">
@@ -379,91 +360,47 @@ export function ShareDialog({
                     Loading&hellip;
                   </p>
                 )}
-                {!loading && people.length === 0 && (
-                  <p className="py-2 pl-12 text-[13px] text-[var(--color-muted)]">
-                    No one else has access yet. People you add can view the app.
-                  </p>
-                )}
               </div>
 
               <div className="mt-5 border-t border-[var(--color-line)] pt-4">
                 <h3 className="text-[14px] font-semibold text-[var(--color-ink)]">
                   General access
                 </h3>
-                <div className="mt-1.5 flex items-center gap-3">
-                  <span
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--color-line-strong)] ${
-                      current === "public"
-                        ? "bg-[var(--color-gold-50)] text-[#4a4636]"
-                        : "bg-[var(--color-paper-warm)] text-[var(--color-body)]"
-                    }`}
+                <div
+                  role="tablist"
+                  aria-label="General access"
+                  className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-[var(--color-line)] bg-[var(--color-paper-warm)] p-1"
+                >
+                  <AccessTab
+                    active={current === "invited"}
+                    activeBorderClassName="border-[var(--color-gold-400)]"
+                    disabled={!access || busy}
+                    onClick={() => changeAccess("invited")}
                   >
-                    {current === "invited" ? <LockIcon /> : <GlobeIcon />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="relative inline-block" data-menu>
-                      <button
-                        type="button"
-                        disabled={!access || busy}
-                        onClick={() =>
-                          setMenu((m) => (m === ACCESS_MENU ? null : ACCESS_MENU))
-                        }
-                        className="-ml-2 flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-[14.5px] font-medium text-[var(--color-ink)] transition-colors hover:bg-[var(--color-paper-warm)] disabled:cursor-default disabled:opacity-60"
-                      >
-                        {access ? accessLabel(current, tenant) : "Loading…"}
-                        <ChevronIcon />
-                      </button>
-                      {menu === ACCESS_MENU && access && (
-                        <div className="absolute left-0 top-[calc(100%+4px)] z-10 min-w-[248px] rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)] p-1.5 shadow-[0_18px_50px_-24px_rgba(10,10,10,0.55)]">
-                          <MenuItem
-                            active={current === "invited"}
-                            onClick={() => changeAccess("invited")}
-                          >
-                            {accessLabel("invited", tenant)}
-                          </MenuItem>
-                          {/* An owner on gmail.com has no org, so "anyone at
-                              gmail.com" is not a tenant the gateway will admit
-                              on; the option stays visible but inert. */}
-                          <MenuItem
-                            active={current === "anyone-at-tenant"}
-                            disabled={access.ownerTenantIsConsumer}
-                            onClick={() => changeAccess("anyone-at-tenant")}
-                          >
-                            {accessLabel("anyone-at-tenant", tenant)}
-                          </MenuItem>
-                          <MenuItem
-                            active={current === "public"}
-                            onClick={() => changeAccess("public")}
-                          >
-                            {accessLabel("public", tenant)}
-                          </MenuItem>
-                        </div>
-                      )}
-                    </div>
-                    <p className="px-0 text-[13px] text-[var(--color-muted)]">
-                      {access ? accessHint(current, tenant) : " "}
-                    </p>
-                  </div>
+                    <span className="flex items-center justify-center gap-1.5">
+                      <GoogleIcon />
+                      Google Login
+                    </span>
+                  </AccessTab>
+                  <AccessTab
+                    active={current === "public"}
+                    disabled={!access || busy}
+                    onClick={() => changeAccess("public")}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <LinkIcon />
+                      Anyone with link
+                    </span>
+                  </AccessTab>
+                </div>
+                <div className="mt-3">
+                  <p className="text-[13px] text-[var(--color-muted)]">
+                    {access ? accessHint(current) : " "}
+                  </p>
                 </div>
               </div>
 
-              <div className="mt-5 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={copyLink}
-                  className="flex cursor-pointer items-center gap-2 rounded-full border border-[var(--color-line-strong)] px-[18px] py-2.5 text-[14px] font-semibold text-[var(--color-link)] transition-colors hover:border-[var(--color-link)]"
-                >
-                  <LinkIcon />
-                  {copied ? "Copied" : "Copy link"}
-                </button>
-                <button
-                  type="button"
-                  onClick={close}
-                  className="cursor-pointer rounded-full bg-[var(--color-ink)] px-7 py-2.5 text-[14px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90"
-                >
-                  Done
-                </button>
-              </div>
+
             </div>
           </div>,
           document.body,
@@ -472,22 +409,31 @@ export function ShareDialog({
   );
 }
 
-function IconButton({
-  label,
+function AccessTab({
+  active,
+  activeBorderClassName = "border-[var(--color-gold-500)]",
+  disabled,
   onClick,
   children,
 }: {
-  label: string;
+  active: boolean;
+  activeBorderClassName?: string;
+  disabled: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
+      disabled={disabled}
       onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="cursor-pointer rounded-lg p-1.5 text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]"
+      className={`cursor-pointer rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors disabled:cursor-default disabled:opacity-60 ${
+        active
+          ? `${activeBorderClassName} bg-[var(--color-paper)]`
+          : "border-transparent text-[var(--color-muted)] hover:bg-[var(--color-paper)] hover:text-[var(--color-ink)]"
+      }`}
     >
       {children}
     </button>
@@ -541,32 +487,6 @@ function ShareIcon() {
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden className="h-[18px] w-[18px]">
-      <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden className="h-[17px] w-[17px]">
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-    </svg>
-  );
-}
-
-function MailIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden className="h-[17px] w-[17px]">
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="m3 7 9 6 9-6" />
-    </svg>
-  );
-}
-
 function ChevronIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="h-3.5 w-3.5 text-[var(--color-muted)]">
@@ -575,28 +495,21 @@ function ChevronIcon() {
   );
 }
 
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-[15px] w-[15px]">
+      <path fill="#4285F4" d="M21.35 12.27c0-.79-.07-1.55-.22-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.14c1.84-1.69 2.91-4.18 2.91-7.42Z" />
+      <path fill="#34A853" d="M12 21.7c2.63 0 4.84-.87 6.45-2.36l-3.14-2.45c-.87.58-1.98.92-3.31.92-2.54 0-4.69-1.72-5.46-4.03H3.3v2.53A9.74 9.74 0 0 0 12 21.7Z" />
+      <path fill="#FBBC05" d="M6.54 13.78a5.85 5.85 0 0 1 0-3.56V7.69H3.3a9.74 9.74 0 0 0 0 8.62l3.24-2.53Z" />
+      <path fill="#EA4335" d="M12 6.19c1.43 0 2.71.49 3.72 1.45l2.79-2.79C16.84 3.27 14.63 2.3 12 2.3a9.74 9.74 0 0 0-8.7 5.39l3.24 2.53C7.31 7.91 9.46 6.19 12 6.19Z" />
+    </svg>
+  );
+}
+
 function CheckIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[15px] w-[15px]">
       <path d="m5 12 5 5L20 7" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[17px] w-[17px]">
-      <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" />
-      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
-    </svg>
-  );
-}
-
-function GlobeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[17px] w-[17px]">
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17M12 3.5a13 13 0 0 1 0 17 13 13 0 0 1 0-17Z" />
     </svg>
   );
 }

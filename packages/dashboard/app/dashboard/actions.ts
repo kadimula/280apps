@@ -1,9 +1,22 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 
 import { apiFetch } from "@/lib/api";
+import { MOCK_AUTH_COOKIE } from "@/lib/mock-backend";
 import { cookieHeader } from "@/lib/session";
+
+// Dev-only, mock-mode only. The floating mock-auth toggle writes this cookie to
+// flip the mock between signed in and signed out, so the landing and sign-in
+// pages can be iterated without editing MOCK_USER or restarting. Only the mock
+// reads it (see lib/mock-backend), so against a real backend it does nothing.
+// Signed in is the absence of the cookie; setting it to "out" forces signed out.
+export async function setMockAuthAction(signedIn: boolean) {
+  const jar = await cookies();
+  if (signedIn) jar.delete(MOCK_AUTH_COOKIE);
+  else jar.set(MOCK_AUTH_COOKIE, "out", { path: "/", sameSite: "lax" });
+}
 
 // deleteAppAction is the browser half of `280 delete`. It is a POST anyone can
 // forge, so it carries the browser's session and takes only a reference (the app

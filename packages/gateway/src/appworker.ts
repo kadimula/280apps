@@ -34,8 +34,11 @@ const PREVIEW_PATH = '/__280/preview';
 const PREVIEW_COOKIE_TTL_SECS = 1800;
 
 // The platform, not the builder, decides who may frame an app host: only the 280
-// dashboard origins, applied to every served response in serveGated.
-const FRAME_ANCESTORS = 'https://www.280apps.com https://www-development.280apps.com';
+// dashboard origin(s), applied to every served response in serveGated. The live
+// value is baked per app as TWO80_FRAME_ANCESTORS (from backend config, which
+// defaults it to the frontend origin); this constant is only the fallback for a
+// worker deployed without that var set.
+const DEFAULT_FRAME_ANCESTORS = 'https://console.280apps.com';
 
 export interface AppWorkerEnv {
   // This app's App280Container namespace. The harness Worker (not this middleware)
@@ -55,6 +58,9 @@ export interface AppWorkerEnv {
   // Unset means no declared routes (the flat model, open to any admitted viewer). Set
   // but malformed fails closed.
   TWO80_ROUTE_POLICY?: string;
+  // The space-separated origins allowed to frame this app host (CSP frame-ancestors),
+  // baked from backend config. Unset falls back to DEFAULT_FRAME_ANCESTORS.
+  TWO80_FRAME_ANCESTORS?: string;
 }
 
 export interface AppWorkerDeps {
@@ -100,6 +106,7 @@ export async function handleAppRequest(
   const issuer = env.TWO80_ID_ISSUER;
   const skew = intOr(env.TWO80_ID_SKEW_SECS, DEFAULT_EDGE_SKEW_SECS);
   const script = env.TWO80_SCRIPT ?? '';
+  const frameAncestors = (env.TWO80_FRAME_ANCESTORS ?? '').trim() || DEFAULT_FRAME_ANCESTORS;
 
   let routes: RouteGate[];
   try {
@@ -122,7 +129,7 @@ export async function handleAppRequest(
   if (idCookie !== '') {
     try {
       const verified = await verifyToken(idCookie, { host, issuer, skew, gateway, now });
-      return serveGated(request, idCookie, verified, routes, path, deps.container, null);
+      return serveGated(request, idCookie, verified, routes, path, deps.container, null, frameAncestors);
     } catch (err) {
       // Any verification failure (expired, wrong audience, bad signature, unknown key
       // after a refetch) means there is no usable local token: fall through to mint.
@@ -146,7 +153,7 @@ export async function handleAppRequest(
       try {
         const verified = await verifyToken(cached.token, { host, issuer, skew, gateway, now });
         const setCookie = serializeCookie(ID_COOKIE, cached.token, { maxAge: cached.exp - now() });
-        return serveGated(request, cached.token, verified, routes, path, deps.container, setCookie);
+        return serveGated(request, cached.token, verified, routes, path, deps.container, setCookie, frameAncestors);
       } catch (err) {
         if (!(err instanceof IdentityError)) throw err;
         anonTokenCache.delete(host);
@@ -194,7 +201,7 @@ export async function handleAppRequest(
     // browser drops it, which would re-mint on every single request.
     partitioned: previewGrant !== '',
   });
-  return serveGated(request, result.token, verified, routes, path, deps.container, setCookie);
+  return serveGated(request, result.token, verified, routes, path, deps.container, setCookie, frameAncestors);
 }
 
 // handlePreviewBootstrap exchanges ?g=<grant> for the two partitioned cookies (the
@@ -250,6 +257,7 @@ async function serveGated(
   path: string,
   container: Fetcher,
   setCookie: string | null,
+  frameAncestors: string,
 ): Promise<Response> {
   const { claims } = verified;
   const decision = gateForPath(routes, { appRole: claims.appRole, featureRole: claims.role }, path);
@@ -258,7 +266,7 @@ async function serveGated(
   const stamped = stampIdentity(request, token);
   const res = await container.fetch(stamped);
   const headers = new Headers(res.headers);
-  ownFraming(headers);
+  ownFraming(headers, frameAncestors);
   // Public means unlisted: everything a crawler can fetch is served anonymously,
   // so stamping the anonymous responses noindex keeps public apps out of search.
   if (claims.anon === true) headers.set('x-robots-tag', 'noindex');
@@ -270,13 +278,13 @@ async function serveGated(
 // container-supplied X-Frame-Options or frame-ancestors is replaced with the 280
 // dashboard origins, so a builder's headers can neither break the dashboard embed
 // nor open the app to other embedders. Other CSP directives the app set survive.
-function ownFraming(headers: Headers): void {
+function ownFraming(headers: Headers, frameAncestors: string): void {
   headers.delete('x-frame-options');
   const kept = (headers.get('content-security-policy') ?? '')
     .split(';')
     .map((d) => d.trim())
     .filter((d) => d !== '' && !d.toLowerCase().startsWith('frame-ancestors'));
-  headers.set('content-security-policy', [`frame-ancestors ${FRAME_ANCESTORS}`, ...kept].join('; '));
+  headers.set('content-security-policy', [`frame-ancestors ${frameAncestors}`, ...kept].join('; '));
 }
 
 async function verifyToken(

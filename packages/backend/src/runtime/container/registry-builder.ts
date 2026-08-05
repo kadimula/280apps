@@ -82,6 +82,10 @@ export interface RegistryBuilderConfig {
   hostSuffix?: string;
   gatewayService?: string;
   idIssuer?: string;
+  // frameAncestors is the space-separated CSP frame-ancestors allowlist baked into
+  // each app Worker (TWO80_FRAME_ANCESTORS): the dashboard origin(s) allowed to embed
+  // an app host. Defaulted to the prod console so the shape is explicit.
+  frameAncestors?: string;
   exec?: ExecFn;
   // fetch talks to the Cloudflare API to mint registry credentials; injected so the
   // credential exchange is unit-testable without a Cloudflare account.
@@ -104,6 +108,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
   protected readonly hostSuffix: string;
   protected readonly gatewayService: string;
   protected readonly idIssuer: string;
+  protected readonly frameAncestors: string;
   protected readonly exec: ExecFn;
   protected readonly fetchImpl: typeof fetch;
 
@@ -120,6 +125,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
     this.hostSuffix = cfg.hostSuffix ?? '';
     this.gatewayService = cfg.gatewayService ?? `280-gateway${this.hostSuffix}`;
     this.idIssuer = cfg.idIssuer ?? `https://auth${this.hostSuffix}.${this.appDomain}`;
+    this.frameAncestors = cfg.frameAncestors ?? 'https://console.280apps.com';
     this.exec = cfg.exec ?? spawnExec;
     this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   }
@@ -216,23 +222,37 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         TWO80_APP_DOMAIN: this.appDomain,
         TWO80_ID_ISSUER: this.idIssuer,
         TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
+        TWO80_FRAME_ANCESTORS: this.frameAncestors,
       },
     };
   }
 
   async teardown(app: RuntimeApp): Promise<void> {
-    // Idempotent: a container application already gone is success. wrangler exits
-    // non-zero for "not found", so a failed teardown is only reported when the
-    // application is still there afterwards; here we treat any non-zero as
-    // best-effort and let the alarm retry a genuine outage.
-    const res = await this.exec('wrangler', ['containers', 'delete', app.script, '--force'], {
+    // Teardown is the exact inverse of the roll: roll() runs `wrangler deploy` for a
+    // Worker named app.script (rollConfig.name), so teardown deletes that Worker with
+    // `wrangler delete <script>`. Removing the Worker takes its route down (the app
+    // stops serving) and drops the Durable Object the container application is bound
+    // to. --force skips the interactive confirm (there is no TTY here) and deletes
+    // even if something depends on it.
+    //
+    // NB: `wrangler containers delete` is NOT this command — it takes a container ID,
+    // not a script name, and rejects --force; passing the script name there is what
+    // made every teardown fail ("Unknown argument: force").
+    //
+    // Idempotent: a Worker already gone is success. wrangler exits non-zero for a
+    // missing script, so a not-found message is treated as done; anything else is a
+    // retryable failure the alarm re-runs.
+    const res = await this.exec('wrangler', ['delete', app.script, '--force'], {
       cwd: this.workdir,
       env: { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId },
     });
-    if (res.code !== 0 && !/not found|no container|does not exist/i.test(res.output)) {
+    if (
+      res.code !== 0 &&
+      !/not found|does not exist|could ?n'?t find|script_not_found|service_not_found/i.test(res.output)
+    ) {
       throw new DeployErr({
         code: DeployCode.Unavailable,
-        message: `could not delete container application ${app.script}: ${tail(res.output)}`,
+        message: `could not delete app worker ${app.script}: ${tail(res.output)}`,
         retryable: true,
       });
     }

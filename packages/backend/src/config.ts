@@ -14,6 +14,10 @@ export interface ConfigVars {
   TWO80_APP_HOST_SUFFIX?: string;
   TWO80_API_ORIGIN?: string;
   TWO80_FRONTEND_ORIGIN?: string;
+  // TWO80_FRAME_ANCESTORS is the space-separated origin allowlist baked into each
+  // app Worker as the CSP frame-ancestors (who may embed an app host). Default is
+  // the frontend origin, so the dashboard can always preview its own apps.
+  TWO80_FRAME_ANCESTORS?: string;
   TWO80_VERIFICATION_URI?: string;
   TWO80_COOKIE_DOMAIN?: string;
   TWO80_MIN_CLI_VERSION?: string;
@@ -54,6 +58,7 @@ export interface Config {
   hostSuffix: string;
   apiOrigin: string;
   frontendOrigin: string;
+  frameAncestors: string;
   verificationUri: string;
   cookieDomain: string;
   minCliVersion: string;
@@ -84,6 +89,7 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
 
   const appDomain = str(vars.TWO80_APP_DOMAIN, '280apps.run');
   const hostSuffix = vars.TWO80_APP_HOST_SUFFIX ?? '';
+  const frontendOrigin = str(vars.TWO80_FRONTEND_ORIGIN, 'https://console.280apps.com');
 
   return {
     runtime: str(vars.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
@@ -93,7 +99,8 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     appDomain,
     hostSuffix,
     apiOrigin: str(vars.TWO80_API_ORIGIN, 'https://api.280apps.com'),
-    frontendOrigin: str(vars.TWO80_FRONTEND_ORIGIN, 'https://www.280apps.com'),
+    frontendOrigin,
+    frameAncestors: str(vars.TWO80_FRAME_ANCESTORS, frontendOrigin),
     verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
     cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
     minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',

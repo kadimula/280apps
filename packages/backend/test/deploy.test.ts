@@ -84,8 +84,8 @@ afterEach(async () => {
   for (const h of live.splice(0)) await h.cleanup();
 });
 
-async function fresh(): Promise<{ h: Harness; port: Service }> {
-  const h = await newPlatform();
+async function fresh(opts: Parameters<typeof newPlatform>[0] = {}): Promise<{ h: Harness; port: Service }> {
+  const h = await newPlatform(opts);
   live.push(h);
   const port = await portFor(h);
   return { h, port };
@@ -140,6 +140,60 @@ describe('sync + activation', () => {
     const r2 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest: second.manifest });
     // shared.txt and the (unchanged) Dockerfile are already present; only b.txt is new.
     expect(r2.missing).toEqual([second.manifest.files[2]!.digest]);
+  });
+});
+
+describe('push secret notice', () => {
+  it('prints nothing when no policy exists and no secrets are declared', async () => {
+    const { h, port } = await fresh();
+    const { manifest } = mkBundle('worker');
+    const res = await port.sync({ identity: ident(), manifest });
+
+    expect(await h.store.appPolicy(res.app.id)).toBeNull();
+    expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe('');
+  });
+
+  it('uses the pending first deploy manifest before a live policy exists', async () => {
+    const { h, port } = await fresh({ frontendOrigin: 'https://dashboard.example/' });
+    const { manifest } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+    const res = await port.sync({ identity: ident(), manifest });
+
+    expect(await h.store.appPolicy(res.app.id)).toBeNull();
+    expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
+      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}`,
+    );
+  });
+
+  it('prints nothing when every declared name is configured', async () => {
+    const { h, port } = await fresh();
+    const { manifest } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+    const res = await port.sync({ identity: ident(), manifest });
+    for (const name of manifest.secrets) {
+      await h.store.putAppSecret({ appId: res.app.id, name, envelope: '', setBy: 'owner@test', setAt: 1 });
+    }
+
+    expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe('');
+  });
+
+  it('prints only declared names that are not configured', async () => {
+    const { h, port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+    const res = await port.sync({ identity: ident(), manifest });
+    await h.store.putAppSecret({
+      appId: res.app.id,
+      name: 'STRIPE_KEY',
+      envelope: '',
+      setBy: 'owner@test',
+      setAt: 1,
+    });
+    await uploadAll(port, res.app.id, res.missing, content);
+
+    expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
+      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}`,
+    );
   });
 });
 

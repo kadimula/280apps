@@ -1104,6 +1104,14 @@ class PgStore implements Store {
     return res.rows.map(rowToAppSecret);
   }
 
+  async appSecretNames(appId: string): Promise<string[]> {
+    const res = await this.db.query(
+      `SELECT name FROM ${this.t('app_secrets')} WHERE app_id = $1 ORDER BY name`,
+      [appId],
+    );
+    return res.rows.map((row) => String(row.name));
+  }
+
   // A single append to the events table, denormalizing the user from the app row.
   // Callers treat this as best-effort (they swallow its error), so a slow or failed
   // audit write never turns a served request into an error.

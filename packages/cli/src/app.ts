@@ -163,6 +163,7 @@ async function cmdPush(ctx: Ctx): Promise<number> {
       },
       onUpload: (done, total) => output.progress(s, `uploaded ${done}/${total}`),
       onWait: () => output.progress(s, 'activating'),
+      onSecretNotice: (notice) => output.progress(s, notice),
     },
   );
 

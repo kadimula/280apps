@@ -57,6 +57,9 @@ export interface Events {
   onResolve?: (app: App, r: string) => void; // app resolved (persist happens right after)
   onUpload?: (done: number, total: number) => void; // a blob landed
   onWait?: () => void; // upload complete, awaiting activation
+  // The server's declared-but-unconfigured secrets note. An event rather than a
+  // Result field so it still reaches the user when the deploy fails.
+  onSecretNotice?: (notice: string) => void;
 }
 
 const DEFAULT_ATTEMPTS = 6;
@@ -124,11 +127,12 @@ export async function run(
     }
 
     if (stateTerminal(res.state)) {
-      return finish(port, res, resolution, opts);
+      return finish(port, res, resolution, opts, ev);
     }
 
     ev.onWait?.();
     const status = await poll(port, res.app, res.deployId, opts);
+    if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
     if (status.failure) throw status.failure;
     return { app: res.app, resolution, deployId: res.deployId, url: status.url, notice: status.notice };
   }
@@ -153,8 +157,15 @@ async function uploadMissing(
   }
 }
 
-async function finish(port: Port, res: SyncResult, resolution: string, opts: Options): Promise<Result> {
+async function finish(
+  port: Port,
+  res: SyncResult,
+  resolution: string,
+  opts: Options,
+  ev: Events,
+): Promise<Result> {
   const status = await poll(port, res.app, res.deployId, opts);
+  if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
   if (status.failure) throw status.failure;
   const url = status.url !== '' ? status.url : res.app.url;
   return { app: res.app, resolution, deployId: res.deployId, url, notice: status.notice };

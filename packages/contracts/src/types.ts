@@ -404,6 +404,7 @@ export const deployStatusSchema = z
     // A one-line server-side note the CLI relays verbatim (e.g. the dashboard
     // access override diverging from 280.json). Empty means nothing to say.
     notice: str(''),
+    secretNotice: str(''),
     failure: errorSchema.nullish().transform((v) => v ?? undefined),
   })
   .passthrough();

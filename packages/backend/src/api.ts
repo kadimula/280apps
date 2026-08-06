@@ -585,7 +585,7 @@ export class Server {
       await this.deps(c).platform.store.putAppSecret({
         appId: app.id,
         name: req.name,
-        envelope: cipher.protect(app.id, req.name, req.value),
+        envelope: await cipher.protect(app.id, req.name, req.value),
         setBy: user.email,
         setAt: nowSecs(),
       });

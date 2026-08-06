@@ -90,3 +90,5 @@ Secrets (set in Railway, never committed — real values live outside the repo):
 - `DEPOT_TOKEN`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
+- `TWO80_SECRET_KMS_KEY_NAME` (the environment's Cloud KMS key resource name)
+- `TWO80_SECRET_KMS_CREDENTIALS_JSON`

@@ -613,7 +613,7 @@ export class Server {
     if (!secret) throw badRequest('this variable has no value');
     try {
       c.header('Cache-Control', 'no-store');
-      return c.json({ value: cipher.reveal(app.id, secret.name, secret.envelope) });
+      return c.json({ value: await cipher.reveal(app.id, secret.name, secret.envelope) });
     } catch {
       throw unavailable('could not reveal the variable');
     }

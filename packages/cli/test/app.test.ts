@@ -44,7 +44,7 @@ class SecretNoticeFake extends Fake {
     return {
       ...(await super.status(appId, deployId)),
       secretNotice:
-        'declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Ask the app owner to configure them at https://console.280apps.com/dashboard/app_000001',
+        'declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001',
     };
   }
 }
@@ -68,7 +68,7 @@ describe('push (fake)', () => {
     const r = await runCli(['push'], { root: tmpProject(), port: new SecretNoticeFake() });
     expect(r.code).toBe(0);
     expect(r.err).toContain(
-      '280: declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Ask the app owner to configure them at https://console.280apps.com/dashboard/app_000001\n',
+      '280: declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001\n',
     );
     expect(r.out).not.toContain('STRIPE_KEY');
   });

@@ -381,8 +381,8 @@ export class Service implements Port {
     const present = new Set(configured);
     const missing = (m.secrets ?? []).filter((name) => !present.has(name));
     if (missing.length === 0) return '';
-    const noun = missing.length === 1 ? 'secret is' : 'secrets are';
-    return `declared ${noun} not configured: ${missing.join(', ')}. Ask the app owner to configure ${missing.length === 1 ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}`;
+    const single = missing.length === 1;
+    return `declared ${single ? 'secret is' : 'secrets are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,

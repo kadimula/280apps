@@ -161,7 +161,7 @@ describe('push secret notice', () => {
 
     expect(await h.store.appPolicy(res.app.id)).toBeNull();
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Ask the app owner to configure them at https://dashboard.example/dashboard/${res.app.id}`,
+      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}`,
     );
   });
 
@@ -192,7 +192,7 @@ describe('push secret notice', () => {
     await uploadAll(port, res.app.id, res.missing, content);
 
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Ask the app owner to configure it at https://console.280apps.com/dashboard/${res.app.id}`,
+      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}`,
     );
   });
 });

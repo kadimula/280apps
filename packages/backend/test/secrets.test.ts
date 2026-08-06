@@ -1,5 +1,5 @@
-// The security contract: no read path, over the API or the audit log, ever returns
-// a stored secret value in plaintext.
+// The security contract: list and audit paths never return plaintext. An owner may
+// explicitly reveal one value through the authenticated, non-cacheable reveal path.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Hono } from 'hono';
@@ -104,6 +104,20 @@ function put(app: Hono<HonoEnv>, session: string, appId: string, body: unknown):
     method: 'POST',
     headers: { Cookie: session, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+function secretAction(
+  app: Hono<HonoEnv>,
+  session: string,
+  appId: string,
+  action: 'reveal' | 'delete',
+  name: string,
+): Promise<Response> {
+  return app.request(`/internal/apps/${appId}/secrets/${action}`, {
+    method: 'POST',
+    headers: { Cookie: session, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
   });
 }
 
@@ -308,6 +322,39 @@ describe('secrets write', () => {
     expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 12345 })).status).toBe(422);
     expect((await put(app, session, appId, { name: ['STRIPE_KEY'], value: 'x' })).status).toBe(422);
     expect(await store.appSecrets(appId)).toHaveLength(0);
+  });
+});
+
+describe('secrets manage', () => {
+  it('reveals a configured value only through the explicit owner action', async () => {
+    const { app, session, appId } = await ownerApp(['STRIPE_KEY']);
+    await put(app, session, appId, { name: 'STRIPE_KEY', value: 'sk_live_visible' });
+
+    const res = await secretAction(app, session, appId, 'reveal', 'STRIPE_KEY');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await res.json()).toEqual({ value: 'sk_live_visible' });
+  });
+
+  it('deletes a configured value without deleting its declaration', async () => {
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY']);
+    await put(app, session, appId, { name: 'STRIPE_KEY', value: 'sk_live_delete' });
+
+    expect((await secretAction(app, session, appId, 'delete', 'STRIPE_KEY')).status).toBe(204);
+    expect(await store.appSecrets(appId)).toEqual([]);
+    expect(await (await list(app, session, appId)).json()).toEqual({
+      secrets: [{ name: 'STRIPE_KEY', configured: false }],
+    });
+  });
+
+  it('does not reveal values to another signed-in user', async () => {
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY']);
+    await put(app, session, appId, { name: 'STRIPE_KEY', value: 'sk_live_private' });
+    const intruder = await signIn(app, 'intruder@other.com');
+
+    expect((await secretAction(app, intruder, appId, 'reveal', 'STRIPE_KEY')).status).toBe(404);
+    expect((await secretAction(app, intruder, appId, 'delete', 'STRIPE_KEY')).status).toBe(404);
+    expect(await store.appSecrets(appId)).toHaveLength(1);
   });
 });
 

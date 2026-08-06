@@ -236,6 +236,7 @@ export interface Store {
   setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean>;
 
   putAppSecret(secret: AppSecret): Promise<void>;
+  deleteAppSecret(appId: string, name: string, deletedBy: string): Promise<boolean>;
   appSecrets(appId: string): Promise<AppSecret[]>;
 
   // Records one gateway access decision (allowed/denied) for the permission audit.

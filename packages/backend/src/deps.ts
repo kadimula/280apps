@@ -73,6 +73,8 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
     apiOrigin: config.apiOrigin,
     frontendOrigin: config.frontendOrigin,
     cookieDomain: config.cookieDomain,
+    sessionCookieName: config.sessionCookieName,
+    oauthCookieName: config.oauthCookieName,
     sessionTtlSecs: config.sessionTtlDays * 24 * 60 * 60,
     rate: { windowSecs: config.loginRate.windowSecs, max: config.loginRate.max },
   });

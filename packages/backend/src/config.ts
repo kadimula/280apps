@@ -20,6 +20,10 @@ export interface ConfigVars {
   TWO80_FRAME_ANCESTORS?: string;
   TWO80_VERIFICATION_URI?: string;
   TWO80_COOKIE_DOMAIN?: string;
+  // Per-environment cookie names so prod and dev sessions coexist in one browser
+  // on the shared .280apps.com domain. Default 280_session / 280_oauth.
+  TWO80_SESSION_COOKIE?: string;
+  TWO80_OAUTH_COOKIE?: string;
   TWO80_MIN_CLI_VERSION?: string;
   TWO80_SESSION_TTL_DAYS?: string;
   TWO80_MACHINE_TOKEN_TTL_DAYS?: string;
@@ -61,6 +65,8 @@ export interface Config {
   frameAncestors: string;
   verificationUri: string;
   cookieDomain: string;
+  sessionCookieName: string;
+  oauthCookieName: string;
   minCliVersion: string;
   sessionTtlDays: number;
   // A CLI machine token is valid only while its created_at is within this window;
@@ -103,6 +109,8 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     frameAncestors: str(vars.TWO80_FRAME_ANCESTORS, frontendOrigin),
     verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
     cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
+    sessionCookieName: str(vars.TWO80_SESSION_COOKIE, '280_session'),
+    oauthCookieName: str(vars.TWO80_OAUTH_COOKIE, '280_oauth'),
     minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',
     sessionTtlDays: num(vars.TWO80_SESSION_TTL_DAYS, 30),
     machineTokenTtlDays: num(vars.TWO80_MACHINE_TOKEN_TTL_DAYS, 90),

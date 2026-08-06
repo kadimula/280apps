@@ -42,6 +42,8 @@ export function newAuth(store: Store, over: Partial<AuthConfig> = {}): Auth {
     apiOrigin: 'https://api.test',
     frontendOrigin: 'https://app.test',
     cookieDomain: '',
+    sessionCookieName: SESSION_COOKIE,
+    oauthCookieName: STATE_COOKIE,
     sessionTtlSecs: 3600,
     rate: { windowSecs: 600, max: 1000 },
     ...over,
@@ -63,11 +65,12 @@ export async function signIn(
   app: Hono<HonoEnv>,
   email: string,
   redirect = '/dashboard',
+  cookieNames = { session: SESSION_COOKIE, oauth: STATE_COOKIE },
 ): Promise<string> {
   const start = await app.request(`/auth/google/start?redirect=${encodeURIComponent(redirect)}`);
   if (start.status !== 302) throw new Error(`start returned ${start.status}`);
   const state = new URL(start.headers.get('location') ?? '').searchParams.get('state') ?? '';
-  const stateCookie = cookiePair(start, STATE_COOKIE);
+  const stateCookie = cookiePair(start, cookieNames.oauth);
   if (stateCookie === null) throw new Error('start set no state cookie');
 
   const cb = await app.request(
@@ -75,7 +78,7 @@ export async function signIn(
     { headers: { Cookie: stateCookie } },
   );
   if (cb.status !== 302) throw new Error(`callback returned ${cb.status}`);
-  const session = cookiePair(cb, SESSION_COOKIE);
+  const session = cookiePair(cb, cookieNames.session);
   if (session === null) throw new Error('callback set no session cookie');
   return session;
 }

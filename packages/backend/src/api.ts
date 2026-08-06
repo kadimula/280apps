@@ -38,10 +38,6 @@ import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
 import type { RequestDeps } from './config.js';
 import { DeviceStatus, type App as StoreApp, type AppRole, type User } from './seams.js';
 
-const SESSION_COOKIE = '280_session';
-// STATE_COOKIE is the short-lived CSRF binding for one in-flight OIDC login.
-const STATE_COOKIE = '280_oauth';
-
 // Caller's binary version; the server uses it to refuse a CLI too old for this API.
 const HEADER_CLI_VERSION = 'X-280-Cli-Version';
 
@@ -636,7 +632,7 @@ export class Server {
         c.req.query('redirect') ?? '',
         clientIp(c),
       );
-      setCookie(c, STATE_COOKIE, stateCookie, this.cookieOpts(c, 600));
+      setCookie(c, auth.oauthCookieName, stateCookie, this.cookieOpts(c, 600));
       return c.redirect(authUrl, 302);
     } catch (err) {
       if (err instanceof AuthError) return this.authBounce(c, auth);
@@ -656,14 +652,14 @@ export class Server {
         c.req.param('provider') ?? '',
         c.req.query('code') ?? '',
         c.req.query('state') ?? '',
-        getCookie(c, STATE_COOKIE) ?? '',
+        getCookie(c, auth.oauthCookieName) ?? '',
       );
-      setCookie(c, SESSION_COOKIE, result.sessionToken, this.cookieOpts(c, auth.sessionTtlSecs));
-      deleteCookie(c, STATE_COOKIE, this.cookieOpts(c, 0));
+      setCookie(c, auth.sessionCookieName, result.sessionToken, this.cookieOpts(c, auth.sessionTtlSecs));
+      deleteCookie(c, auth.oauthCookieName, this.cookieOpts(c, 0));
       return c.redirect(result.redirect, 302);
     } catch (err) {
       if (err instanceof AuthError) {
-        deleteCookie(c, STATE_COOKIE, this.cookieOpts(c, 0));
+        deleteCookie(c, auth.oauthCookieName, this.cookieOpts(c, 0));
         return this.authBounce(c, auth);
       }
       throw err;
@@ -675,7 +671,7 @@ export class Server {
   private async handleAuthMe(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.json({ user: null });
-    const user = await auth.me(getCookie(c, SESSION_COOKIE) ?? '');
+    const user = await auth.me(getCookie(c, auth.sessionCookieName) ?? '');
     return c.json({ user: user === null ? null : encodeUser(user) });
   }
 
@@ -683,8 +679,8 @@ export class Server {
   private async handleAuthLogout(c: Context<HonoEnv>): Promise<Response> {
     const auth = this.deps(c).auth;
     if (auth === undefined) return c.text('login is not configured', 404);
-    await auth.logout(getCookie(c, SESSION_COOKIE) ?? '');
-    deleteCookie(c, SESSION_COOKIE, this.cookieOpts(c, 0));
+    await auth.logout(getCookie(c, auth.sessionCookieName) ?? '');
+    deleteCookie(c, auth.sessionCookieName, this.cookieOpts(c, 0));
     return c.redirect(auth.safeRedirect(c.req.query('redirect') ?? '/'), 303);
   }
 
@@ -723,7 +719,7 @@ export class Server {
     if (auth === undefined) {
       throw new DeployErr({ code: DeployCode.NotFound, message: 'the internal API is not configured' });
     }
-    const user = await auth.me(getCookie(c, SESSION_COOKIE) ?? '');
+    const user = await auth.me(getCookie(c, auth.sessionCookieName) ?? '');
     if (user === null) {
       throw new DeployErr({ code: DeployCode.Unauthorized, message: 'not signed in' });
     }

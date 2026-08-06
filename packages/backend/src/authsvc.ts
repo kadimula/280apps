@@ -36,6 +36,8 @@ export interface AuthConfig {
   // Scopes the session cookie. Empty is host-only (localhost dev); ".280apps.com"
   // lets api and www share it in production.
   cookieDomain: string;
+  sessionCookieName: string;
+  oauthCookieName: string;
   sessionTtlSecs: number;
   // Login limiter, applied per client IP at the start of the flow.
   rate: { windowSecs: number; max: number };
@@ -77,6 +79,14 @@ export class Auth {
 
   get cookieDomain(): string {
     return this.cfg.cookieDomain;
+  }
+
+  get sessionCookieName(): string {
+    return this.cfg.sessionCookieName;
+  }
+
+  get oauthCookieName(): string {
+    return this.cfg.oauthCookieName;
   }
 
   get sessionTtlSecs(): number {

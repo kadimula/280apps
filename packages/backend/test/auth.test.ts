@@ -49,6 +49,31 @@ describe('browser login', () => {
     expect(user!.id).not.toBe('');
   });
 
+  it('environment-specific cookies keep production and development signed in together', async () => {
+    const production = await server({
+      cookieDomain: '.280apps.com',
+      sessionCookieName: '280_session',
+      oauthCookieName: '280_oauth',
+    });
+    const development = await server({
+      cookieDomain: '.280apps.com',
+      sessionCookieName: '280_session_development',
+      oauthCookieName: '280_oauth_development',
+    });
+
+    const productionSession = await signIn(production.app, 'prod@test');
+    const developmentSession = await signIn(
+      development.app,
+      'dev@test',
+      '/dashboard',
+      { session: '280_session_development', oauth: '280_oauth_development' },
+    );
+    const browserCookies = `${productionSession}; ${developmentSession}`;
+
+    expect((await me(production.app, browserCookies))?.email).toBe('prod@test');
+    expect((await me(development.app, browserCookies))?.email).toBe('dev@test');
+  });
+
   it('no session is a null user, not an error', async () => {
     const { app } = await server();
     expect(await me(app, null)).toBeNull();

@@ -11,7 +11,7 @@
 // unit, so the builder does too.
 
 import { DeployCode, DeployErr, appPolicyFromManifest, type BuildSpec } from '@280/contracts';
-import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult } from '../../seams.js';
+import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult, SecretDelivery } from '../../seams.js';
 
 // RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
 // per-app Worker (TWO80_ROUTE_POLICY): access mode + feature roles + route gates +
@@ -74,7 +74,10 @@ function errText(err: unknown): string {
 }
 
 export class ContainerRuntime implements RuntimeSeam {
-  constructor(private readonly builder: ContainerBuilder) {}
+  constructor(
+    private readonly builder: ContainerBuilder,
+    private readonly secrets?: SecretDelivery,
+  ) {}
 
   async activate(act: Activation): Promise<RuntimeResult> {
     const files: ContextFile[] = act.manifest.files.map((f) => ({
@@ -82,13 +85,15 @@ export class ContainerRuntime implements RuntimeSeam {
       read: () => act.asset(f.digest),
     }));
     try {
+      const policy = appPolicyFromManifest(act.manifest);
       await this.builder.rollout({
         app: act.app,
         deployId: act.deployId,
         build: act.manifest.build,
         files,
-        policy: appPolicyFromManifest(act.manifest),
+        policy,
       });
+      await this.secrets?.rollout(act.app, policy.secrets);
     } catch (err) {
       throw buildFailed(err);
     }

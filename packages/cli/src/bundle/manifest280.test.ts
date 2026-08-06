@@ -76,6 +76,10 @@ describe('read280', () => {
     expect(() => read280(projectWith({ roles: ['a', 'a'] }))).toThrow(/twice/);
   });
 
+  it('rejects a duplicate secret name', () => {
+    expect(() => read280(projectWith({ secrets: ['STRIPE_KEY', 'STRIPE_KEY'] }))).toThrow(/twice/);
+  });
+
   it('still parses the egress block (phase 3 compatibility)', () => {
     const root = projectWith({
       egress: { allow: ['api.stripe.com'], credentials: [{ host: 'api.stripe.com', secret: 'K' }] },

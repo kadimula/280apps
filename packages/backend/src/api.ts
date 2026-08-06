@@ -124,6 +124,9 @@ export class Server {
     app.post('/internal/apps/:app/access', this.route((c) => this.handleSetAccess(c)));
     app.get('/internal/apps/:app/share', this.route((c) => this.handleShareDialog(c)));
 
+    app.get('/internal/apps/:app/secrets', this.route((c) => this.handleSecretsList(c)));
+    app.post('/internal/apps/:app/secrets', this.route((c) => this.handleSecretPut(c)));
+
     // The dashboard preview: issues the opaque grant the iframe exchanges at the
     // app host's /__280/preview for a gateway-minted identity.
     app.post('/internal/apps/:app/preview-grant', this.route((c) => this.handlePreviewGrant(c)));
@@ -527,6 +530,69 @@ export class Server {
       viewAsOrigin: this.deps(c).viewAsOrigin,
     });
     return c.html(html);
+  }
+
+  private async handleSecretsList(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const [declared, stored] = await Promise.all([
+      this.declaredSecrets(c, app.id),
+      this.deps(c).platform.store.appSecrets(app.id),
+    ]).catch(() => {
+      throw unavailable('could not read the app secrets');
+    });
+    const byName = new Map(stored.map((s) => [s.name, s]));
+    return c.json({
+      secrets: declared.map((name) => {
+        const s = byName.get(name);
+        return s ? { name, configured: true, setBy: s.setBy, setAt: s.setAt } : { name, configured: false };
+      }),
+    });
+  }
+
+  // Names the owner may configure: the live policy's plus the newest deploy's, so
+  // values can be entered before a first deploy (or a new declaration) goes live.
+  private async declaredSecrets(c: Context<HonoEnv>, appId: string): Promise<string[]> {
+    const store = this.deps(c).platform.store;
+    const [policy, latest] = await Promise.all([
+      store.appPolicy(appId),
+      store.latestDeploy(appId).catch(() => null),
+    ]);
+    const names = new Set(policy?.secrets ?? []);
+    for (const name of latest?.manifest.secrets ?? []) names.add(name);
+    return [...names];
+  }
+
+  private async handleSecretPut(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, secretPutSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the secret',
+      appendReason: false,
+    });
+    if (req.name === '') throw badRequest('name the secret to configure');
+    if (req.value === '') throw badRequest('secret values cannot be empty');
+
+    const cipher = this.deps(c).secretCipher;
+    if (cipher === undefined) throw unavailable('secret storage is not configured');
+    const declared = await this.declaredSecrets(c, app.id).catch(() => {
+      throw unavailable('could not read the app secrets');
+    });
+    if (!declared.includes(req.name)) {
+      throw badRequest(`"${req.name}" is not declared in this app's 280.json`);
+    }
+
+    try {
+      await this.deps(c).platform.store.putAppSecret({
+        appId: app.id,
+        name: req.name,
+        envelope: cipher.protect(app.id, req.name, req.value),
+        setBy: user.email,
+        setAt: nowSecs(),
+      });
+    } catch {
+      throw unavailable('could not save the secret');
+    }
+    return c.body(null, 204);
   }
 
   // handlePreviewGrant issues an owner-authorized, short-lived, hashed preview
@@ -937,6 +1003,16 @@ const grantRevokeSchema = {
 const accessSetSchema = {
   parse(u: unknown): { access: string } {
     return { access: str(asObject(u).access) };
+  },
+};
+
+const secretPutSchema = {
+  parse(u: unknown): { name: string; value: string } {
+    const object = asObject(u);
+    if (typeof object.name !== 'string' || typeof object.value !== 'string') {
+      throw new Error('expected string name and value');
+    }
+    return { name: object.name, value: object.value };
   },
 };
 

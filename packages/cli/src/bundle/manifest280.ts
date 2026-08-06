@@ -87,6 +87,11 @@ function parseSecrets(v: unknown): string[] {
   if (!Array.isArray(v) || v.some((s) => typeof s !== 'string' || s === '')) {
     fail('280.json "secrets" must be a list of secret names', 'e.g. "secrets": ["SUPABASE_URL", "BOX_TOKEN"]');
   }
+  const seen = new Set<string>();
+  for (const s of v as string[]) {
+    if (seen.has(s)) fail(`280.json declares secret "${s}" twice`, 'remove the duplicate secret name');
+    seen.add(s);
+  }
   return [...(v as string[])];
 }
 

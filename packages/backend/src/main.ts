@@ -16,6 +16,7 @@ import { open as openFsBlobStore, openS3, type S3Config } from './blobstore/inde
 import { newLogger } from './logger.js';
 import type { BlobStore, Store } from './seams.js';
 import type { Logger } from './observe.js';
+import { EnvelopeSecretCipher } from './secrets.js';
 
 export async function main(): Promise<void> {
   const log = newLogger(process.env.TWO80_LOG_FORMAT === 'json' ? 'json' : 'text');
@@ -51,6 +52,10 @@ async function run(log: Logger): Promise<void> {
   });
 
   const auth = buildAuth(store, config, log);
+  const secretCipher = config.secretEncryption.key
+    ? new EnvelopeSecretCipher(config.secretEncryption.key, config.secretEncryption.keyId)
+    : undefined;
+  if (!secretCipher) log.warn('secret storage is read-only until TWO80_SECRET_ENCRYPTION_KEY is set');
 
   // One container reused for every request: the store is a process-lifetime pool,
   // torn down once at shutdown rather than per request.
@@ -62,6 +67,7 @@ async function run(log: Logger): Promise<void> {
     machineTokenTtlSecs: config.machineTokenTtlDays * 24 * 60 * 60,
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
+    secretCipher,
   };
 
   const app = new Server({ buildDeps: () => deps, logger: log }).handler();

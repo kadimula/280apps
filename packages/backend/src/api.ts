@@ -538,19 +538,32 @@ export class Server {
 
   private async handleSecretsList(c: Context<HonoEnv>): Promise<Response> {
     const { app } = await this.ownedApp(c);
-    const [policy, stored] = await Promise.all([
-      this.deps(c).platform.store.appPolicy(app.id),
+    const [declared, stored] = await Promise.all([
+      this.declaredSecrets(c, app.id),
       this.deps(c).platform.store.appSecrets(app.id),
     ]).catch(() => {
       throw unavailable('could not read the app secrets');
     });
     const byName = new Map(stored.map((s) => [s.name, s]));
     return c.json({
-      secrets: (policy?.secrets ?? []).map((name) => {
+      secrets: declared.map((name) => {
         const s = byName.get(name);
         return s ? { name, configured: true, setBy: s.setBy, setAt: s.setAt } : { name, configured: false };
       }),
     });
+  }
+
+  // Names the owner may configure: the live policy's plus the newest deploy's, so
+  // values can be entered before a first deploy (or a new declaration) goes live.
+  private async declaredSecrets(c: Context<HonoEnv>, appId: string): Promise<string[]> {
+    const store = this.deps(c).platform.store;
+    const [policy, latest] = await Promise.all([
+      store.appPolicy(appId),
+      store.latestDeploy(appId).catch(() => null),
+    ]);
+    const names = new Set(policy?.secrets ?? []);
+    for (const name of latest?.manifest.secrets ?? []) names.add(name);
+    return [...names];
   }
 
   private async handleSecretPut(c: Context<HonoEnv>): Promise<Response> {
@@ -565,8 +578,10 @@ export class Server {
 
     const cipher = this.deps(c).secretCipher;
     if (cipher === undefined) throw unavailable('secret storage is not configured');
-    const policy = await this.deps(c).platform.store.appPolicy(app.id).catch(() => null);
-    if (!policy?.secrets.includes(req.name)) {
+    const declared = await this.declaredSecrets(c, app.id).catch(() => {
+      throw unavailable('could not read the app secrets');
+    });
+    if (!declared.includes(req.name)) {
       throw badRequest(`"${req.name}" is not declared in this app's 280.json`);
     }
 
@@ -998,7 +1013,10 @@ const accessSetSchema = {
 const secretPutSchema = {
   parse(u: unknown): { name: string; value: string } {
     const object = asObject(u);
-    return { name: str(object.name), value: str(object.value) };
+    if (typeof object.name !== 'string' || typeof object.value !== 'string') {
+      throw new Error('expected string name and value');
+    }
+    return { name: object.name, value: object.value };
   },
 };
 

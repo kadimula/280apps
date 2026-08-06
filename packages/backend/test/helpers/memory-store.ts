@@ -298,6 +298,13 @@ export class MemoryStore implements Store {
     return d ? cloneDeploy(d) : null;
   }
 
+  async latestDeploy(appId: string): Promise<Deploy | null> {
+    const mine = [...this.deploys.values()]
+      .filter((d) => d.appId === appId)
+      .sort((a, b) => b.createdAt - a.createdAt || cmp(b.id, a.id));
+    return mine.length ? cloneDeploy(mine[0]) : null;
+  }
+
   async openDeploys(appId: string): Promise<Deploy[]> {
     return [...this.deploys.values()]
       .filter((d) => d.appId === appId && !stateTerminal(d.state))
@@ -373,6 +380,17 @@ export class MemoryStore implements Store {
       ownerTenant: ownerTenant !== '' ? ownerTenant : (existing?.ownerTenant ?? ''),
       updatedAt: 0,
     });
+    for (const [k, secret] of [...this.secrets.entries()]) {
+      if (secret.appId === appId && !policy.secrets.includes(secret.name)) {
+        this.secrets.delete(k);
+        this.record({
+          userId: this.userIdFor(appId),
+          appId,
+          kind: EventKind.SecretRemoved,
+          detail: JSON.stringify({ name: secret.name }),
+        });
+      }
+    }
     if (ownerEmail !== '' && !this.grants.has(grantKey(appId, ownerEmail))) {
       this.grants.set(grantKey(appId, ownerEmail), {
         appId,

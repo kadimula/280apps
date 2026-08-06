@@ -96,6 +96,9 @@ export const EventKind = {
   // principal. Detail names both the acting owner and the impersonated principal.
   AppPreviewedAs: 'app.previewed_as',
   SecretSet: 'secret.set',
+  // A stored value erased because the live manifest no longer declares its name;
+  // this event is the tombstone (the row itself is deleted).
+  SecretRemoved: 'secret.removed',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
@@ -203,6 +206,9 @@ export interface Store {
   appByScript(script: string): Promise<App | null>;
 
   deploy(appId: string, deployId: string): Promise<Deploy | null>;
+  // The app's newest deploy in any state, for surfaces that must see a pending
+  // manifest before it goes live (secret entry precedes the first go-live).
+  latestDeploy(appId: string): Promise<Deploy | null>;
   openDeploys(appId: string): Promise<Deploy[]>;
   openDeploy(d: Deploy): Promise<Deploy>;
   claimActivation(appId: string, deployId: string): Promise<boolean>;

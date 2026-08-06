@@ -31,7 +31,7 @@ const ident = (over: Partial<Identity> = {}): Identity => ({
 });
 
 function policyManifest(secrets: string[]): { manifest: Manifest; digest: string; body: Uint8Array } {
-  const body = bytesOf('FROM scratch\n');
+  const body = bytesOf(`FROM scratch\n# declares ${secrets.join(',')}\n`);
   const digest = digestBytes(body);
   return {
     manifest: {
@@ -49,29 +49,49 @@ function policyManifest(secrets: string[]): { manifest: Manifest; digest: string
   };
 }
 
-async function ownerApp(secrets: string[], email = 'boss@firm.com'): Promise<{
+interface OwnerAppOpts {
+  email?: string;
+  cipherless?: boolean;
+  pending?: boolean;
+}
+
+async function ownerApp(secrets: string[], opts: OwnerAppOpts = {}): Promise<{
   app: Hono<HonoEnv>;
   session: string;
   appId: string;
   store: Store;
   cipher: EnvelopeSecretCipher;
+  goLive: (secrets: string[]) => Promise<void>;
 }> {
   const harness = await newPlatform();
   live.push(harness);
   const auth = newAuth(harness.store);
   const cipher = new EnvelopeSecretCipher(Buffer.alloc(32, 9).toString('base64'), 'unit');
-  const s = await newServer({ harness, auth, secretCipher: cipher });
-  const session = await signIn(s.app, email);
+  const s = await newServer({ harness, auth, secretCipher: opts.cipherless ? undefined : cipher });
+  const session = await signIn(s.app, opts.email ?? 'boss@firm.com');
 
   const meRes = await s.app.request('/auth/me', { headers: { Cookie: session } });
   const userId = ((await meRes.json()) as { user: { id: string } }).user.id;
-
-  const { manifest, digest, body } = policyManifest(secrets);
   const svc = harness.platform.for(userId);
-  const res = await svc.sync({ identity: ident(), manifest });
-  if (res.missing.length > 0) await svc.putBlob(res.app.id, digest, body.byteLength, bodyOf(body));
 
-  return { app: s.app, session, appId: res.app.id, store: harness.store, cipher };
+  const push = async (names: string[], upload: boolean): Promise<string> => {
+    const { manifest, digest, body } = policyManifest(names);
+    const res = await svc.sync({ identity: ident(), manifest });
+    if (upload && res.missing.length > 0) await svc.putBlob(res.app.id, digest, body.byteLength, bodyOf(body));
+    return res.app.id;
+  };
+  const appId = await push(secrets, !opts.pending);
+
+  return {
+    app: s.app,
+    session,
+    appId,
+    store: harness.store,
+    cipher,
+    goLive: async (names) => {
+      await push(names, true);
+    },
+  };
 }
 
 function list(app: Hono<HonoEnv>, session: string, appId: string): Promise<Response> {
@@ -202,6 +222,60 @@ describe('secrets write', () => {
     const { app, session, appId } = await ownerApp(['STRIPE_KEY']);
     expect((await put(app, session, appId, { name: '', value: 'x' })).status).toBe(422);
     expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: '' })).status).toBe(422);
+  });
+
+  it('rejects a non-string name or value instead of coercing it', async () => {
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY']);
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 12345 })).status).toBe(422);
+    expect((await put(app, session, appId, { name: ['STRIPE_KEY'], value: 'x' })).status).toBe(422);
+    expect(await store.appSecrets(appId)).toHaveLength(0);
+  });
+});
+
+describe('secrets before first go-live', () => {
+  it('lists and accepts values for names declared by a pending deploy', async () => {
+    const { app, session, appId, store, cipher } = await ownerApp(['STRIPE_KEY'], { pending: true });
+    expect(await store.appPolicy(appId)).toBeNull();
+
+    const data = (await (await list(app, session, appId)).json()) as { secrets: Array<Record<string, unknown>> };
+    expect(data.secrets.map((s) => s.name)).toEqual(['STRIPE_KEY']);
+    expect(data.secrets[0].configured).toBe(false);
+
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 'sk_live_pre' })).status).toBe(204);
+    const stored = await store.appSecrets(appId);
+    expect(cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe('sk_live_pre');
+  });
+});
+
+describe('secrets lifecycle across deploys', () => {
+  it('erases a stored value once the live manifest drops its name, with no resurrection', async () => {
+    const { app, session, appId, store, goLive } = await ownerApp(['STRIPE_KEY']);
+    await put(app, session, appId, { name: 'STRIPE_KEY', value: 'v1' });
+
+    await goLive([]);
+    expect(await store.appSecrets(appId)).toEqual([]);
+    const events = await store.recentEvents(50);
+    const removed = events.find((e) => e.kind === 'secret.removed');
+    expect(removed).toBeDefined();
+    expect(removed!.detail).toContain('STRIPE_KEY');
+    expect(JSON.stringify(events)).not.toContain('v1');
+
+    await goLive(['STRIPE_KEY']);
+    const data = (await (await list(app, session, appId)).json()) as { secrets: Array<Record<string, unknown>> };
+    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', configured: false }]);
+  });
+});
+
+describe('secrets without an encryption key', () => {
+  it('still lists declared names but refuses writes', async () => {
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY'], { cipherless: true });
+    const res = await list(app, session, appId);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { secrets: unknown[] };
+    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', configured: false }]);
+
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 'x' })).status).toBe(503);
+    expect(await store.appSecrets(appId)).toHaveLength(0);
   });
 });
 

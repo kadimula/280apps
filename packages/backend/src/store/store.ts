@@ -781,6 +781,15 @@ class PgStore implements Store {
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
   }
 
+  async latestDeploy(appId: string): Promise<Deploy | null> {
+    const res = await this.db.query(
+      `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
+       WHERE app_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [appId],
+    );
+    return res.rows.length ? rowToDeploy(res.rows[0]) : null;
+  }
+
   // The app's non-terminal deploys, which define the blob digests it will accept.
   async openDeploys(appId: string): Promise<Deploy[]> {
     const res = await this.db.query(
@@ -895,6 +904,16 @@ class PgStore implements Store {
         ownerTenant,
       ],
     );
+
+    // Values whose names the live manifest no longer declares are erased, never
+    // resurrected by a later redeclaration; the secret.removed event is the tombstone.
+    const erased = await tx.query(
+      `DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1 AND NOT (name = ANY($2)) RETURNING name`,
+      [appId, policy.secrets],
+    );
+    for (const row of erased.rows) {
+      await this.insertAppEvent(tx, appId, deployId, EventKind.SecretRemoved, eventDetail({ name: row.name }));
+    }
 
     // Seed the owner's grant so the builder can open and fully use their own app on
     // the gateway from the first deploy. DO NOTHING preserves a role the owner may

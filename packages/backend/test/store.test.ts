@@ -381,6 +381,32 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(setEvents.every((e) => !e.detail.includes('env-'))).toBe(true);
   });
 
+  it('latestDeploy returns the newest deploy in any state', async () => {
+    const a = appFixture({ slug: 'latest-deploy' });
+    await store.createApp(a);
+    expect(await store.latestDeploy(a.id)).toBeNull();
+    await store.openDeploy({ appId: a.id, id: 'dep_a', manifest: manifestFor('a'.repeat(64)), state: State.Uploading, failure: null });
+    await store.openDeploy({ appId: a.id, id: 'dep_b', manifest: manifestFor('b'.repeat(64)), state: State.Uploading, failure: null });
+    expect((await store.latestDeploy(a.id))?.id).toBe('dep_b');
+  });
+
+  it('finishLive erases secrets the live manifest no longer declares', async () => {
+    const a = appFixture({ slug: 'erases-secrets' });
+    await store.createApp(a);
+    const base = { appId: a.id, setBy: 'boss@firm.com', setAt: 100 };
+    await store.putAppSecret({ ...base, name: 'KEEP_KEY', envelope: 'env-keep' });
+    await store.putAppSecret({ ...base, name: 'DROP_KEY', envelope: 'env-drop' });
+
+    const manifest = { ...manifestFor('c'.repeat(64)), secrets: ['KEEP_KEY'] };
+    await store.openDeploy({ appId: a.id, id: 'dep_live', manifest, state: State.Uploading, failure: null });
+    await store.finishLive(a.id, 'dep_live');
+
+    expect((await store.appSecrets(a.id)).map((s) => s.name)).toEqual(['KEEP_KEY']);
+    const removed = (await store.recentEvents(50)).filter((e) => e.kind === EventKind.SecretRemoved);
+    expect(removed).toHaveLength(1);
+    expect(removed[0].detail).toContain('DROP_KEY');
+  });
+
   it('deleteApp removes the app secrets', async () => {
     const a = appFixture({ slug: 'to-purge' });
     await store.createApp(a);

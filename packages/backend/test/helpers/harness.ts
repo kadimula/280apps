@@ -134,7 +134,8 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
     machineTokenTtlSecs: opts.machineTokenTtlSecs ?? DEFAULT_TEST_TOKEN_TTL_SECS,
     appDomain: '280apps.run',
     viewAsOrigin: 'https://auth.280apps.run',
-    secretCipher: opts.secretCipher ?? new EnvelopeSecretCipher(Buffer.alloc(32, 7).toString('base64'), 'test'),
+    secretCipher:
+      'secretCipher' in opts ? opts.secretCipher : new EnvelopeSecretCipher(Buffer.alloc(32, 7).toString('base64'), 'test'),
   };
 }
 

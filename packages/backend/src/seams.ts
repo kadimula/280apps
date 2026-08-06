@@ -294,3 +294,9 @@ export interface Runtime {
   activate(act: Activation): Promise<RuntimeResult>;
   delete(app: RuntimeApp): Promise<void>;
 }
+
+export interface SecretDelivery {
+  rollout(app: RuntimeApp, declared: string[]): Promise<void>;
+  set(app: RuntimeApp, name: string): Promise<void>;
+  delete(app: RuntimeApp, name: string): Promise<void>;
+}

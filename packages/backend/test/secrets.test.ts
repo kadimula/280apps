@@ -10,9 +10,10 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { HonoEnv } from '../src/observe.js';
-import type { Store } from '../src/seams.js';
+import type { SecretDelivery, Store } from '../src/seams.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper, type KeyWrapper } from '../src/secrets.js';
 import { KmsKeyWrapper } from '../src/kms.js';
+import { deliveryFailed } from '../src/secret-delivery.js';
 import { bodyOf, bytesOf, newPlatform, newServer, type Harness } from './helpers/harness.js';
 import { newAuth, signIn } from './helpers/auth.js';
 
@@ -54,6 +55,7 @@ interface OwnerAppOpts {
   email?: string;
   cipherless?: boolean;
   pending?: boolean;
+  secretDelivery?: SecretDelivery;
 }
 
 async function ownerApp(secrets: string[], opts: OwnerAppOpts = {}): Promise<{
@@ -68,7 +70,12 @@ async function ownerApp(secrets: string[], opts: OwnerAppOpts = {}): Promise<{
   live.push(harness);
   const auth = newAuth(harness.store);
   const cipher = new EnvelopeSecretCipher(new LocalKeyWrapper(Buffer.alloc(32, 9).toString('base64'), 'unit'));
-  const s = await newServer({ harness, auth, secretCipher: opts.cipherless ? undefined : cipher });
+  const s = await newServer({
+    harness,
+    auth,
+    secretCipher: opts.cipherless ? undefined : cipher,
+    secretDelivery: opts.secretDelivery,
+  });
   const session = await signIn(s.app, opts.email ?? 'boss@firm.com');
 
   const meRes = await s.app.request('/auth/me', { headers: { Cookie: session } });
@@ -355,6 +362,42 @@ describe('secrets manage', () => {
     expect((await secretAction(app, intruder, appId, 'reveal', 'STRIPE_KEY')).status).toBe(404);
     expect((await secretAction(app, intruder, appId, 'delete', 'STRIPE_KEY')).status).toBe(404);
     expect(await store.appSecrets(appId)).toHaveLength(1);
+  });
+});
+
+describe('live secret delivery', () => {
+  it('propagates dashboard sets and deletes without a redeploy', async () => {
+    const actions: string[] = [];
+    const delivery: SecretDelivery = {
+      rollout: async () => {},
+      set: async (_app, name) => {
+        actions.push(`set:${name}`);
+      },
+      delete: async (_app, name) => {
+        actions.push(`delete:${name}`);
+      },
+    };
+    const { app, session, appId } = await ownerApp(['STRIPE_KEY'], { secretDelivery: delivery });
+    const value = ['runtime', 'value'].join(':');
+
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(204);
+    expect((await secretAction(app, session, appId, 'delete', 'STRIPE_KEY')).status).toBe(204);
+    expect(actions).toEqual(['set:STRIPE_KEY', 'delete:STRIPE_KEY']);
+  });
+
+  it('fails the request when live delivery fails', async () => {
+    const delivery: SecretDelivery = {
+      rollout: async () => {},
+      set: async () => {
+        throw deliveryFailed(['STRIPE_KEY']);
+      },
+      delete: async () => {},
+    };
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY'], { secretDelivery: delivery });
+    const value = ['runtime', 'value'].join(':');
+
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(503);
+    expect(await store.appSecretNames(appId)).toEqual(['STRIPE_KEY']);
   });
 });
 

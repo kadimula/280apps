@@ -37,7 +37,7 @@ async function run(log: Logger): Promise<void> {
   // do not depend on the CI migrate runner having gone first.
   const store = await openStore(config.dbConnectionString, config.dbSchema);
   const blobs = await openBlobs(config, log);
-  const runtime = selectRuntime(config, log);
+  const { runtime, secretDelivery } = selectRuntime(config, log, store, secretCipher);
 
   // One in-process activator serializes an app's activation and delete by a
   // promise chain: the single-instance replacement for the per-app Durable Object.
@@ -67,6 +67,7 @@ async function run(log: Logger): Promise<void> {
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
     secretCipher,
+    secretDelivery,
   };
 
   const app = new Server({ buildDeps: () => deps, logger: log }).handler();

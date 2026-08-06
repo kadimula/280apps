@@ -55,12 +55,12 @@ function rolloutOf(act: Activation, over: { policy?: Record<string, unknown> } =
   };
 }
 
-type Call = { cmd: string; args: string[]; cwd: string; env?: Record<string, string> };
+type Call = { cmd: string; args: string[]; cwd: string; env?: Record<string, string>; input?: string };
 
 function recordingExec(codes: Record<string, number> = {}): { exec: ExecFn; calls: Call[] } {
   const calls: Call[] = [];
   const exec: ExecFn = async (cmd, args, opts) => {
-    calls.push({ cmd, args, cwd: opts.cwd, env: opts.env });
+    calls.push({ cmd, args, cwd: opts.cwd, env: opts.env, input: opts.input });
     return { code: codes[cmd] ?? 0, output: `${cmd} output` };
   };
   return { exec, calls };
@@ -268,6 +268,43 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
     expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://console.280apps.com');
     await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('delivers Worker secrets in bulk through stdin', async () => {
+    const { exec, calls } = recordingExec();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'acct1', apiToken: 'tok1', depotToken: 'd', projectId: 'p', exec, api });
+    const value = ['runtime', 'credential'].join(':');
+
+    await builder.bulk(app(), { API_KEY: value, REMOVED_KEY: null });
+
+    const call = calls[0]!;
+    expect(call.args).toEqual(['secret', 'bulk', '--name', 'demo-abc']);
+    expect(call.args).not.toContain(value);
+    expect(call.input).toBe(JSON.stringify({ API_KEY: value, REMOVED_KEY: null }));
+    expect(call.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 'tok1', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
+  });
+
+  it('batches Worker secret delivery at the Wrangler limit', async () => {
+    const { exec, calls } = recordingExec();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
+    const values = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`KEY_${i}`, null]));
+
+    await builder.bulk(app(), values);
+
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(JSON.parse(calls[0]!.input!))).toHaveLength(100);
+    expect(Object.keys(JSON.parse(calls[1]!.input!))).toHaveLength(1);
+  });
+
+  it('reports secret delivery failure without returning command output', async () => {
+    const output = ['sensitive', 'echo'].join(':');
+    const exec: ExecFn = async () => ({ code: 1, output });
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
+
+    await expect(builder.bulk(app(), { API_KEY: output })).rejects.not.toThrow(output);
   });
 
   it('teardown deletes the app worker by name: wrangler delete <script> --force', async () => {

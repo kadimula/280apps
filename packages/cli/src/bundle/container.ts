@@ -10,6 +10,7 @@
 // (contracts Manifest): kind "container", a BuildSpec, and every context file
 // content-addressed so the deploy loop uploads only what the server lacks.
 
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   MANIFEST_KIND_CONTAINER,
@@ -147,13 +148,63 @@ const IGNORE_DIRS = new Set([
   '.cache',
 ]);
 
-// skipRepo drops ignored trees and, importantly, secret files: a .env* must never
-// leave the machine or enter the image. Platform-held secrets are phase 3; until
-// then the safe default is to never ship them.
+// skipRepo drops always-excluded trees and secret files: build/VCS dirs the image
+// rebuilds itself, and a .env* which must never leave the machine or enter the
+// image. repoSkip layers the repo's own .gitignore on top of this for source walks.
 function skipRepo(rel: string, isDir: boolean): boolean {
   const base = rel.split('/').pop() ?? '';
   if (isDir) return IGNORE_DIRS.has(base);
   return base === '.env' || base.startsWith('.env.');
+}
+
+// gitIgnoredEntries returns the paths git would ignore under root (untracked and
+// ignored, so tracked files are unaffected), each relative to root with a
+// directory collapsed to a single trailing-slash entry. Empty when root is not a
+// git checkout or git is unavailable: the push still runs, it just cannot subtract
+// gitignored files, matching the prior behavior.
+function gitIgnoredEntries(root: string): Set<string> {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    return new Set(out.split('\n').filter(Boolean).map((p) => p.replace(/\/$/, '')));
+  } catch {
+    return new Set();
+  }
+}
+
+// repoSkip composes the always-drop rules with the repo's .gitignore so a
+// gitignored secret (SUPABASE_SECRETS.md, credentials.json) never uploads or bakes
+// into the image. It records each gitignored entry it drops so push can report
+// what it left out — a build-required generated file that happens to be gitignored
+// would show up here rather than vanish silently.
+function repoSkip(root: string): {
+  skip: (rel: string, isDir: boolean) => boolean;
+  skipped: string[];
+} {
+  const ignored = gitIgnoredEntries(root);
+  const skipped: string[] = [];
+  const skip = (rel: string, isDir: boolean): boolean => {
+    if (skipRepo(rel, isDir)) return true;
+    if (ignored.has(rel)) {
+      skipped.push(isDir ? rel + '/' : rel);
+      return true;
+    }
+    return false;
+  };
+  return { skip, skipped };
+}
+
+// skippedNote surfaces gitignored exclusions in the push output, capped so a large
+// ignore set stays readable.
+function skippedNote(skipped: string[]): string[] {
+  if (skipped.length === 0) return [];
+  const shown = skipped.slice(0, 10);
+  const more = skipped.length - shown.length;
+  const list = shown.join(', ') + (more > 0 ? `, +${more} more` : '');
+  return [`not uploaded (gitignored): ${list}`];
 }
 
 // bytes content-addresses one generated file and appends it to the context.
@@ -216,11 +267,12 @@ export function buildNextContainer(root: string): Bundle {
   }
   const content = new Map<Digest, Uint8Array>();
   const policy = read280(root);
+  const { skip, skipped } = repoSkip(root);
 
   // Escape hatch: a user Dockerfile at the repo root wins, and 280 generates
   // nothing — the app is built exactly as its Dockerfile says.
   if (fileExists(join(root, 'Dockerfile'))) {
-    const files = walkContext(root, content, { skip: skipRepo });
+    const files = walkContext(root, content, { skip });
     return assemble(
       files,
       content,
@@ -228,19 +280,23 @@ export function buildNextContainer(root: string): Bundle {
       [
         'using your Dockerfile; your app must listen on port ' + APP_PORT,
         'to allow platform HTTPS egress, install the Cloudflare CA in your entrypoint (' + CA_PATH + ')',
+        ...skippedNote(skipped),
       ],
       policy,
     );
   }
 
-  const files = walkContext(root, content, { skip: skipRepo });
+  const files = walkContext(root, content, { skip });
   addGenerated(files, content, 'Dockerfile', NEXT_DOCKERFILE);
   addGenerated(files, content, ENTRYPOINT_PATH, ENTRYPOINT);
   return assemble(
     files,
     content,
     'next',
-    ['generated a Dockerfile that builds and runs your Next.js app on port ' + APP_PORT],
+    [
+      'generated a Dockerfile that builds and runs your Next.js app on port ' + APP_PORT,
+      ...skippedNote(skipped),
+    ],
     policy,
   );
 }

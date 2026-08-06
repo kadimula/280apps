@@ -1,6 +1,7 @@
 // The container buildpack: the generated Next.js context, the escape hatch, the
 // secret/dependency exclusions, and the locked CA entrypoint.
 
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -65,6 +66,35 @@ describe('buildNextContainer', () => {
     expect(p.some((x) => x.startsWith('.git/'))).toBe(false);
     expect(p).not.toContain('.env');
     expect(p).not.toContain('.env.local');
+  });
+
+  it('honors .gitignore: a gitignored secret never uploads and is reported', () => {
+    const root = nextProject({
+      '.gitignore': 'SUPABASE_SECRETS.md\nsecrets/\n',
+      'SUPABASE_SECRETS.md': 'DB_PASSWORD=hunter2',
+      'secrets/token.txt': 'ghp_realtoken',
+      'README.md': '# demo',
+    });
+    execFileSync('git', ['-C', root, 'init', '-q'], { stdio: 'ignore' });
+
+    const b = buildNextContainer(root);
+    const p = b.manifest.files.map((f) => f.path);
+    expect(p).not.toContain('SUPABASE_SECRETS.md');
+    expect(p.some((x) => x.startsWith('secrets/'))).toBe(false);
+    expect(p).toContain('README.md'); // a non-ignored file still ships
+
+    const note = b.notes.find((n) => n.startsWith('not uploaded (gitignored):'))!;
+    expect(note).toContain('SUPABASE_SECRETS.md');
+    expect(note).toContain('secrets/');
+  });
+
+  it('outside a git checkout, uploads every non-.env file (no gitignore to honor)', () => {
+    const root = nextProject({ 'notes.md': 'keep me', 'SUPABASE_SECRETS.md': 'x' });
+    const b = buildNextContainer(root); // nextProject is a plain temp dir, not a git repo
+    const p = b.manifest.files.map((f) => f.path);
+    expect(p).toContain('notes.md');
+    expect(p).toContain('SUPABASE_SECRETS.md');
+    expect(b.notes.some((n) => n.startsWith('not uploaded (gitignored):'))).toBe(false);
   });
 
   it('escape hatch: a user Dockerfile wins and nothing is generated', () => {

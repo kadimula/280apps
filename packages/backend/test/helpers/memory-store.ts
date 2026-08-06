@@ -20,6 +20,7 @@ import {
   DeviceStatus,
   EventKind,
   type App,
+  type AppSecret,
   type Deploy,
   type DeviceCode,
   type Event,
@@ -46,6 +47,7 @@ export class MemoryStore implements Store {
   private readonly previewGrants = new Map<string, PreviewGrant>(); // tokenHash -> grant
   private readonly grants = new Map<string, Grant>(); // `${appId}/${principal}`
   private readonly policies = new Map<string, AppPolicy>(); // appId -> policy (manifest-declared access)
+  private readonly secrets = new Map<string, AppSecret>(); // `${appId}/${name}`
   private readonly accessOverrides = new Map<string, string>(); // appId -> dashboard override
   private readonly events: Event[] = [];
 
@@ -273,6 +275,9 @@ export class MemoryStore implements Store {
     for (const [key, g] of [...this.grants.entries()]) {
       if (g.appId === appId) this.grants.delete(key);
     }
+    for (const [key, secret] of [...this.secrets.entries()]) {
+      if (secret.appId === appId) this.secrets.delete(key);
+    }
     return true;
   }
 
@@ -417,6 +422,23 @@ export class MemoryStore implements Store {
     return true;
   }
 
+  async putAppSecret(secret: AppSecret): Promise<void> {
+    this.secrets.set(secretKey(secret.appId, secret.name), { ...secret });
+    this.record({
+      userId: this.userIdFor(secret.appId),
+      appId: secret.appId,
+      kind: EventKind.SecretSet,
+      detail: JSON.stringify({ name: secret.name, by: secret.setBy }),
+    });
+  }
+
+  async appSecrets(appId: string): Promise<AppSecret[]> {
+    return [...this.secrets.values()]
+      .filter((secret) => secret.appId === appId)
+      .sort((a, b) => cmp(a.name, b.name))
+      .map((secret) => ({ ...secret }));
+  }
+
   async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string; kind?: string }): Promise<void> {
     this.record({
       userId: this.userIdFor(e.appId),
@@ -485,6 +507,10 @@ function key(appId: string, deployId: string): string {
 
 function grantKey(appId: string, principal: string): string {
   return `${appId}/${principal}`;
+}
+
+function secretKey(appId: string, name: string): string {
+  return `${appId}/${name}`;
 }
 
 function cloneGrant(g: Grant): Grant {

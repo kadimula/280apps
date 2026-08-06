@@ -95,6 +95,7 @@ export const EventKind = {
   // A "view as user" preview mint: an owner/admin rendered the app as another
   // principal. Detail names both the acting owner and the impersonated principal.
   AppPreviewedAs: 'app.previewed_as',
+  SecretSet: 'secret.set',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
@@ -106,6 +107,14 @@ export interface Event {
   kind: string;
   detail: string; // small JSON object string, or empty
   createdAt: number;
+}
+
+export interface AppSecret {
+  appId: string;
+  name: string;
+  envelope: string;
+  setBy: string;
+  setAt: number;
 }
 
 export interface ExpiryCounts {
@@ -219,6 +228,9 @@ export interface Store {
   // audits policy.access_changed naming the actor. False when the app has no
   // policy row yet (never gone live), which callers reject rather than create.
   setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean>;
+
+  putAppSecret(secret: AppSecret): Promise<void>;
+  appSecrets(appId: string): Promise<AppSecret[]>;
 
   // Records one gateway access decision (allowed/denied) for the permission audit.
   // kind overrides the event kind derived from `allowed` (e.g. app.previewed_as

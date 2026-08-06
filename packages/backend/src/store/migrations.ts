@@ -179,6 +179,15 @@ export function migrations(schema: string): string[] {
     // applies); else a valid AppAccess that wins durably across redeploys.
     `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS access_override TEXT NOT NULL DEFAULT ''`,
 
+    `CREATE TABLE IF NOT EXISTS ${t('app_secrets')} (
+       app_id   TEXT NOT NULL,
+       name     TEXT NOT NULL,
+       envelope TEXT NOT NULL,
+       set_by   TEXT NOT NULL,
+       set_at   BIGINT NOT NULL,
+       PRIMARY KEY (app_id, name)
+     )`,
+
     // Owner-authorized dashboard preview grants, modeled on device_codes: only the
     // opaque token's hash is stored. The control plane inserts; the gateway reads
     // per mint, so revoked/expires_at bound and kill a preview server-side.

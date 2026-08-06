@@ -3,6 +3,7 @@
 
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
+import type { SecretCipher } from './secrets.js';
 
 // ConfigVars is the raw environment the host reads: non-secret tunables and
 // secrets, all optional strings (absent ⇒ undefined).
@@ -46,6 +47,8 @@ export interface ConfigVars {
   // authorizes the wrangler roll. Required for the depot builder.
   CLOUDFLARE_API_TOKEN?: string;
   DATABASE_URL?: string;
+  TWO80_SECRET_ENCRYPTION_KEY?: string;
+  TWO80_SECRET_ENCRYPTION_KEY_ID?: string;
 }
 
 // Config is ConfigVars resolved: defaults applied, numbers parsed, secrets grouped.
@@ -78,6 +81,7 @@ export interface Config {
   // GATEWAY binding targets and the identity issuer the middleware verifies.
   gatewayService: string;
   idIssuer: string;
+  secretEncryption: { key: string; keyId: string };
 }
 
 // resolveConfig turns raw vars into typed Config. dbConnectionString is injected
@@ -116,6 +120,10 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     workerEntry: str(vars.TWO80_WORKER_ENTRY, 'worker.js'),
     gatewayService: str(vars.TWO80_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
     idIssuer: str(vars.TWO80_ID_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
+    secretEncryption: {
+      key: vars.TWO80_SECRET_ENCRYPTION_KEY ?? '',
+      keyId: vars.TWO80_SECRET_ENCRYPTION_KEY_ID ?? '',
+    },
   };
 }
 
@@ -134,4 +142,5 @@ export interface RequestDeps {
   // links point at (the gateway owns view-as; the control plane only links to it).
   appDomain: string;
   viewAsOrigin: string;
+  secretCipher?: SecretCipher;
 }

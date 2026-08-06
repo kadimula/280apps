@@ -21,6 +21,7 @@ import {
   DeviceStatus,
   EventKind,
   type App,
+  type AppSecret,
   type Deploy,
   type DeviceCode,
   type Event,
@@ -404,6 +405,16 @@ function rowToAppPolicy(r: Row): AppPolicy {
   };
 }
 
+function rowToAppSecret(r: Row): AppSecret {
+  return {
+    appId: r.app_id,
+    name: r.name,
+    envelope: r.envelope,
+    setBy: r.set_by,
+    setAt: toNum(r.set_at),
+  };
+}
+
 function eventDetail(kv: Record<string, string>): string {
   if (Object.keys(kv).length === 0) {
     return '';
@@ -738,6 +749,7 @@ class PgStore implements Store {
       // inherits another life's access or route gates.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
       await tx.query(`DELETE FROM ${this.t('app_policies')} WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1`, [appId]);
       // Drop preview grants too, else a deleted app's view-as links stay live until the TTL sweep.
       await tx.query(`DELETE FROM ${this.t('preview_grants')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row it would read the user
@@ -1023,6 +1035,36 @@ class PgStore implements Store {
       );
       return true;
     });
+  }
+
+  async putAppSecret(secret: AppSecret): Promise<void> {
+    await this.inTx(async (tx) => {
+      await tx.query(
+        `INSERT INTO ${this.t('app_secrets')} (app_id, name, envelope, set_by, set_at)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (app_id, name) DO UPDATE SET
+           envelope = EXCLUDED.envelope,
+           set_by = EXCLUDED.set_by,
+           set_at = EXCLUDED.set_at`,
+        [secret.appId, secret.name, secret.envelope, secret.setBy, secret.setAt],
+      );
+      await this.insertAppEvent(
+        tx,
+        secret.appId,
+        '',
+        EventKind.SecretSet,
+        eventDetail({ name: secret.name, by: secret.setBy }),
+      );
+    });
+  }
+
+  async appSecrets(appId: string): Promise<AppSecret[]> {
+    const res = await this.db.query(
+      `SELECT app_id, name, envelope, set_by, set_at
+       FROM ${this.t('app_secrets')} WHERE app_id = $1 ORDER BY name`,
+      [appId],
+    );
+    return res.rows.map(rowToAppSecret);
   }
 
   // A single append to the events table, denormalizing the user from the app row.

@@ -119,15 +119,22 @@ export function migrations(schema: string): string[] {
     // race: a retried push that lost its config file cannot produce a second app.
     `CREATE UNIQUE INDEX IF NOT EXISTS apps_by_client_ref
        ON ${t('apps')}(user_id, client_ref) WHERE client_ref <> ''`,
+    // seq is the creation order (like the events serial): created_at has second
+    // granularity, and "which deploy is newest" must not tie.
     `CREATE TABLE IF NOT EXISTS ${t('deploys')} (
        app_id     TEXT NOT NULL,
        id         TEXT NOT NULL,
        manifest   TEXT NOT NULL,
        state      TEXT NOT NULL,
        failure    TEXT NOT NULL DEFAULT '',
+       waiting_at BIGINT NOT NULL DEFAULT 0,
        created_at BIGINT NOT NULL DEFAULT (${epochDefault}),
+       seq        BIGSERIAL,
        PRIMARY KEY (app_id, id)
      )`,
+    `ALTER TABLE ${t('deploys')} ADD COLUMN IF NOT EXISTS waiting_at BIGINT NOT NULL DEFAULT 0`,
+    `ALTER TABLE ${t('deploys')} ADD COLUMN IF NOT EXISTS seq BIGSERIAL`,
+    `CREATE INDEX IF NOT EXISTS deploys_waiting_secrets ON ${t('deploys')}(waiting_at) WHERE state = 'waiting_secrets'`,
     // Append-only. A serial id because the useful order is when things happened and
     // two events can share a second; scoping columns default '' so reads are plain equality.
     `CREATE TABLE IF NOT EXISTS ${t('events')} (

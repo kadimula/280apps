@@ -5,6 +5,7 @@
 import type { Runtime, Activation, RuntimeApp, RuntimeResult } from '../seams.js';
 
 export class MemoryRuntime implements Runtime {
+  private readonly prepared = new Set<string>();
   private readonly active = new Map<string, string>(); // app id -> deploy id
   private readonly stores = new Map<string, string>(); // app id -> store id
   private failErr: Error | null = null; // one-shot: next activation fails
@@ -18,18 +19,21 @@ export class MemoryRuntime implements Runtime {
     return this.active.get(appId) ?? '';
   }
 
-  async activate(act: Activation): Promise<RuntimeResult> {
+  async prepare(act: Activation): Promise<void> {
     if (this.failErr) {
       const err = this.failErr;
       this.failErr = null;
       throw err;
     }
-    // Read the Dockerfile the way a real runtime would when it assembles the build
-    // context, so a manifest naming a blob nobody uploaded fails here rather than
-    // going live empty.
     const dockerfile = act.manifest.files.find((f) => f.path === act.manifest.build.dockerfile);
     if (dockerfile) await act.asset(dockerfile.digest);
+    this.prepared.add(`${act.app.id}/${act.deployId}`);
+  }
 
+  async activate(act: Activation): Promise<RuntimeResult> {
+    const key = `${act.app.id}/${act.deployId}`;
+    if (!this.prepared.has(key)) await this.prepare(act);
+    this.prepared.delete(key);
     const out: RuntimeResult = { storeId: '' };
     if (act.app.storeId === '') {
       let storeId = this.stores.get(act.app.id) ?? '';

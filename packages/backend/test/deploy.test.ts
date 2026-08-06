@@ -14,6 +14,7 @@ import {
 } from '@280/contracts';
 import { DeployErr, bodyOf, bytesOf, newPlatform, portFor, type Harness } from './helpers/harness.js';
 import { sanitizeSlug, type Service } from '../src/deploysvc.js';
+import { ContainerRuntime, FakeBuilder } from '../src/runtime/container/index.js';
 
 describe('sanitizeSlug', () => {
   it('never returns a name starting with a digit (Cloudflare rejects it at the roll)', () => {
@@ -110,6 +111,84 @@ describe('sync + activation', () => {
     expect(b.deployId).toBe(a.deployId);
   });
 
+  it('builds, then parks before rollout until every declared secret is configured', async () => {
+    const builder = new FakeBuilder();
+    const { h, port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { manifest, content } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY'];
+    const res = await port.sync({ identity: ident({ clientRef: 'parked' }), manifest });
+
+    await uploadAll(port, res.app.id, res.missing, content);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.WaitingSecrets);
+    expect(builder.builds).toHaveLength(1);
+    expect(builder.rollouts).toHaveLength(0);
+
+    await h.store.putAppSecret({ appId: res.app.id, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+    const app = await h.store.app('usr_test', res.app.id);
+    await h.platform.resumeWaitingSecrets(app!);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+    expect(builder.builds).toHaveLength(1);
+    expect(builder.rollouts).toHaveLength(1);
+  });
+
+  it('resumes parked deploys oldest first so the newest becomes the serving version', async () => {
+    const { h, port } = await fresh();
+    const identity = ident({ clientRef: 'multi' });
+    const one = mkBundle('worker-v1');
+    one.manifest.secrets = ['STRIPE_KEY'];
+    const first = await port.sync({ identity, manifest: one.manifest });
+    await uploadAll(port, first.app.id, first.missing, one.content);
+    const two = mkBundle('worker-v2');
+    two.manifest.secrets = ['STRIPE_KEY'];
+    const second = await port.sync({ identity, manifest: two.manifest });
+    await uploadAll(port, second.app.id, second.missing, two.content);
+    expect((await port.status(first.app.id, first.deployId)).state).toBe(State.WaitingSecrets);
+    expect((await port.status(second.app.id, second.deployId)).state).toBe(State.WaitingSecrets);
+
+    await h.store.putAppSecret({ appId: first.app.id, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+    const app = await h.store.app('usr_test', first.app.id);
+    await h.platform.resumeWaitingSecrets(app!);
+
+    expect((await port.status(second.app.id, second.deployId)).state).toBe(State.Live);
+    expect((await h.store.app('usr_test', first.app.id))?.activeDeploy).toBe(second.deployId);
+  });
+
+  it('goes live when the last value lands between the gate check and the park', async () => {
+    const { h, port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY'];
+    const park = h.store.parkActivation.bind(h.store);
+    h.store.parkActivation = async (appId, deployId, waitingAt) => {
+      await h.store.putAppSecret({ appId, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+      return park(appId, deployId, waitingAt);
+    };
+    const res = await port.sync({ identity: ident({ clientRef: 'race' }), manifest });
+
+    await uploadAll(port, res.app.id, res.missing, content);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+  });
+
+  it('re-pushes attach while parked and pass the gate immediately after configuration', async () => {
+    const { h, port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY'];
+    const identity = ident({ clientRef: 'reattach' });
+    const first = await port.sync({ identity, manifest });
+    await uploadAll(port, first.app.id, first.missing, content);
+
+    const parked = await port.sync({ identity, manifest });
+    expect(parked.deployId).toBe(first.deployId);
+    expect(parked.state).toBe(State.WaitingSecrets);
+
+    await h.store.putAppSecret({ appId: first.app.id, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+    const configured = await port.sync({ identity, manifest });
+    expect(configured.deployId).toBe(first.deployId);
+    expect(configured.state).toBe(State.Live);
+  });
+
   it('goes live when every blob has landed', async () => {
     const { port } = await fresh();
     const { manifest, content } = mkBundle('worker', { 'app/a.txt': 'A' });
@@ -161,7 +240,7 @@ describe('push secret notice', () => {
 
     expect(await h.store.appPolicy(res.app.id)).toBeNull();
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}`,
+      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}?variables=1`,
     );
   });
 
@@ -192,7 +271,7 @@ describe('push secret notice', () => {
     await uploadAll(port, res.app.id, res.missing, content);
 
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}`,
+      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}?variables=1`,
     );
   });
 });

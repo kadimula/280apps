@@ -60,6 +60,9 @@ const ident = (over: Partial<Identity> = {}): Identity => ({
 async function pushLive(h: Harness, userId: string, m: Manifest, digest: string, body: Uint8Array): Promise<string> {
   const svc = h.platform.for(userId);
   const res = await svc.sync({ identity: ident(), manifest: m });
+  for (const name of m.secrets ?? []) {
+    await h.store.putAppSecret({ appId: res.app.id, name, envelope: '', setBy: 'owner@test', setAt: 1 });
+  }
   if (res.missing.length > 0) await svc.putBlob(res.app.id, digest, body.byteLength, bodyOf(body));
   return res.app.id;
 }

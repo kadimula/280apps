@@ -336,6 +336,7 @@ export interface PreviewGrant {
 export const State = {
   Uploading: 'uploading',
   Activating: 'activating',
+  WaitingSecrets: 'waiting_secrets',
   Live: 'live',
   Failed: 'failed',
 } as const;

@@ -784,17 +784,18 @@ class PgStore implements Store {
   async latestDeploy(appId: string): Promise<Deploy | null> {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
-       WHERE app_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+       WHERE app_id = $1 ORDER BY seq DESC LIMIT 1`,
       [appId],
     );
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
   }
 
   // The app's non-terminal deploys, which define the blob digests it will accept.
+  // Oldest first, so a caller resuming several rolls the newest last and it wins.
   async openDeploys(appId: string): Promise<Deploy[]> {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
-       WHERE app_id = $1 AND state NOT IN ($2, $3)`,
+       WHERE app_id = $1 AND state NOT IN ($2, $3) ORDER BY seq`,
       [appId, State.Live, State.Failed],
     );
     return res.rows.map(rowToDeploy);
@@ -807,9 +808,10 @@ class PgStore implements Store {
     await this.db.query(
       `INSERT INTO ${this.t('deploys')} AS d (app_id, id, manifest, state, failure) VALUES ($1,$2,$3,$4,'')
        ON CONFLICT (app_id, id) DO UPDATE SET
-         state   = CASE WHEN d.state = $5 THEN $6 ELSE d.state END,
-         failure = CASE WHEN d.state = $7 THEN ''  ELSE d.failure END`,
-      [d.appId, d.id, manifest, State.Uploading, State.Failed, State.Uploading, State.Failed],
+         state      = CASE WHEN d.state = $5 THEN $6 ELSE d.state END,
+         failure    = CASE WHEN d.state = $7 THEN ''  ELSE d.failure END,
+         waiting_at = CASE WHEN d.state = $8 THEN 0   ELSE d.waiting_at END`,
+      [d.appId, d.id, manifest, State.Uploading, State.Failed, State.Uploading, State.Failed, State.Failed],
     );
     const got = await this.deploy(d.appId, d.id);
     if (got === null) {
@@ -826,6 +828,46 @@ class PgStore implements Store {
       [State.Activating, appId, deployId, State.Uploading],
     );
     return res.rowCount === 1;
+  }
+
+  async parkActivation(appId: string, deployId: string, waitingAt: number): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE ${this.t('deploys')} SET state = $1, waiting_at = $2
+       WHERE app_id = $3 AND id = $4 AND state = $5`,
+      [State.WaitingSecrets, waitingAt, appId, deployId, State.Activating],
+    );
+    return res.rowCount === 1;
+  }
+
+  async resumeActivation(appId: string, deployId: string): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE ${this.t('deploys')} SET state = $1, waiting_at = 0
+       WHERE app_id = $2 AND id = $3 AND state = $4`,
+      [State.Activating, appId, deployId, State.WaitingSecrets],
+    );
+    return res.rowCount === 1;
+  }
+
+  async waitingDeploysBefore(cutoff: number): Promise<Deploy[]> {
+    const res = await this.db.query(
+      `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
+       WHERE state = $1 AND waiting_at <= $2`,
+      [State.WaitingSecrets, cutoff],
+    );
+    return res.rows.map(rowToDeploy);
+  }
+
+  async failWaitingSecrets(appId: string, deployId: string, failure: DeployError): Promise<boolean> {
+    return this.inTx(async (tx) => {
+      const res = await tx.query(
+        `UPDATE ${this.t('deploys')} SET state = $1, failure = $2
+         WHERE app_id = $3 AND id = $4 AND state = $5`,
+        [State.Failed, encodeFailure(failure), appId, deployId, State.WaitingSecrets],
+      );
+      if (res.rowCount !== 1) return false;
+      await this.insertAppEvent(tx, appId, deployId, EventKind.DeployFailed, eventDetail({ code: failure.code }));
+      return true;
+    });
   }
 
   // Marks a deploy live and flips the app's serving pointer in one transaction

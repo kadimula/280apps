@@ -55,6 +55,12 @@ function rolloutOf(act: Activation, over: { policy?: Record<string, unknown> } =
   };
 }
 
+async function deploy(builder: DepotBuilder, job: ReturnType<typeof rolloutOf>) {
+  const built = await builder.build(job);
+  await builder.rollout(job, built.imageRef);
+  return built;
+}
+
 type Call = { cmd: string; args: string[]; cwd: string; env?: Record<string, string>; input?: string };
 
 function recordingExec(codes: Record<string, number> = {}): { exec: ExecFn; calls: Call[] } {
@@ -114,7 +120,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       fetch: credsFetch(),
     });
 
-    const res = await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    const res = await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
 
     expect(res.imageRef).toBe('registry.cloudflare.com/acct1/demo-abc:dep_1');
     // Exactly one build command (no docker build/push), then the wrangler roll.
@@ -166,7 +172,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: fetchImpl,
     });
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
 
     // The token is exchanged for scoped registry creds; the raw token is never the password.
     expect(credUrl).toContain('/accounts/acct1/containers/registries/registry.cloudflare.com/credentials');
@@ -189,7 +195,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: credsFetch(),
     });
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     // A project was ensured for this app, and the build ran against it.
     expect(projects).toEqual(['280-app_1']);
     expect(builds).toEqual(['proj_for_280-app_1']);
@@ -203,8 +209,8 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const { exec } = recordingExec();
     const { api, projects } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', workdir, exec, api, fetch: credsFetch() });
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:22' }).act));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:22' }).act));
     expect(projects).toEqual(['280-app_1']);
     await rm(workdir, { recursive: true, force: true });
   });
@@ -215,7 +221,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
-      builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
+      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('280 push') });
     await rm(workdir, { recursive: true, force: true });
   });
@@ -230,7 +236,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     });
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
-      builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
+      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: true });
     expect(calls.find((c) => c.cmd === 'depot')).toBeUndefined();
     await rm(workdir, { recursive: true, force: true });
@@ -258,7 +264,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       fetch: credsFetch(),
     });
     const policy = { access: 'public', roles: [], routes: [{ path: '/reports/*', appRole: '', role: 'analyst' }], secrets: ['API_KEY'] };
-    await builder.rollout(rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { policy }));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { policy }));
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },
     ]);

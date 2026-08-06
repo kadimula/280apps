@@ -382,7 +382,7 @@ describe('live secret delivery', () => {
 
     expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(204);
     expect((await secretAction(app, session, appId, 'delete', 'STRIPE_KEY')).status).toBe(204);
-    expect(actions).toEqual(['set:STRIPE_KEY', 'delete:STRIPE_KEY']);
+    expect(actions).toEqual(['delete:STRIPE_KEY']);
   });
 
   it('fails the request when live delivery fails', async () => {
@@ -396,12 +396,23 @@ describe('live secret delivery', () => {
     const { app, session, appId, store } = await ownerApp(['STRIPE_KEY'], { secretDelivery: delivery });
     const value = ['runtime', 'value'].join(':');
 
-    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(503);
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(204);
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: value + ':rotated' })).status).toBe(503);
     expect(await store.appSecretNames(appId)).toEqual(['STRIPE_KEY']);
   });
 });
 
 describe('secrets before first go-live', () => {
+  it('setting the final missing value resumes a parked deploy without another push', async () => {
+    const { app, session, appId, store } = await ownerApp(['STRIPE_KEY']);
+    expect((await store.latestDeploy(appId))?.state).toBe('waiting_secrets');
+
+    const value = ['configured', 'in', 'browser'].join(':');
+    expect((await put(app, session, appId, { name: 'STRIPE_KEY', value })).status).toBe(204);
+
+    expect((await store.latestDeploy(appId))?.state).toBe('live');
+  });
+
   it('lists and accepts values for names declared by a pending deploy', async () => {
     const { app, session, appId, store, cipher } = await ownerApp(['STRIPE_KEY'], { pending: true });
     expect(await store.appPolicy(appId)).toBeNull();

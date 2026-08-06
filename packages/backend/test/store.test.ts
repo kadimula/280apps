@@ -494,6 +494,135 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.claimActivation(a.id, 'dep_1')).toBe(false);
   });
 
+  it('parkActivation moves activating→waiting_secrets for exactly one caller', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    await store.openDeploy({
+      appId: a.id,
+      id: 'dep_1',
+      manifest: emptyManifest,
+      state: State.Uploading,
+      failure: null,
+    });
+    // an unclaimed deploy cannot be parked
+    expect(await store.parkActivation(a.id, 'dep_1', now())).toBe(false);
+    await store.claimActivation(a.id, 'dep_1');
+    const results = await Promise.all([
+      store.parkActivation(a.id, 'dep_1', now()),
+      store.parkActivation(a.id, 'dep_1', now()),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await store.deploy(a.id, 'dep_1'))?.state).toBe(State.WaitingSecrets);
+  });
+
+  it('resumeActivation moves waiting_secrets→activating for exactly one caller', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    await store.openDeploy({
+      appId: a.id,
+      id: 'dep_1',
+      manifest: emptyManifest,
+      state: State.Uploading,
+      failure: null,
+    });
+    // only a parked deploy can be resumed
+    expect(await store.resumeActivation(a.id, 'dep_1')).toBe(false);
+    await store.claimActivation(a.id, 'dep_1');
+    await store.parkActivation(a.id, 'dep_1', now());
+    const results = await Promise.all([
+      store.resumeActivation(a.id, 'dep_1'),
+      store.resumeActivation(a.id, 'dep_1'),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await store.deploy(a.id, 'dep_1'))?.state).toBe(State.Activating);
+  });
+
+  it('waitingDeploysBefore returns only parked deploys at or before the cutoff', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    for (const [id, at] of [['dep_old', 100], ['dep_new', 200]] as const) {
+      await store.openDeploy({ appId: a.id, id, manifest: emptyManifest, state: State.Uploading, failure: null });
+      await store.claimActivation(a.id, id);
+      await store.parkActivation(a.id, id, at);
+    }
+    expect((await store.waitingDeploysBefore(150)).map((d) => d.id)).toEqual(['dep_old']);
+    await store.resumeActivation(a.id, 'dep_old');
+    expect(await store.waitingDeploysBefore(500)).toMatchObject([{ id: 'dep_new', appId: a.id }]);
+  });
+
+  it('failWaitingSecrets fails a parked deploy exactly once and records the event', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    await store.openDeploy({
+      appId: a.id,
+      id: 'dep_1',
+      manifest: emptyManifest,
+      state: State.Uploading,
+      failure: null,
+    });
+    await store.claimActivation(a.id, 'dep_1');
+    const failure = {
+      code: 'unavailable',
+      message: 'deployment expired while waiting for app secrets',
+      fix: 'set them, then run 280 push again',
+      retryable: false,
+      candidates: [],
+    };
+    // only a parked deploy can be expired
+    expect(await store.failWaitingSecrets(a.id, 'dep_1', failure)).toBe(false);
+    await store.parkActivation(a.id, 'dep_1', now());
+    expect(await store.failWaitingSecrets(a.id, 'dep_1', failure)).toBe(true);
+    expect(await store.failWaitingSecrets(a.id, 'dep_1', failure)).toBe(false);
+    const d = await store.deploy(a.id, 'dep_1');
+    expect(d?.state).toBe(State.Failed);
+    expect(d?.failure?.fix).toBe('set them, then run 280 push again');
+    const failed = (await store.recentEvents(50)).find((e) => e.kind === EventKind.DeployFailed);
+    expect(JSON.parse(failed!.detail)).toEqual({ code: 'unavailable' });
+  });
+
+  it('openDeploy keeps a parked deploy parked and resets waiting_at on a failed reopen', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    const d: Deploy = {
+      appId: a.id,
+      id: 'dep_1',
+      manifest: emptyManifest,
+      state: State.Uploading,
+      failure: null,
+    };
+    await store.openDeploy(d);
+    await store.claimActivation(a.id, 'dep_1');
+    await store.parkActivation(a.id, 'dep_1', 100);
+
+    // a re-push of the same content reattaches without resetting the parked state
+    expect((await store.openDeploy(d)).state).toBe(State.WaitingSecrets);
+    expect((await store.waitingDeploysBefore(100)).map((x) => x.id)).toEqual(['dep_1']);
+
+    await store.failWaitingSecrets(a.id, 'dep_1', {
+      code: 'unavailable',
+      message: 'expired',
+      fix: 'push again',
+      retryable: false,
+      candidates: [],
+    });
+    const reopened = await store.openDeploy(d);
+    expect(reopened.state).toBe(State.Uploading);
+    expect(reopened.failure).toBeNull();
+    // the stale park timestamp is gone: parking again stamps fresh
+    await store.claimActivation(a.id, 'dep_1');
+    await store.parkActivation(a.id, 'dep_1', 900);
+    expect(await store.waitingDeploysBefore(800)).toEqual([]);
+  });
+
+  it('openDeploys returns oldest first', async () => {
+    const a = appFixture();
+    await store.createApp(a);
+    for (const id of ['dep_a', 'dep_b']) {
+      await store.openDeploy({ appId: a.id, id, manifest: emptyManifest, state: State.Uploading, failure: null });
+    }
+    expect((await store.openDeploys(a.id)).map((d) => d.id)).toEqual(['dep_a', 'dep_b']);
+  });
+
   it('finishLive marks live, points the app, deletes the superseded row', async () => {
     const a = appFixture();
     await store.createApp(a);

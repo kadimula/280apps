@@ -1,6 +1,7 @@
 // Dependency construction shared by the host entrypoints: runtime selection,
 // auth wiring, and the scheduled-sweep core.
 
+import { DeployCode, type DeployError } from '@280/contracts';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { MemoryRuntime, container } from './runtime/index.js';
@@ -97,18 +98,35 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
 // sweepExpired is the scheduled cleanup's core, factored out of the Worker so it is
 // testable against any Store: delete expired sessions, device codes, lapsed
 // login-rate windows, and machine tokens past their ttl, and log the counts.
+export const WAITING_SECRETS_TTL_SECS = 30 * 60;
+
 export async function sweepExpired(
   store: Store,
   log: Logger,
   now: number,
   machineTokenTtlSecs: number,
+  frontendOrigin = 'https://console.280apps.com',
 ): Promise<ExpiryCounts> {
   const counts = await store.deleteExpired(now, machineTokenTtlSecs);
+  const waiting = await store.waitingDeploysBefore(now - WAITING_SECRETS_TTL_SECS);
+  let waitingSecrets = 0;
+  for (const dep of waiting) {
+    const link = `${frontendOrigin.replace(/\/$/, '')}/dashboard/${encodeURIComponent(dep.appId)}?variables=1`;
+    const failure: DeployError = {
+      code: DeployCode.Unavailable,
+      message: 'deployment expired while waiting for app secrets',
+      fix: `set them at ${link}, then run 280 push again`,
+      retryable: false,
+      candidates: [],
+    };
+    if (await store.failWaitingSecrets(dep.appId, dep.id, failure)) waitingSecrets++;
+  }
   log.info('scheduled cleanup', {
     sessions: counts.sessions,
     deviceCodes: counts.deviceCodes,
     rateLimits: counts.rateLimits,
     tokens: counts.tokens,
+    waitingSecrets,
   });
   return counts;
 }

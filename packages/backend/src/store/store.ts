@@ -784,17 +784,18 @@ class PgStore implements Store {
   async latestDeploy(appId: string): Promise<Deploy | null> {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
-       WHERE app_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+       WHERE app_id = $1 ORDER BY seq DESC LIMIT 1`,
       [appId],
     );
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
   }
 
   // The app's non-terminal deploys, which define the blob digests it will accept.
+  // Oldest first, so a caller resuming several rolls the newest last and it wins.
   async openDeploys(appId: string): Promise<Deploy[]> {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
-       WHERE app_id = $1 AND state NOT IN ($2, $3)`,
+       WHERE app_id = $1 AND state NOT IN ($2, $3) ORDER BY seq`,
       [appId, State.Live, State.Failed],
     );
     return res.rows.map(rowToDeploy);

@@ -88,18 +88,13 @@ export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Pr
 
   if (state === State.Activating) await deps.runtime.prepare(act);
 
-  if ((dep.manifest.secrets ?? []).length > 0) {
-    let configured: string[] | null = null;
-    try {
-      configured = await deps.store.appSecretNames(app.id);
-    } catch {
-      configured = null;
-    }
-    const present = new Set(configured ?? []);
-    if (configured === null || dep.manifest.secrets.some((name) => !present.has(name))) {
-      await deps.store.parkActivation(app.id, dep.id, (deps.now ?? nowSecs)());
-      return;
-    }
+  const secrets = dep.manifest.secrets ?? [];
+  if (secrets.length > 0 && (await secretsUnconfigured(deps, app.id, secrets))) {
+    await deps.store.parkActivation(app.id, dep.id, (deps.now ?? nowSecs)());
+    // A value saved between the check above and the park found nothing to resume;
+    // re-checking after the park closes that window.
+    if (await secretsUnconfigured(deps, app.id, secrets)) return;
+    state = State.WaitingSecrets;
   }
 
   if (state === State.WaitingSecrets && !(await deps.store.resumeActivation(app.id, dep.id))) return;
@@ -107,6 +102,15 @@ export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Pr
   const res = await deps.runtime.activate(act);
   if (res.storeId !== '' && res.storeId !== app.storeId) await deps.store.setStoreId(app.id, res.storeId);
   await deps.store.finishLive(app.id, dep.id);
+}
+
+async function secretsUnconfigured(deps: ActivatorDeps, appId: string, names: string[]): Promise<boolean> {
+  try {
+    const present = new Set(await deps.store.appSecretNames(appId));
+    return names.some((name) => !present.has(name));
+  } catch {
+    return true;
+  }
 }
 
 // The destructive half of a delete: runtime, then content, then the row that

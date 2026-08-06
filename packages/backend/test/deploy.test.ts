@@ -133,6 +133,44 @@ describe('sync + activation', () => {
     expect(builder.rollouts).toHaveLength(1);
   });
 
+  it('resumes parked deploys oldest first so the newest becomes the serving version', async () => {
+    const { h, port } = await fresh();
+    const identity = ident({ clientRef: 'multi' });
+    const one = mkBundle('worker-v1');
+    one.manifest.secrets = ['STRIPE_KEY'];
+    const first = await port.sync({ identity, manifest: one.manifest });
+    await uploadAll(port, first.app.id, first.missing, one.content);
+    const two = mkBundle('worker-v2');
+    two.manifest.secrets = ['STRIPE_KEY'];
+    const second = await port.sync({ identity, manifest: two.manifest });
+    await uploadAll(port, second.app.id, second.missing, two.content);
+    expect((await port.status(first.app.id, first.deployId)).state).toBe(State.WaitingSecrets);
+    expect((await port.status(second.app.id, second.deployId)).state).toBe(State.WaitingSecrets);
+
+    await h.store.putAppSecret({ appId: first.app.id, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+    const app = await h.store.app('usr_test', first.app.id);
+    await h.platform.resumeWaitingSecrets(app!);
+
+    expect((await port.status(second.app.id, second.deployId)).state).toBe(State.Live);
+    expect((await h.store.app('usr_test', first.app.id))?.activeDeploy).toBe(second.deployId);
+  });
+
+  it('goes live when the last value lands between the gate check and the park', async () => {
+    const { h, port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    manifest.secrets = ['STRIPE_KEY'];
+    const park = h.store.parkActivation.bind(h.store);
+    h.store.parkActivation = async (appId, deployId, waitingAt) => {
+      await h.store.putAppSecret({ appId, name: 'STRIPE_KEY', envelope: '', setBy: 'owner@test', setAt: 1 });
+      return park(appId, deployId, waitingAt);
+    };
+    const res = await port.sync({ identity: ident({ clientRef: 'race' }), manifest });
+
+    await uploadAll(port, res.app.id, res.missing, content);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+  });
+
   it('re-pushes attach while parked and pass the gate immediately after configuration', async () => {
     const { h, port } = await fresh();
     const { manifest, content } = mkBundle('worker');

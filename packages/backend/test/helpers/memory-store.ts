@@ -308,6 +308,7 @@ export class MemoryStore implements Store {
   async openDeploys(appId: string): Promise<Deploy[]> {
     return [...this.deploys.values()]
       .filter((d) => d.appId === appId && !stateTerminal(d.state))
+      .sort((a, b) => a.createdAt - b.createdAt || cmp(a.id, b.id))
       .map(cloneDeploy);
   }
 

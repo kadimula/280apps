@@ -11,7 +11,8 @@ import {
 } from '@280/contracts';
 import type { HonoEnv } from '../src/observe.js';
 import type { Store } from '../src/seams.js';
-import { EnvelopeSecretCipher } from '../src/secrets.js';
+import { EnvelopeSecretCipher, LocalKeyWrapper, type KeyWrapper } from '../src/secrets.js';
+import { KmsKeyWrapper } from '../src/kms.js';
 import { bodyOf, bytesOf, newPlatform, newServer, type Harness } from './helpers/harness.js';
 import { newAuth, signIn } from './helpers/auth.js';
 
@@ -66,7 +67,7 @@ async function ownerApp(secrets: string[], opts: OwnerAppOpts = {}): Promise<{
   const harness = await newPlatform();
   live.push(harness);
   const auth = newAuth(harness.store);
-  const cipher = new EnvelopeSecretCipher(Buffer.alloc(32, 9).toString('base64'), 'unit');
+  const cipher = new EnvelopeSecretCipher(new LocalKeyWrapper(Buffer.alloc(32, 9).toString('base64'), 'unit'));
   const s = await newServer({ harness, auth, secretCipher: opts.cipherless ? undefined : cipher });
   const session = await signIn(s.app, opts.email ?? 'boss@firm.com');
 
@@ -109,40 +110,118 @@ function put(app: Hono<HonoEnv>, session: string, appId: string, body: unknown):
 const KEY = Buffer.alloc(32, 7).toString('base64');
 
 describe('EnvelopeSecretCipher', () => {
-  const cipher = new EnvelopeSecretCipher(KEY, 'k1');
+  const cipher = new EnvelopeSecretCipher(new LocalKeyWrapper(KEY, 'k1'));
 
-  it('round-trips a value through protect and reveal', () => {
-    const envelope = cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
-    expect(cipher.reveal('app1', 'STRIPE_KEY', envelope)).toBe('sk_live_abc123');
+  it('round-trips a value through protect and reveal', async () => {
+    const envelope = await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
+    expect(await cipher.reveal('app1', 'STRIPE_KEY', envelope)).toBe('sk_live_abc123');
   });
 
-  it('never places the plaintext in the envelope', () => {
+  it('never places the plaintext in the envelope', async () => {
     const secret = 'sbp_secret_9f3c8a21e7b4';
-    expect(cipher.protect('app1', 'SUPABASE_SERVICE_ROLE_KEY', secret)).not.toContain(secret);
+    expect(await cipher.protect('app1', 'SUPABASE_SERVICE_ROLE_KEY', secret)).not.toContain(secret);
   });
 
-  it('binds ciphertext to the app and name via AAD', () => {
-    const envelope = cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
-    expect(() => cipher.reveal('app2', 'STRIPE_KEY', envelope)).toThrow();
-    expect(() => cipher.reveal('app1', 'OTHER_KEY', envelope)).toThrow();
+  it('binds ciphertext to the app and name via AAD', async () => {
+    const envelope = await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
+    await expect(cipher.reveal('app2', 'STRIPE_KEY', envelope)).rejects.toThrow();
+    await expect(cipher.reveal('app1', 'OTHER_KEY', envelope)).rejects.toThrow();
   });
 
-  it('refuses an envelope sealed under a different master key', () => {
-    const other = new EnvelopeSecretCipher(Buffer.alloc(32, 1).toString('base64'), 'k2');
-    const envelope = cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
-    expect(() => other.reveal('app1', 'STRIPE_KEY', envelope)).toThrow(/unavailable key/);
+  it('refuses an envelope sealed under a different master key', async () => {
+    const other = new EnvelopeSecretCipher(new LocalKeyWrapper(Buffer.alloc(32, 1).toString('base64'), 'k2'));
+    const envelope = await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
+    await expect(other.reveal('app1', 'STRIPE_KEY', envelope)).rejects.toThrow(/unavailable key/);
   });
 
-  it('rejects a tampered ciphertext', () => {
-    const parsed = JSON.parse(cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123'));
+  it('rejects a tampered ciphertext', async () => {
+    const parsed = JSON.parse(await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123'));
     const bytes = Buffer.from(parsed.value.ciphertext, 'base64');
     bytes[0] ^= 0xff;
     parsed.value.ciphertext = bytes.toString('base64');
-    expect(() => cipher.reveal('app1', 'STRIPE_KEY', JSON.stringify(parsed))).toThrow();
+    await expect(cipher.reveal('app1', 'STRIPE_KEY', JSON.stringify(parsed))).rejects.toThrow();
+  });
+
+  it('rejects a tampered wrapped key', async () => {
+    const parsed = JSON.parse(await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123'));
+    const bytes = Buffer.from(parsed.wrappedKey, 'base64');
+    bytes[bytes.byteLength - 1] ^= 0xff;
+    parsed.wrappedKey = bytes.toString('base64');
+    await expect(cipher.reveal('app1', 'STRIPE_KEY', JSON.stringify(parsed))).rejects.toThrow();
   });
 
   it('rejects a key that is not 32 bytes', () => {
-    expect(() => new EnvelopeSecretCipher(Buffer.alloc(16, 1).toString('base64'))).toThrow(/32 byte key/);
+    expect(() => new LocalKeyWrapper(Buffer.alloc(16, 1).toString('base64'))).toThrow(/32 byte key/);
+  });
+
+  it('routes wrap and unwrap through the KeyWrapper seam', async () => {
+    const calls: string[] = [];
+    const xor = (data: Buffer) => Buffer.from(data.map((b) => b ^ 0x5a));
+    const wrapper: KeyWrapper = {
+      keyId: 'fake-kms',
+      wrap: (dataKey) => {
+        calls.push('wrap');
+        return Promise.resolve(xor(dataKey).toString('base64'));
+      },
+      unwrap: (wrapped) => {
+        calls.push('unwrap');
+        return Promise.resolve(xor(Buffer.from(wrapped, 'base64')));
+      },
+    };
+    const seamed = new EnvelopeSecretCipher(wrapper);
+    const envelope = await seamed.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
+    expect(JSON.parse(envelope).keyId).toBe('fake-kms');
+    expect(await seamed.reveal('app1', 'STRIPE_KEY', envelope)).toBe('sk_live_abc123');
+    expect(calls).toEqual(['wrap', 'unwrap']);
+  });
+});
+
+describe('KmsKeyWrapper', () => {
+  const KEY_NAME = 'projects/p/locations/global/keyRings/r/cryptoKeys/k';
+
+  function fakeKms(): { wrapper: KmsKeyWrapper; requests: Array<{ url: string; auth: string; body: Record<string, string> }> } {
+    const requests: Array<{ url: string; auth: string; body: Record<string, string> }> = [];
+    const xor = (data: Buffer) => Buffer.from(data.map((b) => b ^ 0xa5));
+    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init!.body as string) as Record<string, string>;
+      requests.push({ url: String(url), auth: (init!.headers as Record<string, string>).Authorization, body });
+      const out = String(url).endsWith(':encrypt')
+        ? { ciphertext: xor(Buffer.from(body.plaintext, 'base64')).toString('base64') }
+        : { plaintext: xor(Buffer.from(body.ciphertext, 'base64')).toString('base64') };
+      return new Response(JSON.stringify(out), { status: 200 });
+    }) as typeof fetch;
+    const wrapper = new KmsKeyWrapper(KEY_NAME, '', { fetchImpl, getToken: () => Promise.resolve('tok-1') });
+    return { wrapper, requests };
+  }
+
+  it('uses the key resource name as keyId and round-trips through encrypt/decrypt', async () => {
+    const { wrapper, requests } = fakeKms();
+    expect(wrapper.keyId).toBe(KEY_NAME);
+
+    const cipher = new EnvelopeSecretCipher(wrapper);
+    const envelope = await cipher.protect('app1', 'STRIPE_KEY', 'sk_live_abc123');
+    expect(JSON.parse(envelope).keyId).toBe(KEY_NAME);
+    expect(await cipher.reveal('app1', 'STRIPE_KEY', envelope)).toBe('sk_live_abc123');
+
+    expect(requests.map((r) => r.url)).toEqual([
+      `https://cloudkms.googleapis.com/v1/${KEY_NAME}:encrypt`,
+      `https://cloudkms.googleapis.com/v1/${KEY_NAME}:decrypt`,
+    ]);
+    for (const r of requests) {
+      expect(r.auth).toBe('Bearer tok-1');
+      expect(r.body.additionalAuthenticatedData).toBeTruthy();
+    }
+    expect(requests[0].body.additionalAuthenticatedData).toBe(requests[1].body.additionalAuthenticatedData);
+  });
+
+  it('fails closed on a KMS error status without leaking the response', async () => {
+    const fetchImpl = (async () => new Response('{"error":{"message":"denied"}}', { status: 403 })) as typeof fetch;
+    const wrapper = new KmsKeyWrapper(KEY_NAME, '', { fetchImpl, getToken: () => Promise.resolve('tok-1') });
+    await expect(wrapper.wrap(Buffer.alloc(32), Buffer.from('aad'))).rejects.toThrow(/KMS encrypt failed with status 403/);
+  });
+
+  it('rejects malformed credentials JSON before any call', () => {
+    expect(() => new KmsKeyWrapper(KEY_NAME, 'not json')).toThrow(/not valid JSON/);
   });
 });
 
@@ -187,7 +266,7 @@ describe('secrets write', () => {
     const stored = await store.appSecrets(appId);
     expect(stored).toHaveLength(1);
     expect(stored[0].envelope).not.toContain(secret);
-    expect(cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe(secret);
+    expect(await cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe(secret);
   });
 
   it('keeps the plaintext out of the audit log', async () => {
@@ -209,7 +288,7 @@ describe('secrets write', () => {
 
     const stored = await store.appSecrets(appId);
     expect(stored).toHaveLength(1);
-    expect(cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe('new-value');
+    expect(await cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe('new-value');
   });
 
   it('rejects a name the manifest never declared', async () => {
@@ -243,7 +322,7 @@ describe('secrets before first go-live', () => {
 
     expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 'sk_live_pre' })).status).toBe(204);
     const stored = await store.appSecrets(appId);
-    expect(cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe('sk_live_pre');
+    expect(await cipher.reveal(appId, 'STRIPE_KEY', stored[0].envelope)).toBe('sk_live_pre');
   });
 });
 

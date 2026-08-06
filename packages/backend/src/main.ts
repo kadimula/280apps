@@ -16,7 +16,8 @@ import { open as openFsBlobStore, openS3, type S3Config } from './blobstore/inde
 import { newLogger } from './logger.js';
 import type { BlobStore, Store } from './seams.js';
 import type { Logger } from './observe.js';
-import { EnvelopeSecretCipher } from './secrets.js';
+import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from './secrets.js';
+import { KmsKeyWrapper } from './kms.js';
 
 export async function main(): Promise<void> {
   const log = newLogger(process.env.TWO80_LOG_FORMAT === 'json' ? 'json' : 'text');
@@ -30,6 +31,7 @@ export async function main(): Promise<void> {
 
 async function run(log: Logger): Promise<void> {
   const config = resolveConfig(process.env, process.env.DATABASE_URL ?? '');
+  const secretCipher = buildSecretCipher(config, log);
 
   // open() boot-migrates with idempotent DDL, so the container and rollback paths
   // do not depend on the CI migrate runner having gone first.
@@ -52,10 +54,6 @@ async function run(log: Logger): Promise<void> {
   });
 
   const auth = buildAuth(store, config, log);
-  const secretCipher = config.secretEncryption.key
-    ? new EnvelopeSecretCipher(config.secretEncryption.key, config.secretEncryption.keyId)
-    : undefined;
-  if (!secretCipher) log.warn('secret storage is read-only until TWO80_SECRET_ENCRYPTION_KEY is set');
 
   // One container reused for every request: the store is a process-lifetime pool,
   // torn down once at shutdown rather than per request.
@@ -102,6 +100,31 @@ async function run(log: Logger): Promise<void> {
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
   });
+}
+
+// buildSecretCipher picks the data-key wrapper: Cloud KMS (production design),
+// the local AES key (dev loop / self-host), or none (read-only secret storage).
+// Both configured at once is a startup error so production can never silently
+// fall back to the local key.
+function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefined {
+  const enc = config.secretEncryption;
+  const kmsPartial = (enc.kmsKeyName === '') !== (enc.kmsCredentialsJson === '');
+  if (kmsPartial) {
+    throw new Error('incomplete KMS config: set both TWO80_SECRET_KMS_KEY_NAME and TWO80_SECRET_KMS_CREDENTIALS_JSON');
+  }
+  if (enc.kmsKeyName !== '' && enc.localKey !== '') {
+    throw new Error('set TWO80_SECRET_KMS_* or TWO80_SECRET_ENCRYPTION_KEY, not both');
+  }
+  if (enc.kmsKeyName !== '') {
+    log.info('secret encryption via Cloud KMS', { keyName: enc.kmsKeyName });
+    return new EnvelopeSecretCipher(new KmsKeyWrapper(enc.kmsKeyName, enc.kmsCredentialsJson));
+  }
+  if (enc.localKey !== '') {
+    log.info('secret encryption via local master key');
+    return new EnvelopeSecretCipher(new LocalKeyWrapper(enc.localKey, enc.localKeyId));
+  }
+  log.warn('secret storage is read-only until TWO80_SECRET_KMS_* or TWO80_SECRET_ENCRYPTION_KEY is set');
+  return undefined;
 }
 
 // startSweep runs the cleanup sweep on an interval, the Node stand-in for the

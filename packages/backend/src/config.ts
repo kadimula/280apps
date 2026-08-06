@@ -53,6 +53,10 @@ export interface ConfigVars {
   DATABASE_URL?: string;
   TWO80_SECRET_ENCRYPTION_KEY?: string;
   TWO80_SECRET_ENCRYPTION_KEY_ID?: string;
+  // The Cloud KMS contract for app secret envelopes (production design): the full
+  // key resource name and the service-account credential JSON for the environment.
+  TWO80_SECRET_KMS_KEY_NAME?: string;
+  TWO80_SECRET_KMS_CREDENTIALS_JSON?: string;
 }
 
 // Config is ConfigVars resolved: defaults applied, numbers parsed, secrets grouped.
@@ -87,7 +91,7 @@ export interface Config {
   // GATEWAY binding targets and the identity issuer the middleware verifies.
   gatewayService: string;
   idIssuer: string;
-  secretEncryption: { key: string; keyId: string };
+  secretEncryption: { localKey: string; localKeyId: string; kmsKeyName: string; kmsCredentialsJson: string };
 }
 
 // resolveConfig turns raw vars into typed Config. dbConnectionString is injected
@@ -129,8 +133,10 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     gatewayService: str(vars.TWO80_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
     idIssuer: str(vars.TWO80_ID_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
     secretEncryption: {
-      key: vars.TWO80_SECRET_ENCRYPTION_KEY ?? '',
-      keyId: vars.TWO80_SECRET_ENCRYPTION_KEY_ID ?? '',
+      localKey: vars.TWO80_SECRET_ENCRYPTION_KEY ?? '',
+      localKeyId: vars.TWO80_SECRET_ENCRYPTION_KEY_ID ?? '',
+      kmsKeyName: vars.TWO80_SECRET_KMS_KEY_NAME ?? '',
+      kmsCredentialsJson: vars.TWO80_SECRET_KMS_CREDENTIALS_JSON ?? '',
     },
   };
 }

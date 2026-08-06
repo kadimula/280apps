@@ -6,6 +6,7 @@ import { CloverMark } from "@/components/clover-mark";
 import { ShareDialog } from "@/components/share-dialog";
 import { SiteHeader } from "@/components/site-header";
 import { UserMenu } from "@/components/user-menu";
+import { VariablesDialog } from "@/components/variables-dialog";
 import {
   type ViewAsGroup,
   ViewAsMenu,
@@ -148,6 +149,7 @@ export default async function AppPage({
             }}
           />
         )}
+        <VariablesDialog app={{ id: app.id, slug: app.slug }} />
         <AppMenu appId={app.id} slug={app.slug} />
         <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">
           Docs

@@ -1077,6 +1077,24 @@ class PgStore implements Store {
     });
   }
 
+  async deleteAppSecret(appId: string, name: string, deletedBy: string): Promise<boolean> {
+    return this.inTx(async (tx) => {
+      const res = await tx.query(
+        `DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1 AND name = $2 RETURNING name`,
+        [appId, name],
+      );
+      if (res.rows.length === 0) return false;
+      await this.insertAppEvent(
+        tx,
+        appId,
+        '',
+        EventKind.SecretRemoved,
+        eventDetail({ name, by: deletedBy }),
+      );
+      return true;
+    });
+  }
+
   async appSecrets(appId: string): Promise<AppSecret[]> {
     const res = await this.db.query(
       `SELECT app_id, name, envelope, set_by, set_at

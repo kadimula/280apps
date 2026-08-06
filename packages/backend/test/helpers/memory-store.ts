@@ -450,6 +450,17 @@ export class MemoryStore implements Store {
     });
   }
 
+  async deleteAppSecret(appId: string, name: string, deletedBy: string): Promise<boolean> {
+    if (!this.secrets.delete(secretKey(appId, name))) return false;
+    this.record({
+      userId: this.userIdFor(appId),
+      appId,
+      kind: EventKind.SecretRemoved,
+      detail: JSON.stringify({ name, by: deletedBy }),
+    });
+    return true;
+  }
+
   async appSecrets(appId: string): Promise<AppSecret[]> {
     return [...this.secrets.values()]
       .filter((secret) => secret.appId === appId)

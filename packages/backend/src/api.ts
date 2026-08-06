@@ -126,6 +126,8 @@ export class Server {
 
     app.get('/internal/apps/:app/secrets', this.route((c) => this.handleSecretsList(c)));
     app.post('/internal/apps/:app/secrets', this.route((c) => this.handleSecretPut(c)));
+    app.post('/internal/apps/:app/secrets/reveal', this.route((c) => this.handleSecretReveal(c)));
+    app.post('/internal/apps/:app/secrets/delete', this.route((c) => this.handleSecretDelete(c)));
 
     // The dashboard preview: issues the opaque grant the iframe exchanges at the
     // app host's /__280/preview for a gateway-minted identity.
@@ -595,6 +597,41 @@ export class Server {
     return c.body(null, 204);
   }
 
+  private async handleSecretReveal(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, secretNameSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the secret name',
+      appendReason: false,
+    });
+    const cipher = this.deps(c).secretCipher;
+    if (cipher === undefined) throw unavailable('secret storage is not configured');
+    const stored = await this.deps(c).platform.store.appSecrets(app.id).catch(() => {
+      throw unavailable('could not read the app secrets');
+    });
+    const secret = stored.find((candidate) => candidate.name === req.name);
+    if (!secret) throw badRequest('this variable has no value');
+    try {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ value: cipher.reveal(app.id, secret.name, secret.envelope) });
+    } catch {
+      throw unavailable('could not reveal the variable');
+    }
+  }
+
+  private async handleSecretDelete(c: Context<HonoEnv>): Promise<Response> {
+    const { user, app } = await this.ownedApp(c);
+    const req = await readJson(c, SMALL_LIMIT, secretNameSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the secret name',
+      appendReason: false,
+    });
+    await this.deps(c).platform.store.deleteAppSecret(app.id, req.name, user.email).catch(() => {
+      throw unavailable('could not delete the variable');
+    });
+    return c.body(null, 204);
+  }
+
   // handlePreviewGrant issues an owner-authorized, short-lived, hashed preview
   // grant for one app (design: dashboard preview + view-as). ownedApp() scopes it
   // to the caller's own app; on top of that the caller's effective grant must be
@@ -1003,6 +1040,16 @@ const grantRevokeSchema = {
 const accessSetSchema = {
   parse(u: unknown): { access: string } {
     return { access: str(asObject(u).access) };
+  },
+};
+
+const secretNameSchema = {
+  parse(u: unknown): { name: string } {
+    const object = asObject(u);
+    if (typeof object.name !== 'string' || object.name === '') {
+      throw new Error('name must be a non-empty string');
+    }
+    return { name: object.name };
   },
 };
 

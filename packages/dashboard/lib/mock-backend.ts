@@ -43,6 +43,16 @@ const MOCK_APPS: App[] = [
   { id: "app-draft", slug: "new-idea", url: "https://new-idea.280apps.run", live: false },
 ];
 
+const mockVariableNames: Record<string, string[]> = {
+  "app-notes": ["OPENAI_API_KEY", "SLACK_BOT_TOKEN"],
+  "app-tracker": ["LINEAR_API_KEY"],
+  "app-draft": [],
+};
+const mockVariables = new Map<
+  string,
+  Map<string, { value: string; setBy: string; setAt: number }>
+>();
+
 // The capability matrix the /docs page renders, shaped exactly like the real
 // /v1/docs/capabilities payload so the page's table renders unchanged.
 const MOCK_CAPABILITIES: DocsCapabilities = {
@@ -204,6 +214,58 @@ export function mockResponse(path: string, init?: RequestInit): Response {
   if (method === "POST" && /^\/internal\/apps\/[^/]+\/delete$/.test(path)) {
     const { confirm } = readBody(init);
     if (confirm !== "delete") return new Response(null, { status: 428 });
+    return new Response(null, { status: 204 });
+  }
+
+  const variablesMatch = path.match(/^\/internal\/apps\/([^/]+)\/secrets$/);
+  if (variablesMatch) {
+    const appId = decodeURIComponent(variablesMatch[1]);
+    const names = mockVariableNames[appId] ?? [];
+    const configured = mockVariables.get(appId) ?? new Map();
+    if (method === "GET") {
+      return json({
+        secrets: names.map((name) => {
+          const state = configured.get(name);
+          return state
+            ? { name, configured: true, setBy: state.setBy, setAt: state.setAt }
+            : { name, configured: false };
+        }),
+      });
+    }
+    if (method === "POST") {
+      const { name, value } = readBody(init);
+      if (typeof name !== "string" || !names.includes(name)) {
+        return json({ error: `"${String(name)}" is not declared in this app's 280.json` }, 422);
+      }
+      if (typeof value !== "string" || !value) {
+        return json({ error: "A value is required." }, 422);
+      }
+      configured.set(name, {
+        value,
+        setBy: MOCK_USER.email,
+        setAt: Math.floor(Date.now() / 1000),
+      });
+      mockVariables.set(appId, configured);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  const variableActionMatch = path.match(
+    /^\/internal\/apps\/([^/]+)\/secrets\/(reveal|delete)$/,
+  );
+  if (method === "POST" && variableActionMatch) {
+    const appId = decodeURIComponent(variableActionMatch[1]);
+    const { name } = readBody(init);
+    const configured = mockVariables.get(appId) ?? new Map();
+    if (typeof name !== "string") return json({ error: "A name is required." }, 422);
+    if (variableActionMatch[2] === "reveal") {
+      const variable = configured.get(name);
+      return variable
+        ? json({ value: variable.value })
+        : json({ error: "This variable has no value." }, 400);
+    }
+    configured.delete(name);
+    mockVariables.set(appId, configured);
     return new Response(null, { status: 204 });
   }
 

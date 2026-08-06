@@ -7,6 +7,7 @@ import { GoogleProvider, EntraProvider, type OidcProvider } from '@280/backend/a
 import { newPgStore } from '@280/backend/store';
 import type { Store } from '@280/backend/seams';
 import { Authorizer } from './access.js';
+import { SESSION_COOKIE, STATE_COOKIE } from './cookies.js';
 import { confineRedirect, Gateway, type Logger } from './gateway.js';
 import { IdentitySigner, publicJwkFromPrivate } from './identity.js';
 import type { ProviderLink } from './pages.js';
@@ -94,6 +95,8 @@ export function buildAuth(store: Store, config: Config, registry: Record<string,
     apiOrigin: config.authOrigin,
     frontendOrigin: config.fallbackRedirect,
     cookieDomain: config.cookieDomain,
+    sessionCookieName: SESSION_COOKIE,
+    oauthCookieName: STATE_COOKIE,
     sessionTtlSecs: config.sessionTtlSecs,
     rate: config.loginRate,
     resolveRedirect: (raw) => {

@@ -4,7 +4,8 @@
 // Postgres, which implements the same deleteExpired seam.
 
 import { describe, expect, it } from 'vitest';
-import { sweepExpired } from '../src/deps.js';
+import { MANIFEST_KIND_CONTAINER, State } from '@280/contracts';
+import { sweepExpired, WAITING_SECRETS_TTL_SECS } from '../src/deps.js';
 import { DeviceStatus } from '../src/seams.js';
 import { MemoryStore } from './helpers/memory-store.js';
 import { capturingLogger } from './helpers/harness.js';
@@ -73,6 +74,46 @@ describe('scheduled cleanup', () => {
 
     const line = records.find((r) => r.msg === 'scheduled cleanup');
     expect(line?.attrs).toMatchObject({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1 });
+  });
+
+  it('fails a deploy parked for thirty minutes with the variables deep link', async () => {
+    const store = new MemoryStore();
+    const now = 1_000_000;
+    await store.createApp({
+      id: 'app_waiting',
+      userId: 'u',
+      slug: 'waiting',
+      framework: 'next',
+      url: 'https://waiting.example',
+      script: 'waiting',
+      salt: 'salt',
+      fingerprint: '',
+      clientRef: '',
+      storeId: '',
+      activeDeploy: '',
+    });
+    await store.openDeploy({
+      appId: 'app_waiting',
+      id: 'dep_waiting',
+      manifest: {
+        kind: MANIFEST_KIND_CONTAINER,
+        build: { builder: 'next', dockerfile: 'Dockerfile', port: 3000 },
+        files: [],
+        secrets: ['STRIPE_KEY'],
+      },
+      state: State.Uploading,
+      failure: null,
+    });
+    await store.claimActivation('app_waiting', 'dep_waiting');
+    await store.parkActivation('app_waiting', 'dep_waiting', now - WAITING_SECRETS_TTL_SECS);
+
+    const { logger } = capturingLogger();
+    await sweepExpired(store, logger, now, 3600, 'https://dashboard.example');
+
+    const deploy = await store.deploy('app_waiting', 'dep_waiting');
+    expect(deploy?.state).toBe(State.Failed);
+    expect(deploy?.failure?.fix).toContain('https://dashboard.example/dashboard/app_waiting?variables=1');
+    expect(deploy?.failure?.fix).toContain('then run 280 push again');
   });
 
   it('is an idempotent no-op when nothing has expired', async () => {

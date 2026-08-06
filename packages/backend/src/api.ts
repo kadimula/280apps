@@ -552,16 +552,20 @@ export class Server {
     });
   }
 
-  // Names the owner may configure: the live policy's plus the newest deploy's, so
-  // values can be entered before a first deploy (or a new declaration) goes live.
+  // Names the owner may configure: the live policy's, every open deploy's (a parked
+  // deploy must always be configurable), and the newest deploy's (even failed, so an
+  // expired park can be configured before the re-push).
   private async declaredSecrets(c: Context<HonoEnv>, appId: string): Promise<string[]> {
     const store = this.deps(c).platform.store;
-    const [policy, latest] = await Promise.all([
+    const [policy, latest, open] = await Promise.all([
       store.appPolicy(appId),
       store.latestDeploy(appId).catch(() => null),
+      store.openDeploys(appId).catch(() => []),
     ]);
     const names = new Set(policy?.secrets ?? []);
-    for (const name of latest?.manifest.secrets ?? []) names.add(name);
+    for (const dep of [latest, ...open]) {
+      for (const name of dep?.manifest.secrets ?? []) names.add(name);
+    }
     return [...names];
   }
 
@@ -596,6 +600,9 @@ export class Server {
       throw unavailable('could not save the secret');
     }
     if (app.activeDeploy !== '') await this.deps(c).secretDelivery?.set(runtimeApp(app), req.name);
+    await this.deps(c).platform.resumeWaitingSecrets(app).catch(() => {
+      throw unavailable('could not resume the waiting deploy');
+    });
     return c.body(null, 204);
   }
 
@@ -938,6 +945,7 @@ function encodeStatus(s: DeployStatus): Record<string, unknown> {
   // url is omitempty and set by the service only when live.
   if (s.url) out.url = s.url;
   if (s.notice) out.notice = s.notice;
+  if (s.secretNotice) out.secretNotice = s.secretNotice;
   if (s.failure) out.failure = encodeError(s.failure as DeployError);
   return out;
 }

@@ -93,6 +93,79 @@ describe('push.run against the Fake', () => {
     expect(syncs).toBeGreaterThanOrEqual(2); // one failure then a real Sync
   });
 
+  it('prints the waiting-secrets progress once and keeps polling until live', async () => {
+    const { root, cfg } = project();
+    let statuses = 0;
+    const notice = 'declared secret is not configured: STRIPE_KEY. Configure it at https://console.280apps.com/dashboard/app_1?variables=1';
+    const port: Port = {
+      async sync() {
+        return {
+          app: { id: 'app_1', slug: 'demo', url: 'https://demo.280apps.run' },
+          resolution: 'created',
+          deployId: 'dep_1',
+          state: 'waiting_secrets',
+          missing: [],
+          failure: undefined,
+        };
+      },
+      async putBlob() {},
+      async status() {
+        statuses++;
+        return statuses < 3
+          ? { state: 'waiting_secrets', url: '', notice: '', secretNotice: notice, failure: undefined }
+          : { state: 'live', url: 'https://demo.280apps.run', notice: '', secretNotice: '', failure: undefined };
+      },
+      async delete() {
+        return { app: { id: '', slug: '', url: '' }, deleted: false };
+      },
+    };
+    const seen: string[] = [];
+
+    await push.run(port, cfg, testBundle(), { root }, { onSecretNotice: (line) => seen.push(line) });
+
+    expect(statuses).toBe(3);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('waiting on secrets before going live');
+    expect(seen[0]).toContain('STRIPE_KEY');
+    expect(seen[0]).toContain('Push continues automatically');
+  });
+
+  it('keeps polling an unknown state from a newer server and surfaces its eventual failure', async () => {
+    const { root, cfg } = project();
+    let statuses = 0;
+    const port: Port = {
+      async sync() {
+        return {
+          app: { id: 'app_1', slug: 'demo', url: 'https://demo.280apps.run' },
+          resolution: 'existing',
+          deployId: 'dep_1',
+          state: 'future_non_terminal_state',
+          missing: [],
+          failure: undefined,
+        };
+      },
+      async putBlob() {},
+      async status() {
+        statuses++;
+        return statuses === 1
+          ? { state: 'future_non_terminal_state', url: '', notice: '', secretNotice: '', failure: undefined }
+          : {
+              state: 'failed',
+              url: '',
+              notice: '',
+              secretNotice: '',
+              failure: { code: 'unavailable', message: 'deploy expired', fix: 'push again' },
+            };
+      },
+      async delete() {
+        return { app: { id: '', slug: '', url: '' }, deleted: false };
+      },
+    };
+
+    await expect(push.run(port, cfg, testBundle(), { root })).rejects.toMatchObject({ message: 'deploy expired' });
+    expect(statuses).toBe(2);
+  });
+
   it('emits the secret notice before surfacing a failed deploy', async () => {
     const { root, cfg } = project();
     const notice =

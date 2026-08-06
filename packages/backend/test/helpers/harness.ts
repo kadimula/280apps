@@ -28,7 +28,7 @@ import type { RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
 import { MemoryRuntime } from '../../src/runtime/index.js';
-import type { Store } from '../../src/seams.js';
+import type { Runtime, SecretDelivery, Store } from '../../src/seams.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from '../../src/secrets.js';
 import { MemoryStore } from './memory-store.js';
 import { hasDatabase, newStore } from '../pg.js';
@@ -43,7 +43,7 @@ export interface Harness {
 // builds an empty platform: a fresh Postgres schema (or store double), a fresh
 // blob directory, and a fresh in-memory runtime per call.
 export async function newPlatform(
-  opts: { appDomain?: string; hostSuffix?: string; frontendOrigin?: string; store?: Store } = {},
+  opts: { appDomain?: string; hostSuffix?: string; frontendOrigin?: string; store?: Store; runtime?: Runtime } = {},
 ): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -66,7 +66,7 @@ export async function newPlatform(
   // tests expect a deploy live the moment its last blob lands, so the in-process
   // activator runs activation inline (the single-isolate equivalent of
   // production's AppActivator Durable Object).
-  const activator = new InProcessActivator({ store, blobs, runtime });
+  const activator = new InProcessActivator({ store, blobs, runtime: opts.runtime ?? runtime });
   const platform = new Platform({
     store,
     blobs,
@@ -117,6 +117,7 @@ export interface TestServerOpts {
   machineTokenTtlSecs?: number;
   logger?: Logger;
   secretCipher?: SecretCipher;
+  secretDelivery?: SecretDelivery;
 }
 
 // Long enough that a token seeded at real time never expires mid-test; a case that
@@ -139,6 +140,7 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
       'secretCipher' in opts
         ? opts.secretCipher
         : new EnvelopeSecretCipher(new LocalKeyWrapper(Buffer.alloc(32, 7).toString('base64'), 'test')),
+    secretDelivery: opts.secretDelivery,
   };
 }
 

@@ -22,6 +22,7 @@ import { DeployCode, DeployErr } from '@280/contracts';
 import type { RuntimeApp } from '../../seams.js';
 import type { Logger } from '../../observe.js';
 import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
+import { deliveryFailed, type WorkerSecretStore } from '../../secret-delivery.js';
 
 export interface ExecResult {
   code: number;
@@ -30,12 +31,12 @@ export interface ExecResult {
 
 // ExecFn runs one command in cwd and resolves with its exit code and combined
 // output. It never rejects on a non-zero exit; the builder inspects code. env is
-// merged over the process environment for commands that need per-build secrets
-// (the Depot build id/token); other build homes pass none.
+// merged over the process environment. input is written only to stdin and is used
+// for Worker secret delivery so values never enter argv or a file.
 export type ExecFn = (
   cmd: string,
   args: string[],
-  opts: { cwd: string; env?: Record<string, string> },
+  opts: { cwd: string; env?: Record<string, string>; input?: string },
 ) => Promise<ExecResult>;
 
 // The container class and binding the app's Worker declares; mirrors
@@ -47,6 +48,7 @@ const DEFAULT_COMPAT_DATE = '2026-06-01';
 const ROLL_CONFIG_FILE = 'wrangler.roll.json';
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 const REGISTRY_CRED_TTL_MINUTES = 60;
+const SECRET_BULK_LIMIT = 100;
 
 const DEFAULT_APP_DOMAIN = '280apps.run';
 // The service binding every app Worker declares to the central identity gateway,
@@ -98,7 +100,7 @@ export interface RegistryBuilderConfig {
 // RegistryContainerBuilder is the template: rollout() runs materialize → buildAndPush
 // → roll, and teardown() removes the container application. Subclasses supply only
 // buildAndPush.
-export abstract class RegistryContainerBuilder implements ContainerBuilder {
+export abstract class RegistryContainerBuilder implements ContainerBuilder, WorkerSecretStore {
   protected readonly accountId: string;
   protected readonly apiToken: string;
   protected readonly registry: string;
@@ -230,6 +232,20 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder {
         TWO80_FRAME_ANCESTORS: this.frameAncestors,
       },
     };
+  }
+
+  async bulk(app: RuntimeApp, values: Record<string, string | null>): Promise<void> {
+    const entries = Object.entries(values);
+    for (let offset = 0; offset < entries.length; offset += SECRET_BULK_LIMIT) {
+      const batch = Object.fromEntries(entries.slice(offset, offset + SECRET_BULK_LIMIT));
+      const names = Object.keys(batch);
+      const res = await this.exec('wrangler', ['secret', 'bulk', '--name', app.script], {
+        cwd: this.workdir,
+        env: { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId },
+        input: JSON.stringify(batch),
+      });
+      if (res.code !== 0) throw deliveryFailed(names);
+    }
   }
 
   async teardown(app: RuntimeApp): Promise<void> {
@@ -417,11 +433,13 @@ const spawnExec: ExecFn = async (cmd, args, opts) => {
   const { spawn } = await import('node:child_process');
   return new Promise<ExecResult>((resolveExec) => {
     const env = opts.env ? { ...process.env, ...opts.env } : process.env;
-    const child = spawn(cmd, args, { cwd: opts.cwd, env });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '';
     child.stdout?.on('data', (d) => (output += String(d)));
     child.stderr?.on('data', (d) => (output += String(d)));
+    child.stdin?.on('error', () => {});
     child.on('error', (e) => resolveExec({ code: 127, output: output + String(e) }));
     child.on('close', (code) => resolveExec({ code: code ?? 0, output }));
+    child.stdin?.end(opts.input);
   });
 };

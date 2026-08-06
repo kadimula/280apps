@@ -3,9 +3,11 @@
 // are proven in depot-builder.test.ts.
 
 import { describe, it, expect } from 'vitest';
-import { DeployErr, digestBytes, type Digest, type Manifest } from '@280/contracts';
-import type { Activation, RuntimeApp } from '../../src/seams.js';
+import { DeployErr, State, digestBytes, type Digest, type Manifest } from '@280/contracts';
+import type { Activation, RuntimeApp, SecretDelivery } from '../../src/seams.js';
+import { deliveryFailed } from '../../src/secret-delivery.js';
 import { ContainerRuntime, FakeBuilder } from '../../src/runtime/container/index.js';
+import { bodyOf, newPlatform, portFor, testManifest } from '../helpers/harness.js';
 
 function app(over: Partial<RuntimeApp> = {}): RuntimeApp {
   return { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 's', storeId: '', ...over };
@@ -57,6 +59,58 @@ describe('ContainerRuntime (over a builder)', () => {
     const rt = new ContainerRuntime(builder);
     const { act } = activation({ Dockerfile: 'FROM node:20' });
     await expect(rt.activate(act)).rejects.toMatchObject({ code: 'unavailable', fix: 'fix it', retryable: false });
+  });
+
+  it('surfaces secret delivery failure as an activation failure', async () => {
+    const builder = new FakeBuilder();
+    const secrets: SecretDelivery = {
+      rollout: async () => {
+        throw deliveryFailed(['API_KEY']);
+      },
+      set: async () => {},
+      delete: async () => {},
+    };
+    const rt = new ContainerRuntime(builder, secrets);
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    act.manifest.secrets = ['API_KEY'];
+
+    await expect(rt.activate(act)).rejects.toMatchObject({ code: 'unavailable', retryable: true });
+  });
+
+  it('records a delivery failure as a failed deploy', async () => {
+    const secrets: SecretDelivery = {
+      rollout: async () => {
+        throw deliveryFailed(['API_KEY']);
+      },
+      set: async () => {},
+      delete: async () => {},
+    };
+    const runtime = new ContainerRuntime(new FakeBuilder(), secrets);
+    const harness = await newPlatform({ runtime });
+    try {
+      const port = await portFor(harness);
+      const { manifest, worker, digest } = testManifest();
+      manifest.secrets = ['API_KEY'];
+      const synced = await port.sync({
+        identity: {
+          appId: '',
+          slug: 'delivery-failure',
+          framework: 'next',
+          gitRemote: '',
+          clientRef: 'delivery-failure',
+          forceNew: false,
+        },
+        manifest,
+      });
+
+      await port.putBlob(synced.app.id, digest, worker.byteLength, bodyOf(worker));
+
+      const status = await port.status(synced.app.id, synced.deployId);
+      expect(status.state).toBe(State.Failed);
+      expect(status.failure?.message).toContain('API_KEY');
+    } finally {
+      await harness.cleanup();
+    }
   });
 
   it('fails when the context names a blob nobody uploaded', async () => {

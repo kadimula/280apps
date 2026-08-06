@@ -4,6 +4,7 @@
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
 import type { SecretCipher } from './secrets.js';
+import type { SecretDelivery } from './seams.js';
 
 // ConfigVars is the raw environment the host reads: non-secret tunables and
 // secrets, all optional strings (absent ⇒ undefined).
@@ -157,4 +158,5 @@ export interface RequestDeps {
   appDomain: string;
   viewAsOrigin: string;
   secretCipher?: SecretCipher;
+  secretDelivery?: SecretDelivery;
 }

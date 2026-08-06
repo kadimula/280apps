@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Fake } from '@280/contracts/deploy/fake';
+import type { DeployStatus } from '@280/contracts';
 import * as config from '../src/config.js';
 import * as credentials from '../src/credentials.js';
 import { VERSION } from '../src/app.js';
@@ -38,6 +39,16 @@ describe('version and help', () => {
   });
 });
 
+class SecretNoticeFake extends Fake {
+  async status(appId: string, deployId: string): Promise<DeployStatus> {
+    return {
+      ...(await super.status(appId, deployId)),
+      secretNotice:
+        'declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001',
+    };
+  }
+}
+
 describe('push (fake)', () => {
   it('auto-inits and deploys to a live URL, writing config', async () => {
     const root = tmpProject();
@@ -51,6 +62,21 @@ describe('push (fake)', () => {
     // Progress narration is on stderr, never stdout.
     expect(r.err).toContain('280: uploaded');
     expect(r.out).not.toContain('uploaded');
+  });
+
+  it('relays the server-computed secret diff without changing stdout or blocking', async () => {
+    const r = await runCli(['push'], { root: tmpProject(), port: new SecretNoticeFake() });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain(
+      '280: declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001\n',
+    );
+    expect(r.out).not.toContain('STRIPE_KEY');
+  });
+
+  it('prints no secret message when the server reports no diff', async () => {
+    const r = await runCli(['push'], { root: tmpProject(), port: new Fake() });
+    expect(r.code).toBe(0);
+    expect(r.err).not.toContain('not configured');
   });
 
   it('rejects an unknown flag, exit 2', async () => {

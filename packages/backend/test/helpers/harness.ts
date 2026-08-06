@@ -43,7 +43,7 @@ export interface Harness {
 // builds an empty platform: a fresh Postgres schema (or store double), a fresh
 // blob directory, and a fresh in-memory runtime per call.
 export async function newPlatform(
-  opts: { appDomain?: string; hostSuffix?: string; store?: Store } = {},
+  opts: { appDomain?: string; hostSuffix?: string; frontendOrigin?: string; store?: Store } = {},
 ): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -73,6 +73,7 @@ export async function newPlatform(
     activator,
     appDomain: opts.appDomain ?? '280apps.run',
     hostSuffix: opts.hostSuffix ?? '',
+    frontendOrigin: opts.frontendOrigin ?? 'https://console.280apps.com',
   });
 
   return {

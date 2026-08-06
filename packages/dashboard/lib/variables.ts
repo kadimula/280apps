@@ -12,12 +12,14 @@ export type AppVariable = {
 
 async function failureMessage(res: Response): Promise<string> {
   if (res.status === 401) return "Sign in again.";
-  try {
-    const body = (await res.json()) as { error?: unknown; message?: unknown };
-    const message = body.error ?? body.message;
-    if (typeof message === "string" && message) return message;
-  } catch {}
-  return "Something went wrong. Try again shortly.";
+  const body = (await res.json().catch(() => null)) as {
+    error?: unknown;
+    message?: unknown;
+  } | null;
+  const message = body?.error ?? body?.message;
+  return typeof message === "string" && message
+    ? message
+    : "Something went wrong. Try again shortly.";
 }
 
 export async function listVariables(

@@ -93,6 +93,42 @@ describe('push.run against the Fake', () => {
     expect(syncs).toBeGreaterThanOrEqual(2); // one failure then a real Sync
   });
 
+  it('emits the secret notice before surfacing a failed deploy', async () => {
+    const { root, cfg } = project();
+    const notice =
+      'declared secret is not configured: STRIPE_KEY. Configure it at https://console.280apps.com/dashboard/app_1';
+    const port: Port = {
+      async sync() {
+        return {
+          app: { id: 'app_1', slug: 'demo', url: 'https://demo.280apps.run' },
+          resolution: 'created',
+          deployId: 'dep_1',
+          state: 'activating',
+          missing: [],
+          failure: undefined,
+        };
+      },
+      async putBlob() {},
+      async status() {
+        return {
+          state: 'failed',
+          url: '',
+          notice: '',
+          secretNotice: notice,
+          failure: { code: 'unavailable', message: 'the app failed to boot', fix: 'run 280 push again' },
+        };
+      },
+      async delete() {
+        return { app: { id: '', slug: '', url: '' }, deleted: false };
+      },
+    };
+    const seen: string[] = [];
+    await expect(
+      push.run(port, cfg, testBundle(), { root }, { onSecretNotice: (n) => seen.push(n) }),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    expect(seen).toEqual([notice]);
+  });
+
   it('narrates progress through Events', async () => {
     const { root, cfg } = project();
     const fake = new Fake();

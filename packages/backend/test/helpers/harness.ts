@@ -29,6 +29,7 @@ import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
 import { MemoryRuntime } from '../../src/runtime/index.js';
 import type { Store } from '../../src/seams.js';
+import { EnvelopeSecretCipher, type SecretCipher } from '../../src/secrets.js';
 import { MemoryStore } from './memory-store.js';
 import { hasDatabase, newStore } from '../pg.js';
 
@@ -114,6 +115,7 @@ export interface TestServerOpts {
   minCliVersion?: string;
   machineTokenTtlSecs?: number;
   logger?: Logger;
+  secretCipher?: SecretCipher;
 }
 
 // Long enough that a token seeded at real time never expires mid-test; a case that
@@ -132,6 +134,8 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
     machineTokenTtlSecs: opts.machineTokenTtlSecs ?? DEFAULT_TEST_TOKEN_TTL_SECS,
     appDomain: '280apps.run',
     viewAsOrigin: 'https://auth.280apps.run',
+    secretCipher:
+      'secretCipher' in opts ? opts.secretCipher : new EnvelopeSecretCipher(Buffer.alloc(32, 7).toString('base64'), 'test'),
   };
 }
 

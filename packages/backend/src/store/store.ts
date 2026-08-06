@@ -21,6 +21,7 @@ import {
   DeviceStatus,
   EventKind,
   type App,
+  type AppSecret,
   type Deploy,
   type DeviceCode,
   type Event,
@@ -404,6 +405,16 @@ function rowToAppPolicy(r: Row): AppPolicy {
   };
 }
 
+function rowToAppSecret(r: Row): AppSecret {
+  return {
+    appId: r.app_id,
+    name: r.name,
+    envelope: r.envelope,
+    setBy: r.set_by,
+    setAt: toNum(r.set_at),
+  };
+}
+
 function eventDetail(kv: Record<string, string>): string {
   if (Object.keys(kv).length === 0) {
     return '';
@@ -738,6 +749,7 @@ class PgStore implements Store {
       // inherits another life's access or route gates.
       await tx.query(`DELETE FROM ${this.t('grants')} WHERE app_id = $1`, [appId]);
       await tx.query(`DELETE FROM ${this.t('app_policies')} WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1`, [appId]);
       // Drop preview grants too, else a deleted app's view-as links stay live until the TTL sweep.
       await tx.query(`DELETE FROM ${this.t('preview_grants')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row it would read the user
@@ -765,6 +777,15 @@ class PgStore implements Store {
     const res = await this.db.query(
       `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')} WHERE app_id = $1 AND id = $2`,
       [appId, deployId],
+    );
+    return res.rows.length ? rowToDeploy(res.rows[0]) : null;
+  }
+
+  async latestDeploy(appId: string): Promise<Deploy | null> {
+    const res = await this.db.query(
+      `SELECT app_id, id, manifest, state, failure FROM ${this.t('deploys')}
+       WHERE app_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [appId],
     );
     return res.rows.length ? rowToDeploy(res.rows[0]) : null;
   }
@@ -883,6 +904,16 @@ class PgStore implements Store {
         ownerTenant,
       ],
     );
+
+    // Values whose names the live manifest no longer declares are erased, never
+    // resurrected by a later redeclaration; the secret.removed event is the tombstone.
+    const erased = await tx.query(
+      `DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1 AND NOT (name = ANY($2)) RETURNING name`,
+      [appId, policy.secrets],
+    );
+    for (const row of erased.rows) {
+      await this.insertAppEvent(tx, appId, deployId, EventKind.SecretRemoved, eventDetail({ name: row.name }));
+    }
 
     // Seed the owner's grant so the builder can open and fully use their own app on
     // the gateway from the first deploy. DO NOTHING preserves a role the owner may
@@ -1023,6 +1054,36 @@ class PgStore implements Store {
       );
       return true;
     });
+  }
+
+  async putAppSecret(secret: AppSecret): Promise<void> {
+    await this.inTx(async (tx) => {
+      await tx.query(
+        `INSERT INTO ${this.t('app_secrets')} (app_id, name, envelope, set_by, set_at)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (app_id, name) DO UPDATE SET
+           envelope = EXCLUDED.envelope,
+           set_by = EXCLUDED.set_by,
+           set_at = EXCLUDED.set_at`,
+        [secret.appId, secret.name, secret.envelope, secret.setBy, secret.setAt],
+      );
+      await this.insertAppEvent(
+        tx,
+        secret.appId,
+        '',
+        EventKind.SecretSet,
+        eventDetail({ name: secret.name, by: secret.setBy }),
+      );
+    });
+  }
+
+  async appSecrets(appId: string): Promise<AppSecret[]> {
+    const res = await this.db.query(
+      `SELECT app_id, name, envelope, set_by, set_at
+       FROM ${this.t('app_secrets')} WHERE app_id = $1 ORDER BY name`,
+      [appId],
+    );
+    return res.rows.map(rowToAppSecret);
   }
 
   // A single append to the events table, denormalizing the user from the app row.

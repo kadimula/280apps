@@ -64,6 +64,7 @@ export interface Events {
 
 const DEFAULT_ATTEMPTS = 6;
 const MAX_BACKOFF_MS = 5000;
+const WAITING_BACKOFF_MS = 15000;
 
 function attempts(o: Options): number {
   return o.maxAttempts && o.maxAttempts > 0 ? o.maxAttempts : DEFAULT_ATTEMPTS;
@@ -131,8 +132,7 @@ export async function run(
     }
 
     ev.onWait?.();
-    const status = await poll(port, res.app, res.deployId, opts);
-    if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
+    const status = await poll(port, res.app, res.deployId, opts, ev);
     if (status.failure) throw status.failure;
     return { app: res.app, resolution, deployId: res.deployId, url: status.url, notice: status.notice };
   }
@@ -164,19 +164,34 @@ async function finish(
   opts: Options,
   ev: Events,
 ): Promise<Result> {
-  const status = await poll(port, res.app, res.deployId, opts);
-  if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
+  const status = await poll(port, res.app, res.deployId, opts, ev);
   if (status.failure) throw status.failure;
   const url = status.url !== '' ? status.url : res.app.url;
   return { app: res.app, resolution, deployId: res.deployId, url, notice: status.notice };
 }
 
 // poll waits for a deploy to reach a terminal state.
-async function poll(port: Port, app: App, deployId: string, opts: Options): Promise<DeployStatus> {
+async function poll(
+  port: Port,
+  app: App,
+  deployId: string,
+  opts: Options,
+  ev: Events,
+): Promise<DeployStatus> {
+  let secretNoticeEmitted = false;
   for (let attempt = 0; ; attempt++) {
     const status = await retry(opts, () => port.status(app.id, deployId));
-    if (stateTerminal(status.state)) return status;
-    await sleep(backoffFor(opts, attempt));
+    if (status.state === State.WaitingSecrets && !secretNoticeEmitted) {
+      const detail = status.secretNotice === '' ? '' : ` ${status.secretNotice}`;
+      ev.onSecretNotice?.(`waiting on secrets before going live.${detail} Push continues automatically.`);
+      secretNoticeEmitted = true;
+    }
+    if (stateTerminal(status.state)) {
+      if (status.secretNotice !== '' && !secretNoticeEmitted) ev.onSecretNotice?.(status.secretNotice);
+      return status;
+    }
+    const delay = backoffFor(opts, attempt);
+    await sleep(status.state === State.WaitingSecrets && delay > 0 ? Math.max(delay, WAITING_BACKOFF_MS) : delay);
   }
 }
 

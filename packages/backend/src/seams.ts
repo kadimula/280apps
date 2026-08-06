@@ -212,6 +212,10 @@ export interface Store {
   openDeploys(appId: string): Promise<Deploy[]>;
   openDeploy(d: Deploy): Promise<Deploy>;
   claimActivation(appId: string, deployId: string): Promise<boolean>;
+  parkActivation(appId: string, deployId: string, waitingAt: number): Promise<boolean>;
+  resumeActivation(appId: string, deployId: string): Promise<boolean>;
+  waitingDeploysBefore(cutoff: number): Promise<Deploy[]>;
+  failWaitingSecrets(appId: string, deployId: string, failure: DeployError): Promise<boolean>;
   finishLive(appId: string, deployId: string): Promise<void>;
   finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void>;
 
@@ -288,9 +292,10 @@ export interface RuntimeResult {
   storeId: string;
 }
 
-// activate is atomic and idempotent and leaves the previously serving version
-// intact on error; delete is a hard, idempotent delete.
+// prepare builds without changing the serving version. activate rolls the prepared
+// artifact atomically and idempotently; delete is a hard, idempotent delete.
 export interface Runtime {
+  prepare(act: Activation): Promise<void>;
   activate(act: Activation): Promise<RuntimeResult>;
   delete(app: RuntimeApp): Promise<void>;
 }

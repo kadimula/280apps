@@ -125,9 +125,12 @@ export function migrations(schema: string): string[] {
        manifest   TEXT NOT NULL,
        state      TEXT NOT NULL,
        failure    TEXT NOT NULL DEFAULT '',
+       waiting_at BIGINT NOT NULL DEFAULT 0,
        created_at BIGINT NOT NULL DEFAULT (${epochDefault}),
        PRIMARY KEY (app_id, id)
      )`,
+    `ALTER TABLE ${t('deploys')} ADD COLUMN IF NOT EXISTS waiting_at BIGINT NOT NULL DEFAULT 0`,
+    `CREATE INDEX IF NOT EXISTS deploys_waiting_secrets ON ${t('deploys')}(waiting_at) WHERE state = 'waiting_secrets'`,
     // Append-only. A serial id because the useful order is when things happened and
     // two events can share a second; scoping columns default '' so reads are plain equality.
     `CREATE TABLE IF NOT EXISTS ${t('events')} (

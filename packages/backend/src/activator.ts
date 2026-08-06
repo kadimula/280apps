@@ -27,6 +27,7 @@ export interface ActivatorDeps {
   store: Store;
   blobs: BlobStore;
   runtime: Runtime;
+  now?: () => number;
 }
 
 export function runtimeApp(a: App | RuntimeApp): RuntimeApp {
@@ -72,26 +73,39 @@ export function deleteFailed(what: string, err: unknown): DeployErr {
 // deploy in activating for the caller to fail (one shot) or retry (under alarm).
 export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Promise<void> {
   if (stateTerminal(dep.state)) return;
-  if (dep.state === State.Uploading) {
-    const won = await deps.store.claimActivation(app.id, dep.id);
-    if (!won) {
-      // Lost the claim between read and update: a terminal state means someone
-      // finished it; activating means we (or a racing caller) own it and proceed.
-      const now = await deps.store.deploy(app.id, dep.id);
-      if (now === null || stateTerminal(now.state)) return;
-    }
+  let state = dep.state;
+  if (state === State.Uploading) {
+    if (!(await deps.store.claimActivation(app.id, dep.id))) return;
+    state = State.Activating;
   }
 
-  const res = await deps.runtime.activate({
+  const act = {
     app: runtimeApp(app),
     deployId: dep.id,
     manifest: dep.manifest,
     asset: (d: Digest) => deps.blobs.get(app.id, d),
-  });
+  };
 
-  if (res.storeId !== '' && res.storeId !== app.storeId) {
-    await deps.store.setStoreId(app.id, res.storeId);
+  if (state === State.Activating) await deps.runtime.prepare(act);
+
+  if ((dep.manifest.secrets ?? []).length > 0) {
+    let configured: string[] | null = null;
+    try {
+      configured = await deps.store.appSecretNames(app.id);
+    } catch {
+      configured = null;
+    }
+    const present = new Set(configured ?? []);
+    if (configured === null || dep.manifest.secrets.some((name) => !present.has(name))) {
+      await deps.store.parkActivation(app.id, dep.id, (deps.now ?? nowSecs)());
+      return;
+    }
   }
+
+  if (state === State.WaitingSecrets && !(await deps.store.resumeActivation(app.id, dep.id))) return;
+
+  const res = await deps.runtime.activate(act);
+  if (res.storeId !== '' && res.storeId !== app.storeId) await deps.store.setStoreId(app.id, res.storeId);
   await deps.store.finishLive(app.id, dep.id);
 }
 
@@ -115,6 +129,10 @@ export async function runTail(deps: ActivatorDeps, app: RuntimeApp, userId: stri
 // Runs activation and delete synchronously in the calling isolate, serialized per
 // app by a promise chain. Tests and conformance depend on a deploy being live the
 // moment its last blob lands, which only this synchronous form provides.
+function nowSecs(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 export class InProcessActivator implements Activator {
   private readonly locks = new Map<string, Promise<unknown>>();
 

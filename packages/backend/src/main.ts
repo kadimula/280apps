@@ -132,10 +132,10 @@ function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefine
 // startSweep runs the cleanup sweep on an interval, the Node stand-in for the
 // Worker's cron trigger. Unref'd so it never keeps the process alive on its own.
 function startSweep(store: Store, config: Config, log: Logger): NodeJS.Timeout {
-  const secs = num(process.env.TWO80_SWEEP_INTERVAL_SECS, 3600);
+  const secs = num(process.env.TWO80_SWEEP_INTERVAL_SECS, 60);
   const machineTokenTtlSecs = config.machineTokenTtlDays * 24 * 60 * 60;
   const tick = () => {
-    void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs).catch((err) => {
+    void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs, config.frontendOrigin).catch((err) => {
       log.error('scheduled cleanup failed', { error: errText(err) });
     });
   };

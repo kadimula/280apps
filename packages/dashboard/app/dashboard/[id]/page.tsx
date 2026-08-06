@@ -33,14 +33,14 @@ export default async function AppPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ as?: string }>;
+  searchParams: Promise<{ as?: string; variables?: string }>;
 }) {
   const user = await getMe();
   if (!user) {
     redirect("/login");
   }
 
-  const [{ id }, { as }] = await Promise.all([params, searchParams]);
+  const [{ id }, { as, variables }] = await Promise.all([params, searchParams]);
   const app = await getApp(id);
   if (!app) {
     notFound();
@@ -149,7 +149,7 @@ export default async function AppPage({
             }}
           />
         )}
-        <VariablesDialog app={{ id: app.id, slug: app.slug }} />
+        <VariablesDialog app={{ id: app.id, slug: app.slug }} autoOpen={variables === "1"} />
         <AppMenu appId={app.id} slug={app.slug} />
         <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">
           Docs

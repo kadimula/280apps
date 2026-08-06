@@ -97,9 +97,8 @@ export interface RegistryBuilderConfig {
   log?: Logger;
 }
 
-// RegistryContainerBuilder is the template: rollout() runs materialize → buildAndPush
-// → roll, and teardown() removes the container application. Subclasses supply only
-// buildAndPush.
+// RegistryContainerBuilder materializes and pushes an image in build(), then rolls
+// that image independently in rollout(). Subclasses supply only buildAndPush.
 export abstract class RegistryContainerBuilder implements ContainerBuilder, WorkerSecretStore {
   protected readonly accountId: string;
   protected readonly apiToken: string;
@@ -148,15 +147,22 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     return `${this.registry}/${this.accountId}/${app.script}:${deployId}`;
   }
 
-  async rollout(job: RolloutJob): Promise<RolloutResult> {
+  async build(job: RolloutJob): Promise<RolloutResult> {
     const ctx = await mkdtemp(join(this.workdir, '280-ctx-'));
     try {
       await materialize(ctx, job.files);
       const image = this.imageRef(job.app, job.deployId);
-      const dockerfile = job.build.dockerfile || 'Dockerfile';
-      await this.buildAndPush(ctx, image, dockerfile, job);
-      await this.roll(ctx, image, job);
+      await this.buildAndPush(ctx, image, job.build.dockerfile || 'Dockerfile', job);
       return { imageRef: image };
+    } finally {
+      await rm(ctx, { recursive: true, force: true });
+    }
+  }
+
+  async rollout(job: RolloutJob, image: string): Promise<void> {
+    const ctx = await mkdtemp(join(this.workdir, '280-roll-'));
+    try {
+      await this.roll(ctx, image, job);
     } finally {
       await rm(ctx, { recursive: true, force: true });
     }

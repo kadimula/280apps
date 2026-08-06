@@ -596,6 +596,9 @@ export class Server {
       throw unavailable('could not save the secret');
     }
     if (app.activeDeploy !== '') await this.deps(c).secretDelivery?.set(runtimeApp(app), req.name);
+    await this.deps(c).platform.resumeWaitingSecrets(app).catch(() => {
+      throw unavailable('could not resume the waiting deploy');
+    });
     return c.body(null, 204);
   }
 
@@ -938,6 +941,7 @@ function encodeStatus(s: DeployStatus): Record<string, unknown> {
   // url is omitempty and set by the service only when live.
   if (s.url) out.url = s.url;
   if (s.notice) out.notice = s.notice;
+  if (s.secretNotice) out.secretNotice = s.secretNotice;
   if (s.failure) out.failure = encodeError(s.failure as DeployError);
   return out;
 }

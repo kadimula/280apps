@@ -322,11 +322,13 @@ export class MemoryStore implements Store {
         state: State.Uploading,
         failure: null,
         createdAt: this.seq++,
+        waitingAt: 0,
       });
     } else if (ex.state === State.Failed) {
       // reopen a failed attempt; manifest is unchanged (same id ⇒ same content)
       ex.state = State.Uploading;
       ex.failure = null;
+      ex.waitingAt = 0;
     }
     return cloneDeploy(this.deploys.get(k)!);
   }
@@ -338,6 +340,36 @@ export class MemoryStore implements Store {
       return true;
     }
     return false;
+  }
+
+  async parkActivation(appId: string, deployId: string, waitingAt: number): Promise<boolean> {
+    const d = this.deploys.get(key(appId, deployId));
+    if (!d || d.state !== State.Activating) return false;
+    d.state = State.WaitingSecrets;
+    d.waitingAt = waitingAt;
+    return true;
+  }
+
+  async resumeActivation(appId: string, deployId: string): Promise<boolean> {
+    const d = this.deploys.get(key(appId, deployId));
+    if (!d || d.state !== State.WaitingSecrets) return false;
+    d.state = State.Activating;
+    d.waitingAt = 0;
+    return true;
+  }
+
+  async waitingDeploysBefore(cutoff: number): Promise<Deploy[]> {
+    return [...this.deploys.values()]
+      .filter((d) => d.state === State.WaitingSecrets && d.waitingAt <= cutoff)
+      .map(cloneDeploy);
+  }
+
+  async failWaitingSecrets(appId: string, deployId: string, failure: DeployError): Promise<boolean> {
+    const d = this.deploys.get(key(appId, deployId));
+    if (!d || d.state !== State.WaitingSecrets) return false;
+    d.state = State.Failed;
+    d.failure = failure;
+    return true;
   }
 
   async finishLive(appId: string, deployId: string): Promise<void> {
@@ -532,6 +564,7 @@ interface StoredApp extends App {
 
 interface StoredDeploy extends Deploy {
   createdAt: number;
+  waitingAt: number;
 }
 
 function key(appId: string, deployId: string): string {

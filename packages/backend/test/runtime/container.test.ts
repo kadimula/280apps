@@ -103,6 +103,13 @@ describe('ContainerRuntime (over a builder)', () => {
         manifest,
       });
 
+      await harness.store.putAppSecret({
+        appId: synced.app.id,
+        name: 'API_KEY',
+        envelope: '',
+        setBy: 'owner@test',
+        setAt: 1,
+      });
       await port.putBlob(synced.app.id, digest, worker.byteLength, bodyOf(worker));
 
       const status = await port.status(synced.app.id, synced.deployId);

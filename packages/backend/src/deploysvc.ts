@@ -97,6 +97,22 @@ export class Platform {
   for(userId: string): Service {
     return new Service(this, userId);
   }
+
+  async resumeWaitingSecrets(app: App): Promise<void> {
+    const [open, configured] = await Promise.all([
+      this.store.openDeploys(app.id),
+      this.store.appSecretNames(app.id),
+    ]);
+    const present = new Set(configured);
+    for (const dep of open) {
+      if (
+        dep.state === State.WaitingSecrets &&
+        (dep.manifest.secrets ?? []).every((name) => present.has(name))
+      ) {
+        await this.activator.activate(app, dep.id);
+      }
+    }
+  }
 }
 
 // Service implements the deploy Port for one authenticated user.
@@ -382,7 +398,7 @@ export class Service implements Port {
     const missing = (m.secrets ?? []).filter((name) => !present.has(name));
     if (missing.length === 0) return '';
     const single = missing.length === 1;
-    return `declared ${single ? 'secret is' : 'secrets are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}`;
+    return `declared ${single ? 'secret is' : 'secrets are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?variables=1`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,

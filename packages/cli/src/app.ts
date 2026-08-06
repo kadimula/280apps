@@ -167,6 +167,7 @@ async function cmdPush(ctx: Ctx): Promise<number> {
   );
 
   if (res.notice !== '') output.progress(s, res.notice);
+  if (res.secretNotice !== '') output.progress(s, res.secretNotice);
 
   return output.result(s, {
     url: res.url,

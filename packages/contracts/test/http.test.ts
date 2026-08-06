@@ -60,6 +60,18 @@ describe('HTTP Client', () => {
     expect(h['Accept']).toBe('application/json');
   });
 
+  it('parses the secret notice and defaults it for older servers', async () => {
+    const reply = (body: Record<string, unknown>) =>
+      mockFetch(() => new Response(JSON.stringify({ state: 'live', url: 'https://app.example', ...body }), { status: 200 }));
+    const current = new Client('https://api', {
+      fetch: reply({ secretNotice: 'configure STRIPE_KEY' }).fetch,
+    });
+    const older = new Client('https://api', { fetch: reply({}).fetch });
+
+    expect((await current.status('app_1', 'dep_1')).secretNotice).toBe('configure STRIPE_KEY');
+    expect((await older.status('app_1', 'dep_1')).secretNotice).toBe('');
+  });
+
   it('sends the CLI version header only when set', async () => {
     const { fetch, calls } = mockFetch(() => new Response(okSync, { status: 200 }));
     const withV = new Client('https://api', { token: 't', cliVersion: '0.2.0', fetch });

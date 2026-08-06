@@ -468,6 +468,10 @@ export class MemoryStore implements Store {
       .map((secret) => ({ ...secret }));
   }
 
+  async appSecretNames(appId: string): Promise<string[]> {
+    return (await this.appSecrets(appId)).map((secret) => secret.name);
+  }
+
   async recordAppAccess(e: { appId: string; principal: string; allowed: boolean; detail?: string; kind?: string }): Promise<void> {
     this.record({
       userId: this.userIdFor(e.appId),

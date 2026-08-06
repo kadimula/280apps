@@ -238,6 +238,7 @@ export interface Store {
   putAppSecret(secret: AppSecret): Promise<void>;
   deleteAppSecret(appId: string, name: string, deletedBy: string): Promise<boolean>;
   appSecrets(appId: string): Promise<AppSecret[]>;
+  appSecretNames(appId: string): Promise<string[]>;
 
   // Records one gateway access decision (allowed/denied) for the permission audit.
   // kind overrides the event kind derived from `allowed` (e.g. app.previewed_as

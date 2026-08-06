@@ -72,6 +72,7 @@ export interface PlatformDeps {
   // staging can emit first-level suffix hostnames like "<slug>-<token>-staging..."
   // that free Universal SSL still covers. Empty reproduces Go byte for byte.
   hostSuffix?: string;
+  frontendOrigin: string;
 }
 
 export class Platform {
@@ -80,6 +81,7 @@ export class Platform {
   readonly activator: Activator;
   readonly appDomain: string;
   readonly hostSuffix: string;
+  readonly frontendOrigin: string;
 
   constructor(deps: PlatformDeps) {
     this.store = deps.store;
@@ -87,6 +89,7 @@ export class Platform {
     this.activator = deps.activator;
     this.appDomain = deps.appDomain;
     this.hostSuffix = deps.hostSuffix ?? '';
+    this.frontendOrigin = deps.frontendOrigin.replace(/\/$/, '');
   }
 
   // The Port scoped to a user: the user is a field, not a parameter, so a query
@@ -355,6 +358,7 @@ export class Service implements Port {
       state: dep.state,
       url: dep.state === State.Live ? app.url : '',
       notice: dep.state === State.Live ? await this.accessOverrideNotice(appId, dep.manifest) : '',
+      secretNotice: await this.secretNotice(appId, dep.manifest),
       failure: dep.failure ?? undefined,
     };
     return st;
@@ -369,6 +373,16 @@ export class Service implements Port {
     const declared = isAppAccess(m.access ?? '') ? m.access : 'invited';
     if (policy.access === declared) return '';
     return `access is "${policy.access}" (set in the dashboard, which overrides 280.json's "${declared}")`;
+  }
+
+  private async secretNotice(appId: string, m: Manifest): Promise<string> {
+    const configured = await this.p.store.appSecretNames(appId).catch(() => null);
+    if (configured === null) return '';
+    const present = new Set(configured);
+    const missing = (m.secrets ?? []).filter((name) => !present.has(name));
+    if (missing.length === 0) return '';
+    const noun = missing.length === 1 ? 'secret is' : 'secrets are';
+    return `declared ${noun} not configured: ${missing.join(', ')}. Ask the app owner to configure ${missing.length === 1 ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,

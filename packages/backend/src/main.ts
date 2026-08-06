@@ -51,6 +51,7 @@ async function run(log: Logger): Promise<void> {
     activator,
     appDomain: config.appDomain,
     hostSuffix: config.hostSuffix,
+    frontendOrigin: config.frontendOrigin,
   });
 
   const auth = buildAuth(store, config, log);

@@ -49,6 +49,7 @@ export interface Result {
   deployId: string;
   url: string;
   notice: string;
+  secretNotice: string;
 }
 
 // Events lets the caller narrate progress without push knowing about output.
@@ -130,7 +131,14 @@ export async function run(
     ev.onWait?.();
     const status = await poll(port, res.app, res.deployId, opts);
     if (status.failure) throw status.failure;
-    return { app: res.app, resolution, deployId: res.deployId, url: status.url, notice: status.notice };
+    return {
+      app: res.app,
+      resolution,
+      deployId: res.deployId,
+      url: status.url,
+      notice: status.notice,
+      secretNotice: status.secretNotice,
+    };
   }
 }
 
@@ -157,7 +165,14 @@ async function finish(port: Port, res: SyncResult, resolution: string, opts: Opt
   const status = await poll(port, res.app, res.deployId, opts);
   if (status.failure) throw status.failure;
   const url = status.url !== '' ? status.url : res.app.url;
-  return { app: res.app, resolution, deployId: res.deployId, url, notice: status.notice };
+  return {
+    app: res.app,
+    resolution,
+    deployId: res.deployId,
+    url,
+    notice: status.notice,
+    secretNotice: status.secretNotice,
+  };
 }
 
 // poll waits for a deploy to reach a terminal state.

@@ -11,8 +11,8 @@ import {
   setVariable,
 } from "@/lib/variables";
 
-export function VariablesDialog({ app }: { app: { id: string; slug: string } }) {
-  const [open, setOpen] = useState(false);
+export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; slug: string }; autoOpen?: boolean }) {
+  const [open, setOpen] = useState(autoOpen);
   const [variables, setVariables] = useState<AppVariable[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
@@ -37,6 +37,10 @@ export function VariablesDialog({ app }: { app: { id: string; slug: string } }) 
     setOpen(true);
     refresh();
   }
+
+  useEffect(() => {
+    if (autoOpen) queueMicrotask(() => void refresh());
+  }, [autoOpen, refresh]);
 
   function close() {
     setOpen(false);

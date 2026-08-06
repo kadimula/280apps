@@ -7,8 +7,8 @@
 // context out of the blob store and hands it to a ContainerBuilder. That builder
 // is the one seam the build-home decision plugs into (the live path is DepotBuilder
 // on the Node host; the self-hosted Docker/HTTP builders are retained but dormant).
-// Splitting build/push/rollout further would be fiction: wrangler does them as a
-// unit, so the builder does too.
+// Build and rollout are separate so a completed image can wait for the owner's
+// secret configuration without exposing a new serving version.
 
 import { DeployCode, DeployErr, appPolicyFromManifest, type BuildSpec } from '@280/contracts';
 import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult, SecretDelivery } from '../../seams.js';
@@ -46,12 +46,13 @@ export interface RolloutResult {
   imageRef: string;
 }
 
-// ContainerBuilder is the build-home boundary: build the image from the context,
-// push it to registry.cloudflare.com, and create or roll the app's container
-// application. Both methods are idempotent — a retried activation converges on
-// the same image and application; a repeated teardown of a gone app is success.
+// ContainerBuilder is the build-home boundary. Build pushes the image without
+// changing the serving app; rollout switches the app to that deterministic image.
+// Every method is idempotent.
 export interface ContainerBuilder {
-  rollout(job: RolloutJob): Promise<RolloutResult>;
+  imageRef(app: RuntimeApp, deployId: string): string;
+  build(job: RolloutJob): Promise<RolloutResult>;
+  rollout(job: RolloutJob, imageRef: string): Promise<void>;
   teardown(app: RuntimeApp): Promise<void>;
 }
 
@@ -74,30 +75,44 @@ function errText(err: unknown): string {
 }
 
 export class ContainerRuntime implements RuntimeSeam {
+  private readonly prepared = new Set<string>();
+
   constructor(
     private readonly builder: ContainerBuilder,
     private readonly secrets?: SecretDelivery,
   ) {}
 
-  async activate(act: Activation): Promise<RuntimeResult> {
-    const files: ContextFile[] = act.manifest.files.map((f) => ({
-      path: f.path,
-      read: () => act.asset(f.digest),
-    }));
+  private job(act: Activation): RolloutJob {
+    return {
+      app: act.app,
+      deployId: act.deployId,
+      build: act.manifest.build,
+      files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
+      policy: appPolicyFromManifest(act.manifest),
+    };
+  }
+
+  async prepare(act: Activation): Promise<void> {
     try {
-      const policy = appPolicyFromManifest(act.manifest);
-      await this.builder.rollout({
-        app: act.app,
-        deployId: act.deployId,
-        build: act.manifest.build,
-        files,
-        policy,
-      });
-      await this.secrets?.rollout(act.app, policy.secrets);
+      await this.builder.build(this.job(act));
+      this.prepared.add(`${act.app.id}/${act.deployId}`);
     } catch (err) {
       throw buildFailed(err);
     }
-    // No per-app store in Phase 1; the container is addressed by its script name.
+  }
+
+  async activate(act: Activation): Promise<RuntimeResult> {
+    const job = this.job(act);
+    const key = `${act.app.id}/${act.deployId}`;
+    if (!this.prepared.has(key)) await this.prepare(act);
+    try {
+      await this.builder.rollout(job, this.builder.imageRef(job.app, job.deployId));
+      await this.secrets?.rollout(act.app, job.policy.secrets);
+    } catch (err) {
+      throw buildFailed(err);
+    } finally {
+      this.prepared.delete(key);
+    }
     return { storeId: '' };
   }
 
@@ -115,6 +130,7 @@ export class ContainerRuntime implements RuntimeSeam {
 // one-shot failure injection mirrors MemoryRuntime.failNext for the tests that
 // assert the seam surfaces a build failure as an activation failure.
 export class FakeBuilder implements ContainerBuilder {
+  readonly builds: RolloutJob[] = [];
   readonly rollouts: RolloutJob[] = [];
   readonly torndown: string[] = [];
   private failWith: Error | null = null;
@@ -123,17 +139,23 @@ export class FakeBuilder implements ContainerBuilder {
     this.failWith = err;
   }
 
-  async rollout(job: RolloutJob): Promise<RolloutResult> {
+  imageRef(app: RuntimeApp, deployId: string): string {
+    return `registry.cloudflare.com/fake/${app.script}:${deployId}`;
+  }
+
+  async build(job: RolloutJob): Promise<RolloutResult> {
     if (this.failWith) {
       const err = this.failWith;
       this.failWith = null;
       throw err;
     }
-    // Read every file the way a real builder would when it assembles the context,
-    // so a manifest naming a blob nobody uploaded fails here, not silently.
     for (const f of job.files) await f.read();
+    this.builds.push(job);
+    return { imageRef: this.imageRef(job.app, job.deployId) };
+  }
+
+  async rollout(job: RolloutJob, _imageRef: string): Promise<void> {
     this.rollouts.push(job);
-    return { imageRef: `registry.cloudflare.com/fake/${job.app.script}:${job.deployId}` };
   }
 
   async teardown(app: RuntimeApp): Promise<void> {

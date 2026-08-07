@@ -135,13 +135,13 @@ async function errorFromResponse(resp: Response): Promise<DeployErr> {
       return new DeployErr({
         code: DeployCode.Unauthorized,
         message: 'not logged in to 280',
-        fix: 'run 280 login',
+        fix: 'run two80 login',
       });
     case 404:
       return new DeployErr({
         code: DeployCode.NotFound,
         message: 'not found',
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     case 503:
     case 502:
@@ -156,7 +156,7 @@ async function errorFromResponse(resp: Response): Promise<DeployErr> {
       return new DeployErr({
         code: DeployCode.Unavailable,
         message: `unexpected response from 280 (HTTP ${resp.status})`,
-        fix: 'run 280 push again; if it persists, check https://280apps.com/status',
+        fix: 'run two80 push again; if it persists, check https://280apps.com/status',
       });
   }
 }

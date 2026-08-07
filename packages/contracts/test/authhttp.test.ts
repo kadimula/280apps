@@ -68,7 +68,7 @@ describe('auth HTTP Client', () => {
     const c = new Client('https://api', { fetch });
     const err = asDeployError(await catchErr(() => c.start()));
     expect(err?.code).toBe(DeployCode.Unavailable);
-    expect(err?.fix).toBe('run 280 login again');
+    expect(err?.fix).toBe('run two80 login again');
   });
 
   it('wraps a transport error as retryable unavailable', async () => {

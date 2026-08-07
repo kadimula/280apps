@@ -156,7 +156,7 @@ const scenarios: Scenario[] = [
   {
     name: 'error-delete-confirm-required',
     code: 1,
-    check: { error: 'confirmation_required', fix: 'run 280 delete --yes demo' },
+    check: { error: 'confirmation_required', fix: 'run two80 delete --yes demo' },
     run: async () => {
       freshHome();
       const root = demoProject();
@@ -176,13 +176,13 @@ const scenarios: Scenario[] = [
   {
     name: 'error-unknown-command',
     code: 1,
-    check: { error: 'unknown_command', fix: 'run 280 help' },
+    check: { error: 'unknown_command', fix: 'run two80 help' },
     run: () => runCli(['frobnicate'], { root: demoProject() }),
   },
   {
     name: 'error-not-implemented',
     code: 1,
-    check: { error: 'not_implemented', fix: 'run 280 help for what works today' },
+    check: { error: 'not_implemented', fix: 'run two80 help for what works today' },
     run: () => runCli(['share'], { root: demoProject() }),
   },
   {

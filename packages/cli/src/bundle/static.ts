@@ -37,6 +37,6 @@ export function staticDir(root: string): string {
   }
   return fail(
     'no static build with an index.html found',
-    'build your site first, then run 280 push again',
+    'build your site first, then run two80 push again',
   );
 }

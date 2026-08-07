@@ -173,7 +173,7 @@ export class Server {
     const req = await readJson(c, SYNC_LIMIT, syncRequestSchema, {
       code: DeployCode.PreflightRejected,
       message: 'could not read the sync request',
-      fix: 'upgrade the 280 CLI, then run 280 push again',
+      fix: 'upgrade the two80 CLI, then run two80 push again',
     });
     const res = await svc.sync(req);
     return c.json(encodeSyncResult(res));
@@ -200,7 +200,7 @@ export class Server {
     const req = await readJson(c, SMALL_LIMIT, deleteRequestSchema, {
       code: DeployCode.PreflightRejected,
       message: 'could not read the delete request',
-      fix: 'upgrade the 280 CLI, then run 280 delete again',
+      fix: 'upgrade the two80 CLI, then run two80 delete again',
     });
     // The path names the app, not the body.
     req.appId = (c.req.param('app') ?? '');
@@ -245,7 +245,7 @@ export class Server {
       throw new DeployErr({
         code: AuthCode.ExpiredToken,
         message: 'that login request is not valid',
-        fix: 'run 280 login',
+        fix: 'run two80 login',
       });
     }
 
@@ -261,14 +261,14 @@ export class Server {
       throw new DeployErr({
         code: AuthCode.ExpiredToken,
         message: 'that login request expired',
-        fix: 'run 280 login',
+        fix: 'run two80 login',
       });
     }
     if (dc.status === DeviceStatus.Pending) {
       throw new DeployErr({
         code: AuthCode.AuthorizationPending,
         message: 'waiting for the user to finish signing in',
-        fix: 'ask your user to open the login link, then run 280 login again',
+        fix: 'ask your user to open the login link, then run two80 login again',
       });
     }
 
@@ -284,7 +284,7 @@ export class Server {
       throw new DeployErr({
         code: AuthCode.ExpiredToken,
         message: 'that login request expired',
-        fix: 'run 280 login',
+        fix: 'run two80 login',
       });
     }
 
@@ -318,7 +318,7 @@ export class Server {
       throw new DeployErr({
         code: AuthCode.ExpiredToken,
         message: 'that code is not waiting for approval',
-        fix: 'ask your agent to run 280 login again',
+        fix: 'ask your agent to run two80 login again',
       });
     }
     return c.body(null, 204);
@@ -866,7 +866,7 @@ export class Server {
     const hash = hashToken(token);
 
     // An expired token (created before now - ttl) resolves to null, the same answer
-    // an unknown token gets, so the CLI's "run 280 login" recovery covers both.
+    // an unknown token gets, so the CLI's "run two80 login" recovery covers both.
     const minCreatedAt = nowSecs() - this.deps(c).machineTokenTtlSecs;
 
     let user;
@@ -897,7 +897,7 @@ export class Server {
     const body = encodeError({
       code: DeployCode.Unavailable,
       message: '280 hit an internal error',
-      fix: 'run 280 push again, and quote the request id in the response headers',
+      fix: 'run two80 push again, and quote the request id in the response headers',
       retryable: false,
       candidates: [],
     });
@@ -1012,7 +1012,7 @@ function isSecureRequest(c: Context<HonoEnv>): boolean {
 }
 
 function noAccount(): DeployErr {
-  return new DeployErr({ code: DeployCode.Unauthorized, message: 'not logged in to 280', fix: 'run 280 login' });
+  return new DeployErr({ code: DeployCode.Unauthorized, message: 'not logged in to 280', fix: 'run two80 login' });
 }
 
 function badRequest(message: string): DeployErr {

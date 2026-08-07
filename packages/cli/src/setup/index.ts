@@ -1,5 +1,5 @@
-// `280 setup`: opt-in command that registers a SessionStart hook running the bare
-// `280` home view for Claude Code, Codex, and OpenCode, plus the on-demand skill.
+// `two80 setup`: opt-in command that registers a SessionStart hook running the bare
+// `two80` home view for Claude Code, Codex, and OpenCode, plus the on-demand skill.
 // Everything it writes is JSON-merged or managed-file safe, never overwriting.
 
 import fs from 'node:fs';
@@ -56,7 +56,7 @@ function checkSkill(ctx: Ctx): number {
   throw output.fail(
     'stale_skill',
     'the committed SKILL.md is out of date with the CLI',
-    'run 280 setup --write to regenerate it, then commit the change',
+    'run two80 setup --write to regenerate it, then commit the change',
   );
 }
 
@@ -67,9 +67,9 @@ function writeSkill(ctx: Ctx): number {
   return output.result(s, { wrote: path });
 }
 
-const SETUP_HELP = `280 setup - register a session-start hook (Claude Code, Codex, OpenCode) + install the skill
+const SETUP_HELP = `two80 setup - register a session-start hook (Claude Code, Codex, OpenCode) + install the skill
 
-Runs the bare \`280\` home view at session start so the agent sees this
+Runs the bare \`two80\` home view at session start so the agent sees this
 directory's app state without invoking anything. Opt-in, idempotent, and
 directory-scoped: it merges into your agent config files, never overwrites them.
 
@@ -78,5 +78,5 @@ Flags:
   --write     regenerate the committed SKILL.md (maintenance)
 
 Examples:
-  280 setup
-  280 setup --check`;
+  two80 setup
+  two80 setup --check`;

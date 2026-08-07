@@ -45,7 +45,7 @@ export function read280(root: string): Policy280 {
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch {
-    fail('280.json is not valid JSON', 'fix the JSON syntax in 280.json, then run 280 push again');
+    fail('280.json is not valid JSON', 'fix the JSON syntax in 280.json, then run two80 push again');
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     fail('280.json must be a JSON object', 'wrap your settings in { ... }');

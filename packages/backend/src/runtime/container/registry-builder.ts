@@ -343,7 +343,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     throw new DeployErr({
       code: DeployCode.Unavailable,
       message: `failed to ${what}:\n${tail(res.output)}`,
-      fix: 'fix the build error above, then run 280 push again',
+      fix: 'fix the build error above, then run two80 push again',
       retryable: false,
     });
   }
@@ -361,7 +361,7 @@ export async function materialize(dir: string, files: RolloutJob['files']): Prom
       throw new DeployErr({
         code: DeployCode.PreflightRejected,
         message: `context path "${f.path}" escapes the build context`,
-        fix: 'upgrade the 280 CLI, then run 280 push again',
+        fix: 'upgrade the two80 CLI, then run two80 push again',
       });
     }
     await mkdir(dirname(abs), { recursive: true });

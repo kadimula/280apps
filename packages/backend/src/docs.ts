@@ -2,11 +2,10 @@
 // these because agents fetch them at stable URLs that the frontend only proxies.
 // docsRoutes() mounts them as unauthenticated GETs; api.ts wires it in one line.
 
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 
-// Single source of truth for what 280 supports today. Not cheaply derivable from the
-// CLI bundler, so revisit these rows when a stack, adapter version, or platform
-// feature changes.
+// Structured capabilities consumed by the current landing page docs route.
 
 export type CapabilityStatus = 'supported' | 'unsupported';
 
@@ -152,15 +151,14 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'Direction, not shipped',
     },
     {
-      name: 'Secrets, crons, `280 dev`',
+      name: 'Secrets, crons, `two80 dev`',
       status: 'unsupported',
       note: 'Direction, not shipped',
     },
   ],
 };
 
-// The full matrix: deploy stacks, then the runtime limits and platform features that
-// apply across all of them. The markdown table and the JSON both render this.
+// The full structured matrix consumed by the JSON docs endpoint.
 export const SUPPORT_MATRIX: CapabilityGroup[] = [
   ...DEPLOY_STACKS,
   RUNTIME_LIMITS,
@@ -172,8 +170,7 @@ export const SUPPORT_MATRIX: CapabilityGroup[] = [
 export const CAPABILITY_REQUIREMENT =
   'Your app must listen on port 8080 (the platform sets PORT=8080). Next.js and static sites build automatically; any other stack ships a repo root Dockerfile that listens on that port.';
 
-// DocsCapabilities is the JSON the styled /docs page fetches, so both the page and
-// the markdown table stay driven by this one list.
+// DocsCapabilities is the JSON the styled /docs page fetches.
 export interface DocsCapabilities {
   matrix: CapabilityGroup[];
   requirement: string;
@@ -183,86 +180,11 @@ export function docsCapabilities(): DocsCapabilities {
   return { matrix: SUPPORT_MATRIX, requirement: CAPABILITY_REQUIREMENT };
 }
 
-// Render groups as a markdown table. The group name repeats down its feature rows
-// because markdown has no row spanning.
-function matrixMarkdown(groups: CapabilityGroup[]): string {
-  const rows = groups.flatMap((g) =>
-    g.features.map(
-      (f) =>
-        `| ${g.name} | ${f.name} | ${f.status === 'supported' ? 'yes' : 'no'} | ${f.note ?? ''} |`,
-    ),
-  );
-  return ['| Stack | Feature | Supported | Notes |', '| --- | --- | --- | --- |', ...rows].join(
-    '\n',
-  );
-}
-
-// platformSupportMarkdown renders the full matrix the agent fetches at
-// /platform-support.md before it decides whether an app is worth pushing.
-export function platformSupportMarkdown(): string {
-  return [
-    'Check this before building or pushing. Anything not listed as supported does not deploy; treat "unverified" as unsupported.',
-    '',
-    matrixMarkdown(SUPPORT_MATRIX),
-    '',
-    CAPABILITY_REQUIREMENT,
-  ].join('\n');
-}
-
-// The entry doc an agent fetches first. It carries no table of its own; it points at
-// /platform-support.md for the matrix.
-export function setupMarkdown(): string {
-  return `\
-280apps.com deploys apps for small teams and manages their auth and permissions.
-
-You and the human build the features; 280 owns deploy, identity, and permissions. It is agent first: nearly everything runs through the CLI. The human only logs in and sets secrets and permissions in the 280 UI.
-
-## 1. Check app compatibility
-
-280 supports most CRUD apps an internal team builds, but the support set is limited. Check https://280apps.com/platform-support.md first, review the user's stack, and install the CLI only if it is supported. (You can also offer to change the unsupported parts.)
-
-## 2. Declare the app's secrets
-
-Scan the repo for credentials the app uses: env vars, API keys, connection strings, tokens in code. Declare each name in \`280.json\` and map it to the host it authenticates against:
-
-    {
-      "secrets": ["STRIPE_KEY"],
-      "egress": { "allow": ["api.stripe.com"], "credentials": [{ "host": "api.stripe.com", "secret": "STRIPE_KEY" }] }
-    }
-
-280 attaches the value to outbound requests to that host (an \`Authorization: Bearer\` header by default; set \`"header"\`/\`"scheme"\` for APIs that differ), so remove code that reads the value from env. You handle names only: never write a value into any file or into the conversation. The user enters values in the 280 dashboard.
-
-## 3. Install the CLI and push
-
-    npx -y two80@latest push
-
-Auto-inits new projects. Safe to re-run; every step resumes, nothing duplicates.
-
-## 4. Login (in the user's browser)
-
-When push prints a login link, relay it and wait. Never open it yourself.
-
-> Log in to 280 to deploy: <url>
-
-After they confirm, push again.
-
-## 5. Secret values (also the user's browser)
-
-When push says it is waiting on secret values, relay the link and wait. Never ask for the values yourself.
-
-> Enter values for STRIPE_KEY at: <url>
-
-Push finishes on its own once they are saved. If it timed out waiting, push again.
-
-## 6. Verify, then hand over the link
-
-Push exits with the live URL. The edge can lag up to a minute.
-
-- Broken or stale: wait 30 seconds, retry. Do not re-push yet.
-- Still broken after two retries: fix, push again.
-- Clean: give the user the live link.
-`;
-}
+const SETUP_MARKDOWN = readFileSync(new URL('./docs/setup.md', import.meta.url), 'utf8');
+const PLATFORM_SUPPORT_MARKDOWN = readFileSync(
+  new URL('./docs/platform-support.md', import.meta.url),
+  'utf8',
+);
 
 const MARKDOWN_HEADERS = {
   'Content-Type': 'text/markdown; charset=utf-8',
@@ -276,9 +198,9 @@ const MARKDOWN_HEADERS = {
 export function docsRoutes(): Hono {
   const docs = new Hono();
 
-  docs.get('/setup.md', (c) => c.body(setupMarkdown(), 200, MARKDOWN_HEADERS));
+  docs.get('/setup.md', (c) => c.body(SETUP_MARKDOWN, 200, MARKDOWN_HEADERS));
   docs.get('/platform-support.md', (c) =>
-    c.body(platformSupportMarkdown(), 200, MARKDOWN_HEADERS),
+    c.body(PLATFORM_SUPPORT_MARKDOWN, 200, MARKDOWN_HEADERS),
   );
   docs.get('/capabilities', (c) =>
     c.json(docsCapabilities(), 200, {

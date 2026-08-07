@@ -76,7 +76,7 @@ async function errorFrom(resp: Response): Promise<DeployErr> {
   return new DeployErr({
     code: DeployCode.Unavailable,
     message: `unexpected response from 280 (HTTP ${resp.status})`,
-    fix: 'run 280 login again',
+    fix: 'run two80 login again',
   });
 }
 

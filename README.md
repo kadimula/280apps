@@ -18,7 +18,7 @@ Professionals across every single domain are aggresively using AI coding agents 
 * Tools for deployoing, add OAuth, managing secrets, and adding permissions for you and your team
 * Peace of mind for professionals to continue vibe-coding toosl without ever debugging deploys, configuring auth, or worrying about security
 
-## Find out for yourself!
+## Find out for yourself
 
 Your agent can answer if the 280apps platform is right for you:
 
@@ -32,17 +32,25 @@ Then, when you're ready, ask it to deploy:
 Fetch 280apps.com/setup.md and push.
 ```
 
-## What's here
+## Agent facing docs
 
-| Package | What it is |
-| --- | --- |
-| `packages/cli` | The `280` CLI (npm `two80`). Push a directory, it deploys. |
-| `packages/backend` | Control plane: deploy, identity, storage, agent facing docs. |
-| `packages/contracts` | Shared types and adapters between CLI and backend. |
+* [setup.md](packages/backend/docs/setup.md) - Start here
+* [platform-support.md](packages/backend/docs/platform-support.md) - Current platform support
 
-## Docs
 
-Agent facing docs are served live under `/v1/docs/*`. Start at [280apps.com/setup.md](https://www.280apps.com/setup.md).
+## Project structure
+
+| package | description | Link to docs |
+| --- | --- | --- |
+| `packages/cli` | The CLI (npm `two80`). Push a directory, it deploys. | [README](packages/cli/README.md) |
+| `packages/backend` | Control plane: deploy, identity, storage, agent facing docs. | No README yet |
+| `packages/contracts` | Shared types and adapters between CLI and backend. | No README yet |
+| `packages/dashboard` | Web dashboard for managing apps, access, and configuration. | No README yet |
+| `packages/egress` | Secure outbound requests, credential injection, and call logging. | No README yet |
+| `packages/gateway` | Central identity authority and route enforcement for deployed apps. | [README](packages/gateway/README.md) |
+| `packages/sdk` | App identity, capability checks, and scope resolution. | No README yet |
+
+
 
 ## License
 
@@ -51,3 +59,9 @@ Agent facing docs are served live under `/v1/docs/*`. Start at [280apps.com/setu
 **Self-hosting vs. managed:** the source is open so you can audit exactly what runs and secures your apps. Running your own instance requires your own Cloudflare, Depot, and Postgres accounts and is currently unsupported. The managed service at [280apps.com](https://www.280apps.com) is the recommended path.
 
 **Trademarks:** the "280" and "280apps" names and logo are trademarks of Kishore Adimulam and may not be used for forks or derived services without permission.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="280apps package architecture showing deploy, identity, and request flows" width="1200">
+</p>

@@ -433,7 +433,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     await store.finishFailed(a.id, 'dep_1', {
       code: 'unavailable',
       message: 'boom',
-      fix: 'run 280 push again',
+      fix: 'run two80 push again',
       retryable: true,
       candidates: [],
     });
@@ -564,7 +564,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     const failure = {
       code: 'unavailable',
       message: 'deployment expired while waiting for app secrets',
-      fix: 'set them, then run 280 push again',
+      fix: 'set them, then run two80 push again',
       retryable: false,
       candidates: [],
     };
@@ -575,7 +575,7 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect(await store.failWaitingSecrets(a.id, 'dep_1', failure)).toBe(false);
     const d = await store.deploy(a.id, 'dep_1');
     expect(d?.state).toBe(State.Failed);
-    expect(d?.failure?.fix).toBe('set them, then run 280 push again');
+    expect(d?.failure?.fix).toBe('set them, then run two80 push again');
     const failed = (await store.recentEvents(50)).find((e) => e.kind === EventKind.DeployFailed);
     expect(JSON.parse(failed!.detail)).toEqual({ code: 'unavailable' });
   });

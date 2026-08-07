@@ -1,4 +1,4 @@
-// homeview is the bare `280` content-first view (AXI §8): an agent running with no
+// homeview is the bare `two80` content-first view (AXI §8): an agent running with no
 // arguments sees live, directory-scoped state, not a usage manual. This payload is
 // also what the session-start hook injects, so it is budgeted to ~10 lines and
 // never dials the network: login state is read from the credentials file.
@@ -52,9 +52,9 @@ function appLine(found: boolean, cfg: config.Config): string {
 }
 
 function helpFor(found: boolean, cfg: config.Config): string[] {
-  if (!found) return ['Run `280 push` to create and deploy this app'];
-  if (cfg.appId === '') return ['Run `280 push` to deploy'];
-  return ['Run `280 push` to redeploy', `Run \`280 delete --yes ${cfg.name}\` to remove it`];
+  if (!found) return ['Run `two80 push` to create and deploy this app'];
+  if (cfg.appId === '') return ['Run `two80 push` to deploy'];
+  return ['Run `two80 push` to redeploy', `Run \`two80 delete --yes ${cfg.name}\` to remove it`];
 }
 
 // collapseHome rewrites a leading home directory to `~` so the bin path is stable

@@ -1,5 +1,5 @@
-bin: /usr/local/bin/280
+bin: /usr/local/bin/two80
 description: Deploy and share your app with one command.
 app: none in this directory
 login: not logged in
-help[1]: Run `280 push` to create and deploy this app
+help[1]: Run `two80 push` to create and deploy this app

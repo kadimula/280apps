@@ -105,7 +105,7 @@ export function result(s: Streams, obj: Record<string, unknown>): number {
 // progress writes one human-facing progress line to stderr, never stdout: an agent
 // reads only stdout.
 export function progress(s: Streams, line: string): void {
-  s.err('280: ' + line + '\n');
+  s.err('two80: ' + line + '\n');
 }
 
 // error renders a structured failure to stdout as TOON and returns exit 1. The

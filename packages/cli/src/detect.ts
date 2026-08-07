@@ -20,7 +20,7 @@ export function framework(root: string): string {
   throw fail(
     DeployCode.PreflightRejected,
     'no supported framework found: need a Next.js project (next in package.json) or a static build (index.html)',
-    'cd into your app directory, or pass 280 init --framework next|static',
+    'cd into your app directory, or pass two80 init --framework next|static',
   );
 }
 

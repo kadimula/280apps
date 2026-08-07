@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Sheets Todo: Visible Code and Hidden Authentication</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #071a3d;
+      --panel: #0d2752;
+      --panel-soft: #102f61;
+      --line: #5f7fae;
+      --text: #f8fafc;
+      --muted: #b8c8df;
+      --code: #68a5ff;
+      --library: #d59cff;
+      --google: #67d69c;
+      --gold: #ffd166;
+      --danger: #ff9292;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font: 16px/1.55 system-ui, sans-serif;
+    }
+
+    main {
+      width: min(1240px, calc(100% - 32px));
+      margin: 48px auto 72px;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 980px; font-size: clamp(2rem, 4vw, 3.35rem); line-height: 1.06; }
+    h2 { margin-bottom: 16px; }
+    code { color: var(--gold); overflow-wrap: anywhere; }
+
+    .lead {
+      max-width: 880px;
+      color: var(--muted);
+      font-size: 1.1rem;
+      margin-bottom: 32px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid #254a7f;
+      border-radius: 18px;
+      padding: 24px;
+      margin-top: 24px;
+      box-shadow: 0 18px 55px rgba(0, 0, 0, .18);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      color: var(--muted);
+      font-size: .92rem;
+      margin-bottom: 18px;
+    }
+
+    .legend strong { color: var(--text); }
+    .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 7px; }
+    .diagram-scroll { overflow-x: auto; }
+    svg { display: block; min-width: 1120px; width: 100%; height: auto; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      min-width: 0;
+      background: var(--panel-soft);
+      border: 1px solid #315989;
+      border-top-width: 5px;
+      border-radius: 14px;
+      padding: 18px;
+    }
+
+    .card.code { border-top-color: var(--code); }
+    .card.library { border-top-color: var(--library); }
+    .card.google { border-top-color: var(--google); }
+    .card h3 { margin-bottom: 8px; }
+    .card p, .card li { color: var(--muted); }
+    .card p:last-child { margin-bottom: 0; }
+    .card ul { padding-left: 20px; margin-bottom: 0; }
+    .card li + li { margin-top: 7px; }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 9px;
+      margin-bottom: 10px;
+      background: #1b416f;
+      color: var(--code);
+      font-size: .75rem;
+      font-weight: 750;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .library .badge { color: var(--library); background: #422d5c; }
+    .google .badge { color: var(--google); background: #173f38; }
+
+    .callout {
+      border-left: 4px solid var(--gold);
+      background: #3d351f;
+      padding: 16px 18px;
+      border-radius: 10px;
+      color: #fff0bd;
+    }
+
+    .secret-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .secret-item {
+      min-width: 0;
+      background: #102f61;
+      border: 1px solid #315989;
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .secret-item p { color: var(--muted); margin-bottom: 0; }
+
+    @media (max-width: 850px) {
+      .cards, .secret-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      main { margin-top: 28px; }
+      .panel { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">Architecture explainer</span>
+      <h1>What your code does versus what the Google library does</h1>
+      <p class="lead">Your code supplies credentials and asks for spreadsheet data. The Google authentication library performs the JWT and access token work automatically. Google services verify identity, enforce permissions, and return the data.</p>
+    </header>
+
+    <section class="panel" aria-labelledby="sequence-title">
+      <h2 id="sequence-title">Sequence diagram</h2>
+      <div class="legend" aria-label="Diagram ownership legend">
+        <span><i class="dot" style="background:var(--code)"></i><strong>Blue:</strong> visible in this app</span>
+        <span><i class="dot" style="background:var(--library)"></i><strong>Purple:</strong> Google library internals</span>
+        <span><i class="dot" style="background:var(--google)"></i><strong>Green:</strong> Google services</span>
+      </div>
+
+      <div class="diagram-scroll">
+        <svg viewBox="0 0 1320 1530" role="img" aria-labelledby="svg-title svg-desc">
+          <title id="svg-title">Visible application code and hidden Google authentication sequence</title>
+          <desc id="svg-desc">The app loads credentials and creates GoogleAuth. The library internally creates and signs a JWT, exchanges it for an access token, and attaches that token to a Sheets request. Google verifies the token and spreadsheet permission before returning data.</desc>
+          <defs>
+            <marker id="arrow-code" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#68a5ff"/></marker>
+            <marker id="arrow-library" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#d59cff"/></marker>
+            <marker id="arrow-google" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#67d69c"/></marker>
+            <style>
+              .actor { fill: #102f61; stroke: #5f7fae; stroke-width: 2; }
+              .actorText { fill: #f8fafc; font: 700 15px system-ui, sans-serif; text-anchor: middle; }
+              .subText { fill: #b8c8df; font: 12px system-ui, sans-serif; text-anchor: middle; }
+              .life { stroke: #5f7fae; stroke-width: 2; stroke-dasharray: 7 8; opacity: .65; }
+              .appLine { stroke: #68a5ff; fill: none; stroke-width: 2.5; marker-end: url(#arrow-code); }
+              .libLine { stroke: #d59cff; fill: none; stroke-width: 2.5; marker-end: url(#arrow-library); }
+              .googleLine { stroke: #67d69c; fill: none; stroke-width: 2.5; marker-end: url(#arrow-google); }
+              .return { stroke-dasharray: 7 6; }
+              .label { fill: #f8fafc; font: 14px system-ui, sans-serif; text-anchor: middle; }
+              .small { fill: #b8c8df; font: 12px system-ui, sans-serif; text-anchor: middle; }
+              .bandTitle { font: 800 13px system-ui, sans-serif; letter-spacing: 1.4px; }
+              .note { fill: #173661; stroke: #315989; stroke-width: 1.5; }
+              .noteText { fill: #d9e6f7; font: 13px system-ui, sans-serif; }
+            </style>
+          </defs>
+
+          <rect x="10" y="112" width="1300" height="388" rx="14" fill="#68a5ff" opacity=".055" stroke="#68a5ff" stroke-opacity=".4"/>
+          <text class="bandTitle" x="30" y="140" fill="#68a5ff">VISIBLE IN YOUR APP CODE</text>
+
+          <rect x="10" y="515" width="1300" height="485" rx="14" fill="#d59cff" opacity=".055" stroke="#d59cff" stroke-opacity=".4"/>
+          <text class="bandTitle" x="30" y="543" fill="#d59cff">HANDLED INTERNALLY BY THE GOOGLE AUTH LIBRARY</text>
+
+          <rect x="10" y="1015" width="1300" height="250" rx="14" fill="#67d69c" opacity=".055" stroke="#67d69c" stroke-opacity=".4"/>
+          <text class="bandTitle" x="30" y="1043" fill="#67d69c">HANDLED BY GOOGLE SERVICES</text>
+
+          <rect x="10" y="1280" width="1300" height="225" rx="14" fill="#68a5ff" opacity=".055" stroke="#68a5ff" stroke-opacity=".4"/>
+          <text class="bandTitle" x="30" y="1308" fill="#68a5ff">BACK IN YOUR APP CODE</text>
+
+          <rect class="actor" x="20" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="105" y="48">Browser</text>
+          <text class="subText" x="105" y="70">Todo interface</text>
+
+          <rect class="actor" x="235" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="320" y="48">App code</text>
+          <text class="subText" x="320" y="70">page, actions, sheets</text>
+
+          <rect class="actor" x="450" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="535" y="48">Environment</text>
+          <text class="subText" x="535" y="70">.env.local</text>
+
+          <rect class="actor" x="665" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="750" y="48">GoogleAuth library</text>
+          <text class="subText" x="750" y="70">googleapis internals</text>
+
+          <rect class="actor" x="880" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="965" y="48">Google OAuth</text>
+          <text class="subText" x="965" y="70">token endpoint</text>
+
+          <rect class="actor" x="1095" y="20" width="170" height="70" rx="12"/>
+          <text class="actorText" x="1180" y="48">Sheets API</text>
+          <text class="subText" x="1180" y="70">spreadsheet data</text>
+
+          <line class="life" x1="105" y1="90" x2="105" y2="1490"/>
+          <line class="life" x1="320" y1="90" x2="320" y2="1490"/>
+          <line class="life" x1="535" y1="90" x2="535" y2="1490"/>
+          <line class="life" x1="750" y1="90" x2="750" y2="1490"/>
+          <line class="life" x1="965" y1="90" x2="965" y2="1490"/>
+          <line class="life" x1="1180" y1="90" x2="1180" y2="1490"/>
+
+          <line class="appLine" x1="105" y1="180" x2="320" y2="180"/>
+          <text class="label" x="212" y="165">1. Open the page</text>
+          <text class="small" x="212" y="199">GET /</text>
+
+          <path class="appLine" d="M320 235 C390 235 450 235 535 235"/>
+          <text class="label" x="427" y="220">2. Read environment variables</text>
+          <text class="small" x="427" y="254">lib/sheets.ts</text>
+
+          <line class="appLine return" x1="535" y1="300" x2="320" y2="300"/>
+          <text class="label" x="427" y="285">3. Sheet ID, email, private key</text>
+
+          <line class="appLine" x1="320" y1="365" x2="750" y2="365"/>
+          <text class="label" x="535" y="350">4. Create GoogleAuth with credentials and scope</text>
+          <text class="small" x="535" y="384">new google.auth.GoogleAuth(...)</text>
+
+          <line class="appLine" x1="320" y1="440" x2="750" y2="440"/>
+          <text class="label" x="535" y="425">5. Ask Sheets client to read range A:C</text>
+          <text class="small" x="535" y="459">sheets.spreadsheets.values.get(...)</text>
+
+          <rect class="note" x="635" y="560" width="460" height="70" rx="10"/>
+          <text class="noteText" x="655" y="586">The constructor mainly configures authentication.</text>
+          <text class="noteText" x="655" y="610">Token work normally begins when an authorized request needs it.</text>
+
+          <path class="libLine" d="M750 680 C680 680 680 750 750 750"/>
+          <text class="label" x="572" y="702">6. Build JWT assertion</text>
+          <text class="small" x="572" y="721">issuer, scope, audience, issue time, expiry</text>
+
+          <path class="libLine" d="M750 790 C680 790 680 860 750 860"/>
+          <text class="label" x="560" y="812">7. Sign JWT locally</text>
+          <text class="small" x="560" y="831">private key creates signature</text>
+
+          <line class="libLine" x1="750" y1="915" x2="965" y2="915"/>
+          <text class="label" x="857" y="900">8. Exchange signed JWT</text>
+          <text class="small" x="857" y="934">private key is not sent</text>
+
+          <line class="libLine return" x1="965" y1="970" x2="750" y2="970"/>
+          <text class="label" x="857" y="955">9. Receive and cache access token</text>
+
+          <line class="googleLine" x1="750" y1="1090" x2="1180" y2="1090"/>
+          <text class="label" x="965" y="1075">10. Send values.get with bearer access token</text>
+
+          <rect class="note" x="865" y="1120" width="400" height="66" rx="10"/>
+          <text class="noteText" x="885" y="1145">Google verifies token scope and identity, then checks that</text>
+          <text class="noteText" x="885" y="1168">the sheet is shared with the service account email.</text>
+
+          <line class="googleLine return" x1="1180" y1="1220" x2="750" y2="1220"/>
+          <text class="label" x="965" y="1205">11. Return rows: id, text, done</text>
+
+          <line class="appLine return" x1="750" y1="1360" x2="320" y2="1360"/>
+          <text class="label" x="535" y="1345">12. getTodos receives the rows</text>
+
+          <line class="appLine return" x1="320" y1="1430" x2="105" y2="1430"/>
+          <text class="label" x="212" y="1415">13. Render the todo page</text>
+          <text class="small" x="212" y="1449">Create, toggle, and delete follow the same auth path</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="ownership-title">
+      <h2 id="ownership-title">Ownership map</h2>
+      <div class="cards">
+        <article class="card code">
+          <span class="badge">Visible in this repository</span>
+          <h3>Your app code</h3>
+          <ul>
+            <li><code>app/page.tsx</code> calls <code>getTodos()</code>.</li>
+            <li><code>app/actions.ts</code> handles create, toggle, and delete submissions.</li>
+            <li><code>lib/sheets.ts</code> reads environment variables.</li>
+            <li><code>lib/sheets.ts</code> constructs <code>GoogleAuth</code> and calls the Sheets methods.</li>
+          </ul>
+        </article>
+
+        <article class="card library">
+          <span class="badge">Not shown in your code</span>
+          <h3>Google library internals</h3>
+          <ul>
+            <li>Build the JWT header and payload.</li>
+            <li>Sign the JWT assertion with the private key.</li>
+            <li>Exchange the assertion for an OAuth access token.</li>
+            <li>Cache the token and replace it when needed.</li>
+            <li>Add the bearer token to the API request.</li>
+          </ul>
+        </article>
+
+        <article class="card google">
+          <span class="badge">Runs at Google</span>
+          <h3>Google services</h3>
+          <ul>
+            <li>Verify the JWT signature using the matching public key.</li>
+            <li>Issue a short lived access token.</li>
+            <li>Validate the access token and spreadsheet scope.</li>
+            <li>Check that the service account can access the sheet.</li>
+            <li>Read or modify spreadsheet rows.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="credentials-title">
+      <h2 id="credentials-title">Credentials and generated values</h2>
+      <div class="secret-grid">
+        <article class="secret-item">
+          <h3><code>GOOGLE_CLIENT_EMAIL</code></h3>
+          <p>Visible in your configuration. Identifies the service account and becomes the JWT issuer. It is not the <code>client_id</code> field.</p>
+        </article>
+        <article class="secret-item">
+          <h3><code>GOOGLE_PRIVATE_KEY</code></h3>
+          <p>Visible in your server configuration and used only for local signing. It is not placed inside the JWT and is not sent to Google.</p>
+        </article>
+        <article class="secret-item">
+          <h3>JWT assertion</h3>
+          <p>Generated temporarily inside the authentication library. Your app does not create or store it directly.</p>
+        </article>
+        <article class="secret-item">
+          <h3>OAuth access token</h3>
+          <p>Returned by Google and managed by the library. It is sent as a bearer token with Sheets API calls.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="callout"><strong>Important detail:</strong> calling <code>new google.auth.GoogleAuth(...)</code> configures the authentication client. It does not necessarily perform the token exchange at that exact line. The library normally obtains a token lazily when the first authenticated API request requires one.</p>
+    </section>
+  </main>
+</body>
+</html>

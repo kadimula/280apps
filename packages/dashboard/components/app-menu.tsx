@@ -10,7 +10,7 @@ import { deleteAppAction } from "@/app/dashboard/actions";
 // action that takes something away.
 //
 // Deleting asks the human to type "delete". The dialog already names the app,
-// which is the part `280 delete --yes <name>` has to get from a command line.
+// which is the part `two80 delete --yes <name>` has to get from a command line.
 // The button unlocking is a courtesy; the platform checks the word regardless.
 
 const CONFIRM_WORD = "delete";

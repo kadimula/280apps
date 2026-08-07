@@ -17,6 +17,8 @@ data/
 docs/*
 !docs/dev-environment.md
 !docs/architecture.md
+!docs/architecture.dot
+!docs/architecture.svg
 *.local.md
 
 # Local env / secrets

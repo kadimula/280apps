@@ -222,7 +222,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
       deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
-    ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('280 push') });
+    ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('two80 push') });
     await rm(workdir, { recursive: true, force: true });
   });
 

@@ -9,7 +9,7 @@
 #
 # It creates, for BOTH prod and development:
 #   * an R2 bucket for deploy blobs
-#   * a Hyperdrive config pointing at the existing Neon Postgres project, with
+#   * a Hyperdrive config pointing at the existing PostgreSQL database, with
 #     query caching DISABLED
 #
 # It does NOT create the Durable Object namespace, KV, or secrets: DO namespaces
@@ -49,12 +49,12 @@ DEV_BUCKET="two80-blobs-development"
 PROD_HYPERDRIVE_NAME="two80-backend-prod"
 DEV_HYPERDRIVE_NAME="two80-backend-development"
 
-# Neon Postgres connection strings for the existing project (prod + dev roles/
+# PostgreSQL connection strings for the existing project (prod + dev roles/
 # databases). DO NOT commit real values — export them in your shell first, e.g.
-#   export PROD_NEON_URL='postgres://...'
-#   export DEV_NEON_URL='postgres://...'
-PROD_NEON_URL="${PROD_NEON_URL:-}"
-DEV_NEON_URL="${DEV_NEON_URL:-}"
+#   export PROD_DATABASE_URL='postgres://...'
+#   export DEV_DATABASE_URL='postgres://...'
+PROD_DATABASE_URL="${PROD_DATABASE_URL:-}"
+DEV_DATABASE_URL="${DEV_DATABASE_URL:-}"
 
 # -----------------------------------------------------------------------------
 
@@ -65,26 +65,26 @@ wrangler r2 bucket create "$DEV_BUCKET"
 
 echo
 echo "==> Hyperdrive (caching DISABLED — do not remove --caching-disabled)"
-if [[ -z "$PROD_NEON_URL" || -z "$DEV_NEON_URL" ]]; then
-	echo "PROD_NEON_URL / DEV_NEON_URL are unset. Export them, then re-run the"
+if [[ -z "$PROD_DATABASE_URL" || -z "$DEV_DATABASE_URL" ]]; then
+	echo "PROD_DATABASE_URL / DEV_DATABASE_URL are unset. Export them, then re-run the"
 	echo "Hyperdrive commands below by hand. Run each ONCE and copy the printed"
 	echo "config id into the matching wrangler file's hyperdrive[].id."
 	echo
 	echo "  wrangler hyperdrive create $PROD_HYPERDRIVE_NAME --caching-disabled \\"
-	echo "    --connection-string \"\$PROD_NEON_URL\""
+	echo "    --connection-string \"\$PROD_DATABASE_URL\""
 	echo
 	echo "  wrangler hyperdrive create $DEV_HYPERDRIVE_NAME --caching-disabled \\"
-	echo "    --connection-string \"\$DEV_NEON_URL\""
+	echo "    --connection-string \"\$DEV_DATABASE_URL\""
 	exit 0
 fi
 
 # Each create prints a config id. Paste PROD's id into wrangler.jsonc and DEV's
 # id into wrangler.development.jsonc (the REPLACE_WITH_*_HYPERDRIVE_ID slots).
 wrangler hyperdrive create "$PROD_HYPERDRIVE_NAME" --caching-disabled \
-	--connection-string "$PROD_NEON_URL"
+	--connection-string "$PROD_DATABASE_URL"
 
 wrangler hyperdrive create "$DEV_HYPERDRIVE_NAME" --caching-disabled \
-	--connection-string "$DEV_NEON_URL"
+	--connection-string "$DEV_DATABASE_URL"
 
 echo
 echo "==> Done. Now:"

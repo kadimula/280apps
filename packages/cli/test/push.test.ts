@@ -188,7 +188,7 @@ describe('push.run against the Fake', () => {
           url: '',
           notice: '',
           secretNotice: notice,
-          failure: { code: 'unavailable', message: 'the app failed to boot', fix: 'run 280 push again' },
+          failure: { code: 'unavailable', message: 'the app failed to boot', fix: 'run two80 push again' },
         };
       },
       async delete() {

@@ -113,7 +113,7 @@ describe('scheduled cleanup', () => {
     const deploy = await store.deploy('app_waiting', 'dep_waiting');
     expect(deploy?.state).toBe(State.Failed);
     expect(deploy?.failure?.fix).toContain('https://dashboard.example/dashboard/app_waiting?variables=1');
-    expect(deploy?.failure?.fix).toContain('then run 280 push again');
+    expect(deploy?.failure?.fix).toContain('then run two80 push again');
   });
 
   it('is an idempotent no-op when nothing has expired', async () => {

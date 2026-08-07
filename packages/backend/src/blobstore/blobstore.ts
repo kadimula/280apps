@@ -152,7 +152,7 @@ export class FsBlobStore implements BlobStore {
         code: DeployCode.DigestMismatch,
         message:
           'uploaded bytes do not match the declared digest; the build output changed underneath the push',
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
 

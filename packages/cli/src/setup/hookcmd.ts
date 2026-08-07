@@ -1,5 +1,5 @@
-// Resolves the shell command a session-start hook runs to print the bare `280`
-// home view: the portable name `280` when it resolves to this executable, else
+// Resolves the shell command a session-start hook runs to print the bare `two80`
+// home view: the portable name `two80` when it resolves to this executable, else
 // the absolute path, so a hook never silently runs a different binary.
 
 import fs from 'node:fs';
@@ -24,10 +24,10 @@ const nodeProbe: BinProbe = {
 
 // On Windows the launcher is a `.cmd`/`.exe` shim; on unix it is the bare name.
 function candidateNames(): string[] {
-  return process.platform === 'win32' ? ['280.cmd', '280.exe', '280.bat', '280'] : ['280'];
+  return process.platform === 'win32' ? ['two80.cmd', 'two80.exe', 'two80.bat', 'two80'] : ['two80'];
 }
 
-// Walks PATH the way a shell does (first match wins) and returns portable `280`
+// Walks PATH the way a shell does (first match wins) and returns portable `two80`
 // only when that first match resolves to this executable, else the absolute path.
 export function resolveHookCommand(binPath: string, pathEnv: string, probe: BinProbe = nodeProbe): string {
   const target = safeReal(binPath, probe);
@@ -37,8 +37,8 @@ export function resolveHookCommand(binPath: string, pathEnv: string, probe: BinP
     for (const name of names) {
       const candidate = path.join(dir, name);
       if (!probe.isFile(candidate)) continue;
-      // First `280` on PATH is what the shell would run; decide on it alone.
-      return safeReal(candidate, probe) === target ? '280' : quote(binPath);
+      // First `two80` on PATH is what the shell would run; decide on it alone.
+      return safeReal(candidate, probe) === target ? 'two80' : quote(binPath);
     }
   }
   return quote(binPath);
@@ -69,10 +69,10 @@ function program(cmd: string): string {
 
 // Whether a hook command was written by this tool, so a reinstall repairs it
 // instead of appending a duplicate. Matches the two forms resolveHookCommand
-// emits: the portable `280` name, and our compiled entry at `dist/bin.js`.
+// emits: the portable `two80` name, and our compiled entry at `dist/bin.js`.
 export function isOurCommand(cmd: string): boolean {
   const prog = program(cmd);
   const base = path.basename(prog).toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
-  if (base === '280') return true;
+  if (base === 'two80' || base === '280') return true;
   return /[\\/]dist[\\/]bin\.js$/.test(prog);
 }

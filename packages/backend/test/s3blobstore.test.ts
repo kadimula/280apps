@@ -147,7 +147,7 @@ describe('s3blobstore', () => {
     }
     expect(caught).toBeInstanceOf(DeployErr);
     expect((caught as DeployErr).code).toBe(DeployCode.DigestMismatch);
-    expect((caught as DeployErr).fix).toBe('run 280 push again');
+    expect((caught as DeployErr).fix).toBe('run two80 push again');
     // corrupt upload must not satisfy a manifest entry
     expect(await store.has('app_1', wrong)).toBe(false);
   });

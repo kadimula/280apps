@@ -1,7 +1,7 @@
 {
   "name": "two80",
   "version": "0.4.3",
-  "description": "Deploy and share your app. One verb: 280 push.",
+  "description": "Deploy and share your app. One verb: two80 push.",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
@@ -13,7 +13,7 @@
     "node": ">=20"
   },
   "bin": {
-    "280": "dist/bin.js"
+    "two80": "dist/bin.js"
   },
   "files": [
     "dist",

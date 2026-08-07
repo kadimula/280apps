@@ -6,7 +6,7 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 // Bundles the CLI bin into one shebang'd ESM file, the only thing shipped (files:
-// ["dist"]) and what the `280` bin in package.json points at.
+// ["dist"]) and what the `two80` bin in package.json points at.
 export default defineConfig({
   entry: { bin: "src/bin.ts" },
   format: ["esm"],

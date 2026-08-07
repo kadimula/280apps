@@ -1,4 +1,4 @@
 url: "https://demo-rrgeuttdpr.280apps.run"
 appId: app_000001
 slug: demo
-help[1]: Run `280 delete --yes demo` to remove it
+help[1]: Run `two80 delete --yes demo` to remove it

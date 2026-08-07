@@ -1,5 +1,5 @@
-bin: /usr/local/bin/280
+bin: /usr/local/bin/two80
 description: Deploy and share your app with one command.
 app: demo (static) deployed
 login: not logged in
-help[2]: Run `280 push` to redeploy,Run `280 delete --yes demo` to remove it
+help[2]: Run `two80 push` to redeploy,Run `two80 delete --yes demo` to remove it

@@ -174,7 +174,7 @@ export class Service implements Port {
         throw new DeployErr({
           code: DeployCode.NoSuchApp,
           message: `app "${id.appId}" does not exist on this account`,
-          fix: 'run 280 list, then 280 link <app-id>, or 280 push --new',
+          fix: 'run two80 list, then two80 link <app-id>, or two80 push --new',
         });
       }
       return { app, resolution: Resolution.Existing };
@@ -192,7 +192,7 @@ export class Service implements Port {
           throw new DeployErr({
             code: DeployCode.AmbiguousIdentity,
             message: `${matches.length} apps match this project`,
-            fix: 'run 280 link <app-id> to pick one, or 280 push --new',
+            fix: 'run two80 link <app-id> to pick one, or two80 push --new',
             candidates: matches.map((a) => a.id),
           });
         }
@@ -261,7 +261,7 @@ export class Service implements Port {
       throw new DeployErr({
         code: DeployCode.InvalidBlob,
         message: `"${digest}" is not a sha-256 digest`,
-        fix: 'upgrade the 280 CLI, then run 280 push again',
+        fix: 'upgrade the two80 CLI, then run two80 push again',
       });
     }
 
@@ -270,7 +270,7 @@ export class Service implements Port {
       throw new DeployErr({
         code: DeployCode.NoSuchApp,
         message: `app "${appId}" does not exist on this account`,
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
 
@@ -287,7 +287,7 @@ export class Service implements Port {
       throw new DeployErr({
         code: DeployCode.InvalidBlob,
         message: `digest ${digest} is not named by any open deploy`,
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
 
@@ -342,7 +342,7 @@ export class Service implements Port {
       throw new DeployErr({
         code: DeployCode.NoSuchApp,
         message: `app "${req.appId}" does not exist on this account`,
-        fix: 'run 280 push to create it',
+        fix: 'run two80 push to create it',
       });
     }
 
@@ -357,7 +357,7 @@ export class Service implements Port {
       throw new DeployErr({
         code: DeployCode.ConfirmationRequired,
         message: `"${req.confirm}" does not name this app`,
-        fix: 'run 280 delete --yes ' + app.slug,
+        fix: 'run two80 delete --yes ' + app.slug,
       });
     }
 
@@ -424,7 +424,7 @@ export function preflight(m: Manifest): void {
     throw new DeployErr({
       code: DeployCode.PreflightRejected,
       message,
-      fix: 'upgrade the 280 CLI, then run 280 push again',
+      fix: 'upgrade the two80 CLI, then run two80 push again',
     });
   };
   if (m.kind !== MANIFEST_KIND_CONTAINER) {
@@ -513,7 +513,7 @@ function notFound(appId: string, deployId: string): DeployErr {
   return new DeployErr({
     code: DeployCode.NotFound,
     message: `deploy "${deployId}" not found for app "${appId}"`,
-    fix: 'run 280 push again',
+    fix: 'run two80 push again',
   });
 }
 

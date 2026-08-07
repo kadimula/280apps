@@ -8,16 +8,16 @@ import * as detect from './detect.js';
 import * as output from './output.js';
 import type { Ctx } from './app.js';
 
-const INIT_HELP = `280 init - detect framework, write .280/config.json (push does this for you)
+const INIT_HELP = `two80 init - detect framework, write .280/config.json (push does this for you)
 
 Flags:
   --name <slug>             app name (default: package.json name)
   --framework next|static   skip detection
 
 Examples:
-  280 init
-  280 init --framework next
-  280 init --name my-app --framework static`;
+  two80 init
+  two80 init --framework next
+  two80 init --name my-app --framework static`;
 
 export interface Initialized {
   cfg: config.Config;
@@ -25,7 +25,7 @@ export interface Initialized {
 }
 
 // ensureInit loads the project config, creating it by detection if absent. Shared
-// core of `280 init` and push's auto-init; safe to re-run (an initialized project
+// core of `two80 init` and push's auto-init; safe to re-run (an initialized project
 // is returned unchanged). Overrides are "" when not passed.
 export function ensureInit(root: string, nameOverride: string, frameworkOverride: string): Initialized {
   const { cfg, found } = config.load(root);
@@ -61,6 +61,6 @@ export function cmdInit(ctx: Ctx): number {
     framework: cfg.framework,
     name: cfg.name,
     created,
-    help: ['Run `280 push` to deploy'],
+    help: ['Run `two80 push` to deploy'],
   });
 }

@@ -10,10 +10,10 @@ import * as output from './output.js';
 import { resumeLogin } from './login.js';
 import type { Ctx } from './app.js';
 
-export const WHOAMI_HELP = `280 whoami - print auth state
+export const WHOAMI_HELP = `two80 whoami - print auth state
 
 Examples:
-  280 whoami`;
+  two80 whoami`;
 
 export async function cmdWhoami(ctx: Ctx): Promise<number> {
   const s = ctx.env.streams;
@@ -26,9 +26,9 @@ export async function cmdWhoami(ctx: Ctx): Promise<number> {
 
   const { token } = await resumeLogin(ctx.api, ctx.deps.authClient(ctx.api), ctx.deps.now());
   if (token === '') {
-    // Definitive state, exit 0; the help line is the runnable next step. `280
+    // Definitive state, exit 0; the help line is the runnable next step. `two80
     // login` also resumes a pending device flow, covering both branches.
-    return output.result(s, { loggedIn: false, api: ctx.api, help: ['Run `280 login`'] });
+    return output.result(s, { loggedIn: false, api: ctx.api, help: ['Run `two80 login`'] });
   }
   // Self-contained: a confirmed answer, no next-step suggestions (AXI §9).
   return output.result(s, { loggedIn: true, api: ctx.api });

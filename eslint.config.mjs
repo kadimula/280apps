@@ -7,7 +7,7 @@ import tseslint from "typescript-eslint";
 // rules: type errors are the typecheck job's (tsc) responsibility.
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/testdata/**", "**/scripts/**", "platform/**"],
+    ignores: ["**/.next/**", "**/dist/**", "**/testdata/**", "**/scripts/**", "platform/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

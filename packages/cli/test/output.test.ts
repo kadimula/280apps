@@ -13,8 +13,8 @@ describe('result rendering (TOON on stdout)', () => {
 
   it('renders a help[n] list inline (reversible TOON array)', () => {
     const c = capture();
-    output.result(c.streams, { name: 'demo', help: ['Run `280 push` to deploy'] });
-    expect(c.out()).toBe('name: demo\nhelp[1]: Run `280 push` to deploy\n');
+    output.result(c.streams, { name: 'demo', help: ['Run `two80 push` to deploy'] });
+    expect(c.out()).toBe('name: demo\nhelp[1]: Run `two80 push` to deploy\n');
   });
 });
 
@@ -23,16 +23,16 @@ describe('progress goes to stderr only', () => {
     const c = capture();
     output.progress(c.streams, 'uploaded 1/2');
     expect(c.out()).toBe('');
-    expect(c.err()).toBe('280: uploaded 1/2\n');
+    expect(c.err()).toBe('two80: uploaded 1/2\n');
   });
 });
 
 describe('error rendering (TOON on stdout, exit 1)', () => {
   it('renders {error,message,fix,retryable} on stdout', () => {
     const c = capture();
-    const code = output.error(c.streams, output.fail('unauthorized', 'not logged in to 280', 'run 280 login'));
+    const code = output.error(c.streams, output.fail('unauthorized', 'not logged in to 280', 'run two80 login'));
     expect(code).toBe(output.ExitError);
-    expect(c.out()).toBe('error: unauthorized\nmessage: not logged in to 280\nfix: run 280 login\nretryable: false\n');
+    expect(c.out()).toBe('error: unauthorized\nmessage: not logged in to 280\nfix: run two80 login\nretryable: false\n');
     expect(c.err()).toBe('');
   });
 

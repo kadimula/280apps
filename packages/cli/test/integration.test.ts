@@ -1,5 +1,5 @@
 // End-to-end "fake push": the whole command surface (app.run) over the real
-// static bundler and real Fake port, the closest a unit test gets to `280 push`.
+// static bundler and real Fake port, the closest a unit test gets to `two80 push`.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Fake } from '@280/contracts/deploy/fake';

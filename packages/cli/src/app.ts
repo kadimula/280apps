@@ -77,7 +77,7 @@ export async function run(env: Env, deps: Deps): Promise<number> {
   else if (cmd === '--help' || cmd === '-h') cmd = 'help';
   // A flag where a command belongs is misuse, not an unknown command: reject it
   // by name with the global flags inline.
-  else if (cmd.startsWith('-')) return output.usageError(s, '280', cmd, ['--version', '--help']);
+  else if (cmd.startsWith('-')) return output.usageError(s, 'two80', cmd, ['--version', '--help']);
 
   const ctx: Ctx = { env, deps, api, args: rest };
   try {
@@ -116,9 +116,9 @@ async function dispatch(cmd: string, ctx: Ctx): Promise<number> {
     case 'secrets':
       // Honest not_implemented failures, dropped from help so a public package
       // does not leak the roadmap.
-      throw output.fail('not_implemented', `280 ${cmd} is not implemented yet`, 'run 280 help for what works today');
+      throw output.fail('not_implemented', `two80 ${cmd} is not implemented yet`, 'run two80 help for what works today');
     default:
-      throw output.fail('unknown_command', `unknown command "${cmd}"`, 'run 280 help');
+      throw output.fail('unknown_command', `unknown command "${cmd}"`, 'run two80 help');
   }
 }
 
@@ -173,19 +173,19 @@ async function cmdPush(ctx: Ctx): Promise<number> {
     url: res.url,
     appId: res.app.id,
     slug: res.app.slug,
-    help: [`Run \`280 delete --yes ${res.app.slug}\` to remove it`],
+    help: [`Run \`two80 delete --yes ${res.app.slug}\` to remove it`],
   });
 }
 
 // cmdUpdate is a hint only: self-update is gone, the CLI ships via npx.
 function cmdUpdate(ctx: Ctx): number {
   return output.result(ctx.env.streams, {
-    update: '280 ships via npx; there is no self-update',
+    update: 'two80 ships via npx; there is no self-update',
     help: ['Run `npx two80@latest push` to run the latest'],
   });
 }
 
-const PUSH_HELP = `280 push - build, deploy, and print the live URL (runs init if new)
+const PUSH_HELP = `two80 push - build, deploy, and print the live URL (runs init if new)
 
 Flags:
   --name <slug>             app name on first init (default: package.json name)
@@ -193,40 +193,40 @@ Flags:
   --new                     force a fresh app instead of linking an existing one
 
 Examples:
-  280 push
-  280 push --new
-  280 push --name my-app --framework next`;
+  two80 push
+  two80 push --new
+  two80 push --name my-app --framework next`;
 
 // GLOBAL_HELP is the agent's command reference, trimmed to shipped commands so a
 // public package does not advertise a roadmap.
-const GLOBAL_HELP = `280 - Deploy and share your app with one command.
+const GLOBAL_HELP = `two80 - Deploy and share your app with one command.
 
 Usage:
-  280 push [flags]    build, deploy, print the live URL (runs init if new)
+  two80 push [flags]    build, deploy, print the live URL (runs init if new)
     --name <slug>             app name on first init (default: package.json name)
     --framework next|static   skip detection on first init
     --new                     force a fresh app instead of linking an existing one
 
-  280 init [flags]    detect framework, write .280/config.json (push does this for you)
+  two80 init [flags]    detect framework, write .280/config.json (push does this for you)
     --name <slug>             app name (default: package.json name)
     --framework next|static   skip detection
 
-  280 delete          destroy this project's app: its URL, content, and data
-    --yes <name>              confirm; must name the app. Bare 280 delete prints
+  two80 delete          destroy this project's app: its URL, content, and data
+    --yes <name>              confirm; must name the app. Bare two80 delete prints
                               the name and deletes nothing.
 
-  280 whoami          print auth state
-  280 login           authenticate this machine; prints a link to show your user,
+  two80 whoami          print auth state
+  two80 login           authenticate this machine; prints a link to show your user,
                       then re-run to finish. Never waits.
-  280 setup           register a session-start hook (Claude Code, Codex, OpenCode)
+  two80 setup           register a session-start hook (Claude Code, Codex, OpenCode)
                       so the agent sees this app's state at session start
-  280 version         print the CLI version
-  280 help            print this help
+  two80 version         print the CLI version
+  two80 help            print this help
 
 Global flags:
   --version, -v       print version
   --help, -h          print this help
 
-Bare 280 prints this directory's app state. Every error carries a runnable fix.
+Bare two80 prints this directory's app state. Every error carries a runnable fix.
 Exit codes: 0 ok, 1 failure (carries a fix), 2 bad flags or args.
 Docs: https://280apps.com`;

@@ -1,6 +1,6 @@
 // Machine-token expiry at the transport layer (api.ts authorize → userByToken):
 // a token older than the ttl is refused with the same body an unknown token gets,
-// so the CLI's "run 280 login" recovery covers both, while a fresh token still
+// so the CLI's "run two80 login" recovery covers both, while a fresh token still
 // authenticates. Runs on the MemoryStore so it controls created_at deterministically
 // even when TEST_DATABASE_URL points the shared harness at Postgres.
 

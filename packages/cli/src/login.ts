@@ -11,11 +11,11 @@ import * as output from './output.js';
 import { CliError, asError } from './output.js';
 import type { Ctx } from './app.js';
 
-const LOGIN_HELP = `280 login - authenticate this machine; prints a link to show your user, then
+const LOGIN_HELP = `two80 login - authenticate this machine; prints a link to show your user, then
 re-run to finish. Never waits.
 
 Examples:
-  280 login`;
+  two80 login`;
 
 // AuthClient is the device-flow client login drives. login depends only on this
 // two-method shape so it is fully testable with a double.
@@ -98,7 +98,7 @@ export async function cmdLogin(ctx: Ctx): Promise<number> {
 function waitingOn(p: credentials.Pending): CliError {
   return new CliError(
     AuthCode.AuthorizationPending,
-    `280 needs your user to sign in: ${p.url} (code ${p.userCode})`,
+    `two80 needs your user to sign in: ${p.url} (code ${p.userCode})`,
     `show your user this link and code, wait for them to confirm, then run your command again: ${p.url} (code ${p.userCode})`,
   );
 }

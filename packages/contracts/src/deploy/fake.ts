@@ -119,7 +119,7 @@ export class Fake implements Port {
         throw new DeployErr({
           code: DeployCode.NoSuchApp,
           message: `app ${quote(id.appId)} does not exist on this account`,
-          fix: 'run 280 list, then 280 link <app-id>, or 280 push --new',
+          fix: 'run two80 list, then two80 link <app-id>, or two80 push --new',
         });
       }
       return { app, resolution: Resolution.Existing };
@@ -134,7 +134,7 @@ export class Fake implements Port {
           throw new DeployErr({
             code: DeployCode.AmbiguousIdentity,
             message: `${matches.length} apps match this project`,
-            fix: 'run 280 link <app-id> to pick one, or 280 push --new',
+            fix: 'run two80 link <app-id> to pick one, or two80 push --new',
             candidates: [...matches],
           });
         }
@@ -191,7 +191,7 @@ export class Fake implements Port {
       d.failure = new DeployErr({
         code: DeployCode.Unavailable,
         message: 'activation failed on the platform',
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
       return;
     }
@@ -252,7 +252,7 @@ export class Fake implements Port {
       throw new DeployErr({
         code: DeployCode.NoSuchApp,
         message: `app ${quote(appId)} does not exist on this account`,
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
     if (store.has(digest)) {
@@ -262,7 +262,7 @@ export class Fake implements Port {
       throw new DeployErr({
         code: DeployCode.InvalidBlob,
         message: `digest ${digest} is not named by any open deploy`,
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
     if (this.pendingDropBodyAfter >= 0 && size > this.pendingDropBodyAfter) {
@@ -289,7 +289,7 @@ export class Fake implements Port {
         code: DeployCode.DigestMismatch,
         message:
           'uploaded bytes do not match the declared digest; the build output changed underneath the push',
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
     store.set(digest, b);
@@ -306,7 +306,7 @@ export class Fake implements Port {
       throw new DeployErr({
         code: DeployCode.NotFound,
         message: `deploy ${quote(deployId)} not found for app ${quote(appId)}`,
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       });
     }
     const st: DeployStatus = { state: d.state, url: '', notice: '', secretNotice: '', failure: errObj(d.failure) };
@@ -324,7 +324,7 @@ export class Fake implements Port {
       throw new DeployErr({
         code: DeployCode.NoSuchApp,
         message: `app ${quote(req.appId)} does not exist on this account`,
-        fix: 'run 280 push to create it',
+        fix: 'run two80 push to create it',
       });
     }
     if (req.confirm === '') {
@@ -334,7 +334,7 @@ export class Fake implements Port {
       throw new DeployErr({
         code: DeployCode.ConfirmationRequired,
         message: `${quote(req.confirm)} does not name this app`,
-        fix: 'run 280 delete --yes ' + app.slug,
+        fix: 'run two80 delete --yes ' + app.slug,
       });
     }
 
@@ -369,7 +369,7 @@ function preflight(m: Manifest): void {
     throw new DeployErr({
       code: DeployCode.PreflightRejected,
       message,
-      fix: 'upgrade the 280 CLI, then run 280 push again',
+      fix: 'upgrade the two80 CLI, then run two80 push again',
     });
   };
   if (m.kind !== MANIFEST_KIND_CONTAINER) {

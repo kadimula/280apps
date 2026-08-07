@@ -1,4 +1,4 @@
-280 push - build, deploy, and print the live URL (runs init if new)
+two80 push - build, deploy, and print the live URL (runs init if new)
 
 Flags:
   --name <slug>             app name on first init (default: package.json name)
@@ -6,6 +6,6 @@ Flags:
   --new                     force a fresh app instead of linking an existing one
 
 Examples:
-  280 push
-  280 push --new
-  280 push --name my-app --framework next
+  two80 push
+  two80 push --new
+  two80 push --name my-app --framework next

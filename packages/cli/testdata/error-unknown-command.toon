@@ -1,4 +1,4 @@
 error: unknown_command
 message: "unknown command \"frobnicate\""
-fix: run 280 help
+fix: run two80 help
 retryable: false

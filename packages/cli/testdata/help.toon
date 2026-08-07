@@ -1,31 +1,31 @@
-280 - Deploy and share your app with one command.
+two80 - Deploy and share your app with one command.
 
 Usage:
-  280 push [flags]    build, deploy, print the live URL (runs init if new)
+  two80 push [flags]    build, deploy, print the live URL (runs init if new)
     --name <slug>             app name on first init (default: package.json name)
     --framework next|static   skip detection on first init
     --new                     force a fresh app instead of linking an existing one
 
-  280 init [flags]    detect framework, write .280/config.json (push does this for you)
+  two80 init [flags]    detect framework, write .280/config.json (push does this for you)
     --name <slug>             app name (default: package.json name)
     --framework next|static   skip detection
 
-  280 delete          destroy this project's app: its URL, content, and data
-    --yes <name>              confirm; must name the app. Bare 280 delete prints
+  two80 delete          destroy this project's app: its URL, content, and data
+    --yes <name>              confirm; must name the app. Bare two80 delete prints
                               the name and deletes nothing.
 
-  280 whoami          print auth state
-  280 login           authenticate this machine; prints a link to show your user,
+  two80 whoami          print auth state
+  two80 login           authenticate this machine; prints a link to show your user,
                       then re-run to finish. Never waits.
-  280 setup           register a session-start hook (Claude Code, Codex, OpenCode)
+  two80 setup           register a session-start hook (Claude Code, Codex, OpenCode)
                       so the agent sees this app's state at session start
-  280 version         print the CLI version
-  280 help            print this help
+  two80 version         print the CLI version
+  two80 help            print this help
 
 Global flags:
   --version, -v       print version
   --help, -h          print this help
 
-Bare 280 prints this directory's app state. Every error carries a runnable fix.
+Bare two80 prints this directory's app state. Every error carries a runnable fix.
 Exit codes: 0 ok, 1 failure (carries a fix), 2 bad flags or args.
 Docs: https://280apps.com

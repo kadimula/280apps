@@ -115,7 +115,7 @@ export async function sweepExpired(
     const failure: DeployError = {
       code: DeployCode.Unavailable,
       message: 'deployment expired while waiting for app secrets',
-      fix: `set them at ${link}, then run 280 push again`,
+      fix: `set them at ${link}, then run two80 push again`,
       retryable: false,
       candidates: [],
     };

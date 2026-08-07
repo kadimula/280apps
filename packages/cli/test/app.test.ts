@@ -33,7 +33,7 @@ describe('version and help', () => {
   it('help prints the reference, exit 0', async () => {
     const r = await runCli(['help'], { root: tmpProject() });
     expect(r.code).toBe(0);
-    expect(r.out).toContain('280 - Deploy and share your app');
+    expect(r.out).toContain('two80 - Deploy and share your app');
     expect(r.out).not.toContain('--json');
     expect(r.out).not.toContain('list, logs'); // roadmap stubs dropped from help
   });
@@ -60,7 +60,7 @@ describe('push (fake)', () => {
     const body = fs.readFileSync(path.join(root, '.280', 'config.json'), 'utf8');
     expect(body).toContain('"framework": "static"');
     // Progress narration is on stderr, never stdout.
-    expect(r.err).toContain('280: uploaded');
+    expect(r.err).toContain('two80: uploaded');
     expect(r.out).not.toContain('uploaded');
   });
 
@@ -68,7 +68,7 @@ describe('push (fake)', () => {
     const r = await runCli(['push'], { root: tmpProject(), port: new SecretNoticeFake() });
     expect(r.code).toBe(0);
     expect(r.err).toContain(
-      '280: declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001\n',
+      'two80: declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://console.280apps.com/dashboard/app_000001\n',
     );
     expect(r.out).not.toContain('STRIPE_KEY');
   });
@@ -93,7 +93,7 @@ describe('whoami', () => {
     expect(r.code).toBe(0);
     const t = parseToon(r.out);
     expect(t.loggedIn).toBe('false');
-    expect(r.out).toContain('Run `280 login`');
+    expect(r.out).toContain('Run `two80 login`');
   });
 
   it('finishes an approved login and reports logged in, exit 0', async () => {
@@ -138,7 +138,7 @@ describe('delete', () => {
     const t = parseToon(r.out);
     expect(t.deleted).toBe('false');
     expect(t.note).toContain('no-op');
-    expect(r.out).toContain('280 push');
+    expect(r.out).toContain('two80 push');
   });
 
   it('a binding the server no longer knows: no-op, exit 0, unbinds', async () => {
@@ -163,7 +163,7 @@ describe('delete', () => {
     expect(r.code).toBe(1);
     const t = parseToon(r.out);
     expect(t.error).toBe('confirmation_required');
-    expect(t.fix).toBe(`run 280 delete --yes ${slug}`);
+    expect(t.fix).toBe(`run two80 delete --yes ${slug}`);
     expect(config.load(root).cfg.appId).toBe(appId);
   });
 
@@ -209,7 +209,7 @@ describe('errors and stubs', () => {
     expect(r.code).toBe(1);
     const t = parseToon(r.out);
     expect(t.error).toBe('unknown_command');
-    expect(t.fix).toBe('run 280 help');
+    expect(t.fix).toBe('run two80 help');
   });
 
   it('a dropped stub command still returns not_implemented, exit 1', async () => {
@@ -217,7 +217,7 @@ describe('errors and stubs', () => {
     expect(r.code).toBe(1);
     const t = parseToon(r.out);
     expect(t.error).toBe('not_implemented');
-    expect(t.fix).toContain('280 help');
+    expect(t.fix).toContain('two80 help');
   });
 
   it('the removed --json flag gets a targeted hint, exit 2, in any position', async () => {
@@ -248,7 +248,7 @@ describe('init', () => {
     const t = parseToon(r.out);
     expect(t.framework).toBe('static');
     expect(t.created).toBe('true');
-    expect(r.out).toContain('help[1]: Run `280 push` to deploy');
+    expect(r.out).toContain('help[1]: Run `two80 push` to deploy');
   });
 
   it('re-init is a no-op reporting created=false, exit 0', async () => {
@@ -260,15 +260,15 @@ describe('init', () => {
   });
 });
 
-describe('bare 280 home view', () => {
+describe('bare two80 home view', () => {
   it('shows bin, description, app state, login state, and next steps', async () => {
     const root = tmpProject();
-    const r = await runCli([], { root, binPath: '/usr/local/bin/280' });
+    const r = await runCli([], { root, binPath: '/usr/local/bin/two80' });
     expect(r.code).toBe(0);
-    expect(r.out).toContain('bin: /usr/local/bin/280');
+    expect(r.out).toContain('bin: /usr/local/bin/two80');
     expect(r.out).toContain('description: Deploy and share your app');
     expect(r.out).toContain('app: none in this directory');
     expect(r.out).toContain('login: not logged in');
-    expect(r.out).toContain('help[1]: Run `280 push`');
+    expect(r.out).toContain('help[1]: Run `two80 push`');
   });
 });

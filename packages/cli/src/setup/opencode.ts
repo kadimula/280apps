@@ -1,7 +1,7 @@
 // Installs a managed plugin for OpenCode: a file we own end to end, so setup
 // writes it whole. A MARKER header lets setup tell its own plugin from a foreign
 // file at the same path; a foreign file is never overwritten. The plugin injects
-// the bare `280` home view as ambient session context.
+// the bare `two80` home view as ambient session context.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +37,7 @@ export function install(root: string, command: string): InstallResult {
 // Deterministic in `command`, so an unchanged command yields byte-identical
 // output (idempotent no-op) and a path repair yields a diff.
 function pluginSource(command: string): string {
-  return `// ${MARKER} v${VERSION} — do not edit; regenerate with \`280 setup\`.
+  return `// ${MARKER} v${VERSION} — do not edit; regenerate with \`two80 setup\`.
 // Injects this directory's 280 app state into every OpenCode session at start,
 // so the agent can act on the live deploy state without invoking anything first.
 import { execFileSync } from "node:child_process";
@@ -58,7 +58,7 @@ export const TwoEightyPlugin = async ({ directory }) => {
     "chat.params": async (_input, output) => {
       const view = homeView(directory);
       if (!view) return;
-      const context = "Current 280 app state (from \`280\`):\\n" + view;
+      const context = "Current 280 app state (from \`two80\`):\\n" + view;
       output.system = output.system ? output.system + "\\n\\n" + context : context;
     },
   };

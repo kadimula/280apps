@@ -15,7 +15,7 @@ export default async function HomePage() {
         Signed in as <strong>{who}</strong>.
       </p>
       <p>
-        Deployed with <code>280 push</code>.
+        Deployed with <code>two80 push</code>.
       </p>
     </main>
   );

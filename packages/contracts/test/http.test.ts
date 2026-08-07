@@ -87,14 +87,14 @@ describe('HTTP Client', () => {
     const body = JSON.stringify({
       code: 'ambiguous_identity',
       message: '2 apps match this project',
-      fix: 'run 280 link <app-id>',
+      fix: 'run two80 link <app-id>',
       candidates: ['app_1', 'app_2'],
     });
     const { fetch } = mockFetch(() => new Response(body, { status: 409 }));
     const c = new Client('https://api', { token: 't', fetch });
     const err = asDeployError(await catchErr(() => c.status('app_1', 'dep_1')));
     expect(err?.code).toBe('ambiguous_identity');
-    expect(err?.fix).toBe('run 280 link <app-id>');
+    expect(err?.fix).toBe('run two80 link <app-id>');
     expect(err?.candidates).toEqual(['app_1', 'app_2']);
   });
 
@@ -103,7 +103,7 @@ describe('HTTP Client', () => {
     const c = new Client('https://api', { token: 't', fetch });
     const err = asDeployError(await catchErr(() => c.status('a', 'd')));
     expect(err?.code).toBe(DeployCode.Unauthorized);
-    expect(err?.fix).toBe('run 280 login');
+    expect(err?.fix).toBe('run two80 login');
   });
 
   it('coerces a non-error 404 body to not_found', async () => {
@@ -111,7 +111,7 @@ describe('HTTP Client', () => {
     const c = new Client('https://api', { token: 't', fetch });
     const err = asDeployError(await catchErr(() => c.status('a', 'd')));
     expect(err?.code).toBe(DeployCode.NotFound);
-    expect(err?.fix).toBe('run 280 push again');
+    expect(err?.fix).toBe('run two80 push again');
   });
 
   it('coerces 503/502/504/429 to a retryable unavailable', async () => {
@@ -130,7 +130,7 @@ describe('HTTP Client', () => {
     const err = asDeployError(await catchErr(() => c.status('a', 'd')));
     expect(err?.code).toBe(DeployCode.Unavailable);
     expect(err?.retryable).toBe(false);
-    expect(err?.fix).toContain('280 push again');
+    expect(err?.fix).toContain('two80 push again');
   });
 
   it('wraps a transport error as a retryable unavailable', async () => {
@@ -164,7 +164,7 @@ describe('HTTP Client', () => {
   });
 
   it('putBlob maps a failure status to the typed error', async () => {
-    const body = JSON.stringify({ code: 'digest_mismatch', message: 'bytes changed', fix: 'run 280 push again' });
+    const body = JSON.stringify({ code: 'digest_mismatch', message: 'bytes changed', fix: 'run two80 push again' });
     const { fetch } = mockFetch(() => new Response(body, { status: 422 }));
     const c = new Client('https://api', { token: 't', fetch });
     const err = asDeployError(

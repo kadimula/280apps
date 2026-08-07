@@ -86,7 +86,7 @@ describe('Fake fault injection & atomicity', () => {
     const de = asDeployError(caught);
     expect(de?.retryable).toBe(true);
 
-    // The agent re-runs `280 push`: same identity, same manifest.
+    // The agent re-runs `two80 push`: same identity, same manifest.
     const again = await sync(f, identity, manifest);
     expect(again.deployId).toBe(res.deployId);
     expect(again.app.id).toBe(res.app.id);

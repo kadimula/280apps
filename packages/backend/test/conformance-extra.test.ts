@@ -78,7 +78,7 @@ describe('ActivationFailureReopens', () => {
       new DeployErr({
         code: DeployCode.Unavailable,
         message: 'activation failed on the platform',
-        fix: 'run 280 push again',
+        fix: 'run two80 push again',
       }),
     );
 

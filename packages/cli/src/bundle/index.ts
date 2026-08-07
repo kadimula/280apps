@@ -25,7 +25,7 @@ export function build(root: string, framework: string): Bundle {
     default:
       return fail(
         'unknown framework ' + framework,
-        'run 280 init to re-detect, or pass --framework next|static',
+        'run two80 init to re-detect, or pass --framework next|static',
       );
   }
 }

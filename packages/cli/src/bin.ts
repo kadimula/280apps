@@ -1,7 +1,7 @@
 // bin is the composition root: the one place that binds the CLI's command surface
 // (app.ts, side-effect-free) to the real world (process streams, working
 // directory, git, the HTTP/fake Port adapters). tsup bundles this into
-// dist/bin.js, the artifact the `280` bin points at.
+// dist/bin.js, the artifact the `two80` bin points at.
 
 import { spawnSync } from 'node:child_process';
 import type { Port } from '@280/contracts';
@@ -66,7 +66,7 @@ run(env, deps).then(
   (err) => {
     // run() renders every command failure itself; reaching here is an unexpected
     // internal fault. Fail closed with exit 1 and a diagnostic.
-    process.stderr.write(`280: internal error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`two80: internal error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   },
 );

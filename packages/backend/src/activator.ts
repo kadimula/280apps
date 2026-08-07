@@ -49,7 +49,7 @@ export function activationFailure(err: unknown): DeployError {
   return {
     code: DeployCode.Unavailable,
     message: 'activation failed on the platform: ' + errText(err),
-    fix: 'run 280 push again',
+    fix: 'run two80 push again',
     retryable: false,
     candidates: [],
   };

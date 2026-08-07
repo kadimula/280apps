@@ -18,7 +18,7 @@ export async function setMockAuthAction(signedIn: boolean) {
   else jar.set(MOCK_AUTH_COOKIE, "out", { path: "/", sameSite: "lax" });
 }
 
-// deleteAppAction is the browser half of `280 delete`. It is a POST anyone can
+// deleteAppAction is the browser half of `two80 delete`. It is a POST anyone can
 // forge, so it carries the browser's session and takes only a reference (the app
 // id) and the typed confirmation. Ownership, identity, and the confirmation are
 // the backend's, the same code path the CLI goes through.

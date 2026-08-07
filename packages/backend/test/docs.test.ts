@@ -2,16 +2,21 @@
 // public URLs. They carry no per-app randomness, so unlike the deploy routes
 // they can be asserted against their exact source rendering.
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { Server } from '../src/api.js';
 import {
   docsCapabilities,
-  platformSupportMarkdown,
-  setupMarkdown,
   SUPPORT_MATRIX,
   CAPABILITY_REQUIREMENT,
 } from '../src/docs.js';
 import { newPlatform, testDeps } from './helpers/harness.js';
+
+const SETUP_MARKDOWN = readFileSync(new URL('../src/docs/setup.md', import.meta.url), 'utf8');
+const PLATFORM_SUPPORT_MARKDOWN = readFileSync(
+  new URL('../src/docs/platform-support.md', import.meta.url),
+  'utf8',
+);
 
 describe('docs endpoints', () => {
   async function server() {
@@ -27,7 +32,7 @@ describe('docs endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
       expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
-      expect(await res.text()).toBe(setupMarkdown());
+      expect(await res.text()).toBe(SETUP_MARKDOWN);
     } finally {
       await cleanup();
     }
@@ -40,7 +45,7 @@ describe('docs endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
       const body = await res.text();
-      expect(body).toBe(platformSupportMarkdown());
+      expect(body).toBe(PLATFORM_SUPPORT_MARKDOWN);
       // The matrix is a real table an agent parses, not an empty stub.
       expect(body).toContain('| Stack | Feature | Supported | Notes |');
       expect(body).toContain(CAPABILITY_REQUIREMENT);

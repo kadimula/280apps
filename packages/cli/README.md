@@ -1,39 +1,46 @@
 # two80
 
-Deploy and share your app. One verb: `280 push`.
-
-Ask your agent the following to see if 280apps is right for you:
-
-```
-Fetch https://www.280apps.com/setup.md and tell me if 280apps is a good fit for my app.
-```
-
-Then, when you're ready, ask it to deploy:
-
-```
-Fetch https://www.280apps.com/setup.md and push.
-```
-
-`two80` is the npm package; `280` is the command it installs. Run it with npx, no install needed:
-
-```sh
-npx -y two80@latest push
-```
-
-- Runs from the app's directory. Auto-detects Next.js or static.
-- First push starts a device login: it prints a link and a code, then exits.
-  Approve in the browser, run `push` again.
-- Prints the live URL. Re-run to redeploy.
+https://280apps.com/setup.md - Agents start here
 
 ## Commands
 
+Every error prints a `fix` line with the exact command to run next.
+
+| Command | Purpose | Options |
+| --- | --- | --- |
+| `two80` | Show this directory's app state and next steps | |
+| `two80 push` | Build, deploy, and print the live URL | `--name <slug>`, `--framework next\|static`, `--new` |
+| `two80 init` | Detect the framework and write `.280/config.json` | `--name <slug>`, `--framework next\|static` |
+| `two80 delete` | Destroy this project's app, URL, content, and data | `--yes <name>` |
+| `two80 whoami` | Show authentication state | |
+| `two80 login` | Authenticate this machine | |
+| `two80 setup` | Install agent hooks and the skill | |
+| `two80 version` | Show the CLI version | `--version`, `-v` |
+| `two80 help` | Show all available commands and flags | `--help`, `-h` |
+
+### `two80 push`
+
+Push initializes new projects automatically. Framework and name options only apply during the first initialization.
+
+| Flag | Description |
+| --- | --- |
+| `--name <slug>` | Use this app name instead of the `package.json` name |
+| `--framework next\|static` | Skip framework detection |
+| `--new` | Create a fresh app instead of linking an existing one |
+
 ```sh
-280           # this directory's app state and next steps
-280 push      # build, deploy, print the live URL (runs init if new)
-280 whoami    # auth state
-280 login     # authenticate this machine (prints a link, never waits)
-280 delete --yes <name>   # destroy the app: URL, content, data
-280 setup     # wire 280 into your agent (see below)
+two80 push
+two80 push --name my-app --framework next
+two80 push --new
+```
+
+### `two80 delete`
+
+Deletion is permanent and requires the app's name as confirmation. Running the command without confirmation prints the required name and deletes nothing.
+
+```sh
+two80 delete
+two80 delete --yes my-app
 ```
 
 ## Agent integration

@@ -128,7 +128,7 @@ export async function runCli(args: string[], o: RunOptions): Promise<RunResult> 
     args,
     root: o.root,
     streams: cap.streams,
-    binPath: o.binPath ?? '/usr/local/bin/280',
+    binPath: o.binPath ?? '/usr/local/bin/two80',
   };
   const code = await run(env, makeDeps(o));
   return { code, out: cap.out(), err: cap.err() };

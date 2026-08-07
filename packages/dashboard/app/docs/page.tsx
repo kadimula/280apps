@@ -15,12 +15,12 @@ export const metadata: Metadata = {
 // (revalidate in lib/docs) so the render stays cheap at request time.
 export const dynamic = "force-dynamic";
 
-// Mirrors `280 help` from the `two80` CLI. The CLI is the source of truth; if a
+// Mirrors `two80 help` from the `two80` CLI. The CLI is the source of truth; if a
 // flag changes there, change it here. Run any command via
 // `npx -y two80@latest <command>` (Node 20+, nothing to install).
 const COMMANDS = [
   {
-    name: "280 push",
+    name: "two80 push",
     body: "Build identity, deploy, print the live URL. Runs init if new.",
     flags: [
       ["--name <slug>", "app name on first init (default: package.json name)"],
@@ -29,21 +29,21 @@ const COMMANDS = [
     ],
   },
   {
-    name: "280 init",
+    name: "two80 init",
     body: "Detect framework, write .280/config.json. Push does this for you.",
     flags: [
       ["--name <slug>", "app name (default: package.json name)"],
       ["--framework next|static", "skip detection"],
     ],
   },
-  { name: "280 whoami", body: "Print auth state.", flags: [] },
+  { name: "two80 whoami", body: "Print auth state.", flags: [] },
   {
-    name: "280 login",
+    name: "two80 login",
     body: "Authenticate this machine. Prints a link to show your user, then re-run to finish. Never waits.",
     flags: [],
   },
-  { name: "280 version", body: "Print the CLI version.", flags: [] },
-  { name: "280 help", body: "Print every command and flag.", flags: [] },
+  { name: "two80 version", body: "Print the CLI version.", flags: [] },
+  { name: "two80 help", body: "Print every command and flag.", flags: [] },
 ];
 
 // Feature names and notes come from the backend as markdown, so a `backtick`

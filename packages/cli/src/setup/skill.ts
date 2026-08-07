@@ -1,6 +1,6 @@
 // Generates and installs the 280 Agent Skill that loads on demand in a skill-aware
 // agent. Built from the home view's static content (shared DESCRIPTION) so it
-// never drifts from the CLI; examples use `npx` since `280` may not be on PATH.
+// never drifts from the CLI; examples use `npx` since `two80` may not be on PATH.
 
 import fs from 'node:fs';
 import path from 'node:path';

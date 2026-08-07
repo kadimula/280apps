@@ -1,9 +1,9 @@
-280 delete - destroy this project's app: its URL, content, and data
+two80 delete - destroy this project's app: its URL, content, and data
 
 Flags:
-  --yes <name>   confirm; must name the app. Bare 280 delete prints the name
+  --yes <name>   confirm; must name the app. Bare two80 delete prints the name
                  and deletes nothing.
 
 Examples:
-  280 delete
-  280 delete --yes my-app
+  two80 delete
+  two80 delete --yes my-app

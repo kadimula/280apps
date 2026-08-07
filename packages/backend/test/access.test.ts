@@ -168,7 +168,7 @@ describe('POST /internal/apps/:app/access', () => {
     expect(policy!.accessSource).toBe('dashboard');
     expect(policy!.roles).toEqual(['manager']); // the deploy still registered everything else
 
-    // The deploy status carries the one-line divergence notice for 280 push.
+    // The deploy status carries the one-line divergence notice for two80 push.
     const status = await svc.status(appId, res.deployId);
     expect(status.notice).toContain('"public"');
     expect(status.notice).toContain('280.json');

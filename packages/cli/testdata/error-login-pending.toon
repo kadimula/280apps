@@ -1,4 +1,4 @@
 error: authorization_pending
-message: "280 needs your user to sign in: https://api.280apps.com/activate (code ABCD-EFGH)"
+message: "two80 needs your user to sign in: https://api.280apps.com/activate (code ABCD-EFGH)"
 fix: "show your user this link and code, wait for them to confirm, then run your command again: https://api.280apps.com/activate (code ABCD-EFGH)"
 retryable: false

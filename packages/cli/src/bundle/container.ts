@@ -228,7 +228,7 @@ function assemble(
   policy: Policy280 = EMPTY_POLICY,
 ): Bundle {
   if (files.length === 0) {
-    fail('the build context is empty', 'build your app first, then run 280 push again');
+    fail('the build context is empty', 'build your app first, then run two80 push again');
   }
   const manifest: Manifest = {
     kind: MANIFEST_KIND_CONTAINER,
@@ -262,7 +262,7 @@ export function buildNextContainer(root: string): Bundle {
   if (!fileExists(join(root, 'package.json'))) {
     fail(
       'no package.json found for this Next.js project',
-      'run 280 push from your app directory (the one with package.json)',
+      'run two80 push from your app directory (the one with package.json)',
     );
   }
   const content = new Map<Digest, Uint8Array>();

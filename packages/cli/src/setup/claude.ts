@@ -1,4 +1,4 @@
-// Merges a SessionStart hook (runs the bare `280` home view) into project
+// Merges a SessionStart hook (runs the bare `two80` home view) into project
 // .claude/settings.json, never overwriting: an unrecognized shape is a hard error.
 
 import path from 'node:path';

@@ -21,7 +21,7 @@ afterEach(() => {
   else process.env.TWO80_HOME = prev;
 });
 
-const CMD = '280';
+const CMD = 'two80';
 const ABS = '/opt/two80/dist/bin.js';
 
 function read(root: string, rel: string): string {
@@ -44,21 +44,21 @@ describe('hookcmd.resolveHookCommand', () => {
   // POSIX; resolveHookCommand joins with path.join, so probe keys must match.
   const bin = path.resolve('/opt/two80/dist/bin.js');
   const binDir = path.resolve('/usr/local/bin');
-  const candidate = path.join(binDir, '280');
+  const candidate = path.join(binDir, 'two80');
   const PATH = [binDir, path.resolve('/usr/bin')].join(path.delimiter);
 
-  it('returns the portable name when PATH 280 resolves to this executable', () => {
+  it('returns the portable name when PATH two80 resolves to this executable', () => {
     const p = probe({ [candidate]: bin, [bin]: bin }, [candidate]);
-    expect(resolveHookCommand(bin, PATH, p)).toBe('280');
+    expect(resolveHookCommand(bin, PATH, p)).toBe('two80');
   });
 
-  it('falls back to the absolute path when a different 280 shadows ours', () => {
-    const other = path.resolve('/somewhere/else/280');
+  it('falls back to the absolute path when a different two80 shadows ours', () => {
+    const other = path.resolve('/somewhere/else/two80');
     const p = probe({ [candidate]: other, [bin]: bin }, [candidate]);
     expect(resolveHookCommand(bin, PATH, p)).toBe(bin);
   });
 
-  it('falls back to the absolute path when no 280 is on PATH', () => {
+  it('falls back to the absolute path when no two80 is on PATH', () => {
     const p = probe({ [bin]: bin }, []);
     expect(resolveHookCommand(bin, PATH, p)).toBe(bin);
   });
@@ -72,7 +72,8 @@ describe('hookcmd.resolveHookCommand', () => {
 
 describe('hookcmd.isOurCommand', () => {
   it('recognizes the portable name and our compiled entry, in any location', () => {
-    expect(isOurCommand('280')).toBe(true);
+    expect(isOurCommand('two80')).toBe(true);
+    expect(isOurCommand('/usr/local/bin/two80')).toBe(true);
     expect(isOurCommand('/usr/local/bin/280')).toBe(true);
     expect(isOurCommand('/opt/two80/dist/bin.js')).toBe(true);
     expect(isOurCommand('/repo/packages/cli/dist/bin.js')).toBe(true); // dev path, no "two80"
@@ -84,8 +85,8 @@ describe('hookcmd.isOurCommand', () => {
     expect(isOurCommand('/opt/other/dist/index.js')).toBe(false);
   });
   it('quote wraps only paths with spaces', () => {
-    expect(quote('/a/b/280')).toBe('/a/b/280');
-    expect(quote('/a b/280')).toBe('"/a b/280"');
+    expect(quote('/a/b/two80')).toBe('/a/b/two80');
+    expect(quote('/a b/two80')).toBe('"/a b/two80"');
   });
 });
 
@@ -95,7 +96,7 @@ describe('claude install', () => {
     const r = claude.install(root, CMD);
     expect(r.action).toBe('installed');
     const obj = JSON.parse(read(root, claude.FILE));
-    expect(obj.hooks.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: '280' });
+    expect(obj.hooks.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: 'two80' });
   });
 
   it('merges into existing settings, preserving unrelated keys and hooks', () => {
@@ -125,7 +126,7 @@ describe('claude install', () => {
     const groups = obj.hooks.SessionStart as Array<{ hooks: Array<{ command: string }> }>;
     const cmds = groups.flatMap((g) => g.hooks.map((h) => h.command));
     expect(cmds).toContain('echo hi');
-    expect(cmds).toContain('280');
+    expect(cmds).toContain('two80');
     expect(obj.hooks.SessionStart).toHaveLength(2);
   });
 
@@ -145,7 +146,7 @@ describe('claude install', () => {
     expect(r.action).toBe('repaired');
     const obj = JSON.parse(read(root, claude.FILE));
     expect(obj.hooks.SessionStart).toHaveLength(1);
-    expect(obj.hooks.SessionStart[0].hooks[0].command).toBe('280');
+    expect(obj.hooks.SessionStart[0].hooks[0].command).toBe('two80');
   });
 
   it('refuses to modify a settings file whose hooks are malformed', () => {
@@ -167,7 +168,7 @@ describe('codex install', () => {
     const r = codex.install(root, CMD);
     expect(r.action).toBe('installed');
     const hooks = JSON.parse(read(root, codex.HOOKS_FILE));
-    expect(hooks.hooks.SessionStart[0].command).toBe('280');
+    expect(hooks.hooks.SessionStart[0].command).toBe('two80');
     expect(read(root, codex.CONFIG_FILE)).toBe('[features]\nhooks = true\n');
   });
 
@@ -200,7 +201,7 @@ describe('codex install', () => {
     expect(r.action).toBe('repaired');
     const hooks = JSON.parse(read(root, codex.HOOKS_FILE));
     expect(hooks.hooks.SessionStart).toHaveLength(1);
-    expect(hooks.hooks.SessionStart[0].command).toBe('280');
+    expect(hooks.hooks.SessionStart[0].command).toBe('two80');
   });
 
   it('merges the hook without disturbing an unrelated codex hook', () => {
@@ -209,7 +210,7 @@ describe('codex install', () => {
     codex.install(root, CMD);
     const hooks = JSON.parse(read(root, codex.HOOKS_FILE));
     const entries = hooks.hooks.SessionStart as Array<{ command: string }>;
-    expect(entries.map((h) => h.command)).toEqual(['other', '280']);
+    expect(entries.map((h) => h.command)).toEqual(['other', 'two80']);
   });
 });
 
@@ -249,7 +250,7 @@ describe('opencode install', () => {
     expect(r.action).toBe('installed');
     const src = read(root, opencode.FILE);
     expect(src).toContain('280-managed-plugin');
-    expect(src).toContain('const COMMAND = "280"');
+    expect(src).toContain('const COMMAND = "two80"');
   });
   it('is a silent no-op on identical re-run', () => {
     const root = tmpProject();
@@ -264,7 +265,7 @@ describe('opencode install', () => {
     opencode.install(root, ABS);
     const r = opencode.install(root, CMD);
     expect(r.action).toBe('repaired');
-    expect(read(root, opencode.FILE)).toContain('const COMMAND = "280"');
+    expect(read(root, opencode.FILE)).toContain('const COMMAND = "two80"');
   });
   it('refuses to overwrite a foreign file at the plugin path', () => {
     const root = tmpProject();
@@ -283,9 +284,9 @@ describe('skill', () => {
     expect(a).not.toContain('none in this directory');
   });
 
-  it('the committed skill is up to date (mirrors `280 setup --check`)', () => {
+  it('the committed skill is up to date (mirrors `two80 setup --check`)', () => {
     const r = skill.check();
-    expect(r.fresh, `stale committed skill at ${r.path}; run \`280 setup --write\``).toBe(true);
+    expect(r.fresh, `stale committed skill at ${r.path}; run \`two80 setup --write\``).toBe(true);
   });
 
   it('installs into the agent skills dir, idempotently', () => {
@@ -297,7 +298,7 @@ describe('skill', () => {
   });
 });
 
-describe('280 setup command', () => {
+describe('two80 setup command', () => {
   it('installs all three agents + the skill, then re-runs as no-ops', async () => {
     const root = tmpProject();
     const first = await runCli(['setup'], { root });

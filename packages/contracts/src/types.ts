@@ -364,6 +364,29 @@ export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: read
   }
 }
 
+// validateWireEgressPolicy is validateEgressPolicy for the form that actually
+// travels: the CLI ships the NORMALIZED policy (normalizeEgressPolicy has already
+// baked each credential's transport fields to their type-specific canonical value —
+// header→authorization/Bearer, google→'' plus scopes), but validateEgressPolicy
+// reads field *presence* to enforce type/field exclusivity, so it rejects that baked
+// form. This restores the presence the normalizer erased, keyed on each credential's
+// resolved type, then runs the one strict gate. Every security-relevant value (type,
+// host, secret, scopes) survives normalization untouched and is validated exactly as
+// on the raw form; only the author-only "did you set header on a typed credential"
+// hint is unrecoverable, and that carries no runtime effect (the handler ignores it)
+// and is already caught at authoring time in the CLI.
+export function validateWireEgressPolicy(policy: EgressPolicy, declaredSecrets: readonly string[]): void {
+  const credentials = (policy.credentials ?? []).map((c) => {
+    if (credentialType(c) === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount) {
+      const { header: _header, scheme: _scheme, ...rest } = c;
+      return rest;
+    }
+    const { scopes: _scopes, ...rest } = c;
+    return rest;
+  });
+  validateEgressPolicy({ ...policy, credentials }, declaredSecrets);
+}
+
 function validateScopesOrThrow(raw: string[] | undefined, host: string, type: string): void {
   for (const s of raw ?? []) {
     const t = s.trim();

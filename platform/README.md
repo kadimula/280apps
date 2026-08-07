@@ -10,9 +10,11 @@ egress boundary). This is live production code: the backend image copies it in a
 deploys `App280Container` as the container class. Both files document their own
 defaults and wiring; read them.
 
-`container.js` mirrors the tested `@280/egress` (`packages/egress`) wiring inline
-rather than importing it. Keep the two in step — `packages/egress/test/exfil.test.ts`
-is the CI guard.
+`container.js` imports the tested `@280/egress` (`packages/egress`) — the outbound
+credential handler, typed-token minters, vault read, and fail-closed wiring. The
+backend image (`packages/backend/Dockerfile`) vendors its built `dist` into this
+Worker's `node_modules` alongside `@280/gateway` and `@280/contracts`; the harness
+bundle smoke (`scripts/bundle-smoke.sh`) proves the vendored layout resolves.
 
 ## Server side
 

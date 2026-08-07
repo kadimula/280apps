@@ -13,19 +13,18 @@
 //   defaultPort = 8080      The port the buildpack makes every app listen on and
 //                           the gateway routes to; the two must agree.
 //
-// The egress DATA PATH — the credential-injecting outbound handler, the vault
-// read, the call-log, the fail-closed allowlist wiring — is the tested @280/egress
-// package (packages/egress). This harness mirrors that same wiring in ./egress.js
-// (kept dependency-free so it is testable in isolation) rather than importing the
-// package; keep the two in step (packages/egress/test/exfil.test.ts).
+// The egress DATA PATH — the credential-injecting outbound handler, the vault read,
+// the typed-token minters, the call-log, the fail-closed allowlist wiring — is the
+// tested @280/egress package (packages/egress), imported here rather than mirrored.
+// The backend image vendors its built dist into this Worker's node_modules.
 
 import { Container } from '@cloudflare/containers';
-import { EGRESS_HANDLER, egressHandler, applyEgressPolicy } from './egress.js';
+import { registerEgress as installEgress, applyEgressPolicy } from '@280/egress';
 
 // ContainerProxy must be re-exported from the Worker's main module: the outbound
 // interception machinery resolves it via ctx.exports.ContainerProxy.
 export { ContainerProxy } from '@cloudflare/containers';
-export { EGRESS_HANDLER, applyEgressPolicy } from './egress.js';
+export { applyEgressPolicy };
 
 export class App280Container extends Container {
   defaultPort = 8080;
@@ -34,10 +33,10 @@ export class App280Container extends Container {
   interceptHttps = true; // intercept HTTPS; the buildpack installs the runtime CA
 }
 
-// registerEgress installs the handler on the class via the `outboundHandlers`
-// accessor (assignment, NOT a class field): a `static outboundHandlers = {...}`
-// class field shadows the base setter and silently no-ops (the footgun the spike
-// documented, OQ5). Call once at the front worker's module load.
+// registerEgress installs the package handler on App280Container. The package
+// ASSIGNS to the `outboundHandlers` accessor (never a class field): a
+// `static outboundHandlers = {...}` class field shadows the base setter and silently
+// no-ops (the spike footgun, OQ5). Call once at the front worker's module load.
 export function registerEgress() {
-  App280Container.outboundHandlers = { [EGRESS_HANDLER]: egressHandler };
+  installEgress(App280Container);
 }

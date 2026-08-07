@@ -6,16 +6,24 @@ You and the human build the features; 280 owns deploy, identity, and permissions
 
 280 supports most CRUD apps an internal team builds, but the support set is limited. Check https://280apps.com/platform-support.md first, review the user's stack, and install the CLI only if it is supported. (You can also offer to change the unsupported parts.)
 
-## 2. Declare the app's secrets
+## 2. Hand every secret to the platform
 
-Scan the repo for credentials the app uses: env vars, API keys, connection strings, tokens in code. Declare each name in `280.json` and map it to the host it authenticates against:
+On 280, secrets are the platform's job, not the app's. Two rules:
+
+- **The app never holds a secret value.** It must not read one from env, embed one in code or config, build an auth header from one, or log or store one. If the running app can see a credential, it is wrong.
+- **The app never manages secrets.** Write outbound calls as plain requests to the API, with no auth wiring. 280 attaches the credential in-flight from `280.json`; the value never enters the container.
+
+So your only secrets task is to declare them. Scan the repo for every credential the app uses (env vars, API keys, connection strings, tokens), and for each add its name to `secrets` and bind it to the host it authenticates against:
 
     {
-      "secrets": ["STRIPE_KEY"],
-      "egress": { "allow": ["api.stripe.com"], "credentials": [{ "host": "api.stripe.com", "secret": "STRIPE_KEY" }] }
+      "secrets": ["<SECRET_NAME>"],
+      "egress": {
+        "allow": ["<api-host>"],
+        "credentials": [{ "host": "<api-host>", "secret": "<SECRET_NAME>" }]
+      }
     }
 
-280 attaches the value to outbound requests to that host (an `Authorization: Bearer` header by default; set `"header"`/`"scheme"` for APIs that differ), so remove code that reads the value from env. You handle names only: never write a value into any file or into the conversation. The user enters values in the 280 dashboard.
+280 attaches the value to requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` for APIs that differ). Then remove the app's own secret handling — the env reads, the header building, the config entries. You author names only: never write a value into any file or the conversation. The user enters values in the 280 dashboard (step 5).
 
 ## 3. Install the CLI and push
 

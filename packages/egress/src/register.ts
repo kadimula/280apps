@@ -34,8 +34,10 @@ function paramsFor(policy: EgressPolicy, appId: string, host: string): EgressCal
     appId,
     host,
     secret: cred?.secret ?? '',
+    type: cred?.type ?? '',
     header: cred?.header || 'authorization',
     scheme: cred?.scheme ?? 'Bearer',
+    scopes: cred?.scopes ?? [],
   };
 }
 

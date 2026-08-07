@@ -1,10 +1,24 @@
+
+
 # 280apps
 
-Source code for [280apps.com](https://www.280apps.com) the platform, which enables humans to easily and securely share personal apps.
+<p align="center">
+  <img src="readme-hero.png" alt="Secure your internal vibe-coded apps" width="900">
+</p>
 
-280 owns the full deploy, identity, sharing, and permissions story so non-tech professionals can build internal tools with coding agents, without ever debugging deploys, configuring auth, or reasoning about security. The platform is built agent-first, with the CLI conforming to the [axi.md](https://axi.md/) format (token efficiency & agent friendly outputs).
 
-## Ask for yourself
+Professionals across every single domain are aggresively using AI coding agents to vibe-code internal tools for their teams. However, they quickly run into issues:
+* Auth and permissions get complicated fast (especially for those working in sensitive domains like finance and health)
+* Agents write risky security code from scratch every time
+* Non-technical teammates have no easy way to review, adjust, or manage access control
+
+280apps.com is a platform built to solve these issues. It provides:
+* A managed environment, backend by Cloudflare containers, to securely deploy your applicationm, store and use secrets, and integrate with your existing production data sources
+* An agent-first CLI, conforming to the [axi.md](https://axi.md/) format (token efficiency & agent friendly outputs)
+* Tools for deployoing, add OAuth, managing secrets, and adding permissions for you and your team
+* Peace of mind for professionals to continue vibe-coding toosl without ever debugging deploys, configuring auth, or worrying about security
+
+## Find out for yourself!
 
 Your agent can answer if the 280apps platform is right for you:
 

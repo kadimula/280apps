@@ -1,0 +1,180 @@
+digraph GatewayArchitecture {
+  graph [
+    rankdir=LR
+    bgcolor="#080A09"
+    pad="0.45"
+    nodesep="0.42"
+    ranksep="0.82"
+    splines=polyline
+    newrank=true
+    outputorder=edgesfirst
+    fontname="Arial"
+    fontcolor="#F5F2EA"
+    label=<<B>Gateway architecture</B>>
+    labelloc=t
+    labeljust=l
+    fontsize=28
+  ]
+
+  node [
+    shape=rect
+    style="rounded,filled"
+    margin="0.22,0.16"
+    fontname="Arial"
+    fontsize=12
+    color="#454842"
+    fontcolor="#F5F2EA"
+    fillcolor="#151816"
+    penwidth=1.4
+  ]
+
+  edge [
+    fontname="Arial"
+    fontsize=10
+    fontcolor="#CAC7BF"
+    color="#D7D4CC"
+    arrowsize=0.72
+    penwidth=1.35
+  ]
+
+  browser [
+    label=<<B>Browser</B><BR/><FONT POINT-SIZE="10">Session and app identity cookies</FONT>>
+    shape=oval
+    fillcolor="#28210F"
+    color="#D8AA35"
+  ]
+  provider [
+    label=<<B>Google or Microsoft OIDC</B>>
+    shape=oval
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  sessions [
+    label=<<B>Session store</B><BR/><FONT POINT-SIZE="10">Users, sessions, and provider state</FONT>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  grants [
+    label=<<B>Application grants</B><BR/><FONT POINT-SIZE="10">Admission, roles, and audit</FONT>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  key [
+    label=<<B>ES256 signing key</B><BR/><FONT POINT-SIZE="10">Private key stays in the gateway</FONT>>
+    shape=note
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  container [
+    label=<<B>Application container</B><BR/><FONT POINT-SIZE="10">Receives verified identity only</FONT>>
+    fillcolor="#17251A"
+    color="#70A87B"
+  ]
+
+  request [
+    label=<<B>Request middleware</B><BR/><FONT POINT-SIZE="10">Reuse token or request a decision</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  verifier [
+    label=<<B>Token verification and route gates</B><BR/><FONT POINT-SIZE="10">Verify locally, then stamp identity</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  auth [
+    label=<<B>Authentication routes</B><BR/><FONT POINT-SIZE="10">Start login, handle callback, set session</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  rpc [
+    label=<<B>Mint RPC</B><BR/><FONT POINT-SIZE="10">Private service binding only</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  admission [
+    label=<<B>Session resolution and admission</B><BR/><FONT POINT-SIZE="10">Resolve viewer and effective grant</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  signer [
+    label=<<B>Identity signer</B><BR/><FONT POINT-SIZE="10">Mint token for one application host</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+
+  legend [
+    shape=plain
+    margin=0
+    label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="7" COLOR="#454842" BGCOLOR="#101210">
+      <TR><TD COLSPAN="2" ALIGN="LEFT"><B>Legend</B></TD></TR>
+      <TR><TD BGCOLOR="#28210F" BORDER="1" COLOR="#D8AA35" WIDTH="24"></TD><TD ALIGN="LEFT">Viewer and client</TD></TR>
+      <TR><TD BGCOLOR="#17251A" BORDER="1" COLOR="#70A87B"></TD><TD ALIGN="LEFT">Application runtime</TD></TR>
+      <TR><TD BGCOLOR="#28172A" BORDER="1" COLOR="#B56BAA"></TD><TD ALIGN="LEFT">Identity and request enforcement</TD></TR>
+      <TR><TD BGCOLOR="#12232C" BORDER="1" COLOR="#65A9D0"></TD><TD ALIGN="LEFT">Platform data and external services</TD></TR>
+      <TR><TD BORDER="1" COLOR="#426C84"></TD><TD ALIGN="LEFT">Outlined areas are Worker boundaries</TD></TR>
+    </TABLE>>
+  ]
+
+  subgraph cluster_app_worker {
+    label="Per application Worker"
+    style="rounded,filled"
+    color="#426C84"
+    fillcolor="#121412"
+    fontcolor="#65A9D0"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    request
+    verifier
+  }
+
+  subgraph cluster_gateway {
+    label="Identity Gateway Worker"
+    style="rounded,filled"
+    color="#426C84"
+    fillcolor="#121412"
+    fontcolor="#65A9D0"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    auth
+    rpc
+    admission
+    signer
+  }
+
+  { rank=same; browser; legend }
+  { rank=same; request; auth }
+  { rank=same; verifier; provider }
+  { rank=same; rpc; sessions }
+  { rank=same; admission; grants }
+  { rank=same; signer; key }
+
+  browser -> request [label="Application request"]
+  request -> browser [label="302 login URL", color="#D8AA35", fontcolor="#D8AA35", constraint=false]
+  request -> verifier [label="Valid app token"]
+  verifier -> container [label="Verified request"]
+
+  request -> rpc [label="Mint or refresh", color="#B56BAA", fontcolor="#B56BAA"]
+  rpc -> admission [color="#B56BAA"]
+  admission -> signer [label="Admitted viewer", color="#B56BAA", fontcolor="#B56BAA"]
+  signer -> rpc [label="App scoped token", color="#B56BAA", fontcolor="#B56BAA", constraint=false]
+  rpc -> request [label="Token, login, or deny", color="#B56BAA", fontcolor="#B56BAA", constraint=false]
+
+  browser -> auth [label="Follow sign in redirect", color="#D8AA35", fontcolor="#D8AA35"]
+  auth -> provider [dir=both, label="OIDC flow"]
+  auth -> sessions [label="Create session"]
+  auth -> browser [label="Return to application", color="#D8AA35", fontcolor="#D8AA35", constraint=false]
+
+  admission -> sessions [label="Resolve viewer"]
+  admission -> grants [label="Check access"]
+  key -> signer [label="Private key"]
+
+  browser -> legend [style=invis, weight=10]
+  request -> auth [style=invis, weight=10]
+  verifier -> provider [style=invis, weight=10]
+  sessions -> grants [style=invis, weight=10]
+  grants -> key [style=invis, weight=10]
+}

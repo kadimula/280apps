@@ -1,166 +1,263 @@
 digraph Architecture {
   graph [
-    rankdir=TB,
-    bgcolor="#070707",
-    pad="0.45",
-    nodesep="0.48",
-    ranksep="1.0",
-    splines=ortho,
-    compound=true,
-    fontname="Arial",
-    fontcolor="#F4F0E8",
-    label="280apps architecture  |  deploy, identity, and request flow",
-    labelloc=t,
-    labeljust=l,
-    fontsize=25
-  ];
+    rankdir=TB
+    bgcolor="#080A09"
+    pad="0.45"
+    nodesep="0.38"
+    ranksep="0.78"
+    splines=polyline
+    newrank=true
+    outputorder=edgesfirst
+    fontname="Arial"
+    fontcolor="#F5F2EA"
+    label=<<B>280apps architecture</B>>
+    labelloc=t
+    labeljust=l
+    fontsize=28
+  ]
 
   node [
-    shape=rect,
-    style="rounded,filled",
-    margin="0.18,0.13",
-    fontname="Arial",
-    fontsize=11,
-    color="#4A4740",
-    fontcolor="#F4F0E8",
-    fillcolor="#141414",
-    penwidth=1.2
-  ];
+    shape=rect
+    style="rounded,filled"
+    margin="0.22,0.16"
+    fontname="Arial"
+    fontsize=12
+    color="#454842"
+    fontcolor="#F5F2EA"
+    fillcolor="#151816"
+    penwidth=1.4
+  ]
 
   edge [
-    fontname="Arial",
-    fontsize=9,
-    fontcolor="#D9D3C7",
-    color="#DED7C9",
-    arrowsize=0.75,
-    penwidth=1.3
-  ];
+    fontname="Arial"
+    fontsize=10
+    fontcolor="#CAC7BF"
+    color="#D7D4CC"
+    arrowsize=0.72
+    penwidth=1.35
+  ]
 
-  agent [label="Coding agent or builder", shape=oval, fillcolor="#211B0D", color="#D6AD45"];
-  operator [label="App owner or admin", shape=oval, fillcolor="#211B0D", color="#D6AD45"];
-  viewer [label="App viewer", shape=oval, fillcolor="#211B0D", color="#D6AD45"];
-  provider [label="Google or Microsoft OIDC", shape=oval, fillcolor="#111A20", color="#5B91B5"];
-  upstream [label="Approved external APIs", shape=oval, fillcolor="#111A20", color="#5B91B5"];
+  actor [
+    label=<<B>App owner - Coding Agent</B>>
+    shape=oval
+    fillcolor="#28210F"
+    color="#D8AA35"
+  ]
 
-  subgraph cluster_interfaces {
-    label="Developer and operator interfaces";
-    color="#33302A";
-    fontcolor="#CFC7B8";
-    style="rounded";
-    margin=20;
+  cli [
+    label=<<B>CLI</B>>
+    URL="../packages/cli/"
+    fillcolor="#28210F"
+    color="#D8AA35"
+  ]
+  dashboard [
+    label=<<B>Web Dashboard</B>>
+    URL="../packages/dashboard/"
+    fillcolor="#28210F"
+    color="#D8AA35"
+  ]
 
-    cli [
-      label="packages/cli\ntwo80 command line\nbundle, upload, poll",
-      URL="../packages/cli/",
-      fillcolor="#241E10",
-      color="#D6AD45"
-    ];
-    dashboard [
-      label="packages/dashboard\nNext.js management UI\napps, sharing, secrets, preview",
-      URL="../packages/dashboard/",
-      fillcolor="#241E10",
-      color="#D6AD45"
-    ];
-  }
+  backend [
+    label=<<B>Backend</B>>
+    URL="../packages/backend/"
+    fillcolor="#17251A"
+    color="#70A87B"
+    group="build"
+  ]
+  postgres [
+    label=<<B>Postgres</B>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  r2 [
+    label=<<B>Cloudflare R2</B><BR/><FONT POINT-SIZE="10">Uploaded build blobs</FONT>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
 
-  subgraph cluster_control {
-    label="Control plane";
-    color="#33302A";
-    fontcolor="#CFC7B8";
-    style="rounded";
-    margin=20;
+  depot [
+    label=<<B>Depot</B><BR/><FONT POINT-SIZE="10">Remote BuildKit</FONT>>
+    fillcolor="#12232C"
+    color="#65A9D0"
+    group="build"
+  ]
+  registry [
+    label=<<B>Container Image registry</B>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+  viewer [
+    label="App viewer"
+    shape=oval
+    fillcolor="#28210F"
+    color="#D8AA35"
+  ]
+  worker [
+    label=<<B>Per app Worker</B><BR/><FONT POINT-SIZE="10">Identity checks and route gates</FONT>>
+    fillcolor="#28172A"
+    color="#B56BAA"
+    group="app-runtime"
+  ]
+  gateway [
+    label=<<B>Identity gateway</B><BR/><FONT POINT-SIZE="10">Session, admission, and token minting</FONT>>
+    URL="../packages/gateway/"
+    fillcolor="#28172A"
+    color="#B56BAA"
+  ]
+  oidc [
+    label="Google or Microsoft OIDC"
+    shape=oval
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
 
-    backend [
-      label="packages/backend\nRailway Node service\ndeploy, auth, policy, storage",
-      URL="../packages/backend/",
-      fillcolor="#182118",
-      color="#74A574"
-    ];
-    postgres [label="PostgreSQL\nusers, sessions, grants, deploys", shape=cylinder, fillcolor="#111A20", color="#5B91B5"];
-    r2 [label="Cloudflare R2\nuploaded build blobs", shape=cylinder, fillcolor="#111A20", color="#5B91B5"];
-    depot [label="Depot\nremote BuildKit", fillcolor="#111A20", color="#5B91B5"];
-    registry [label="Cloudflare container registry\nper app images", shape=cylinder, fillcolor="#111A20", color="#5B91B5"];
-  }
-
-  subgraph cluster_identity {
-    label="Central identity plane";
-    color="#33302A";
-    fontcolor="#CFC7B8";
-    style="rounded";
-    margin=20;
-
-    gateway [
-      label="packages/gateway\ncentral identity authority\nsession, admission, token minting",
-      URL="../packages/gateway/",
-      fillcolor="#211720",
-      color="#A66A9A"
-    ];
-  }
-
-  subgraph cluster_app {
-    label="One isolated deployment per app";
-    color="#33302A";
-    fontcolor="#CFC7B8";
-    style="rounded";
-    margin=20;
-
-    appworker [
-      label="Per app Cloudflare Worker\ngateway middleware\nlocal token verification and route gates",
-      fillcolor="#211720",
-      color="#A66A9A"
-    ];
-    appcontainer [
-      label="platform/appcontainer\nCloudflare Container harness\nruns the unchanged app image",
-      URL="../platform/appcontainer/",
-      fillcolor="#182118",
-      color="#74A574"
-    ];
-    sdk [
-      label="packages/sdk\nidentity(), can(), scope()\noffline header verification",
-      URL="../packages/sdk/",
-      fillcolor="#182118",
-      color="#74A574"
-    ];
-    egress [
-      label="packages/egress\ndefault deny outbound boundary\ncredential injection and call log",
-      URL="../packages/egress/",
-      fillcolor="#182118",
-      color="#74A574"
-    ];
-  }
+  container [
+    label=<<B>App Container</B>>
+    URL="../platform/appcontainer/"
+    fillcolor="#17251A"
+    color="#70A87B"
+    group="app-runtime"
+  ]
+  sdk [
+    label=<<B>packages/sdk</B><BR/><FONT POINT-SIZE="10">identity(), can(), and scope()</FONT>>
+    URL="../packages/sdk/"
+    fillcolor="#17251A"
+    color="#70A87B"
+  ]
+  egress [
+    label=<<B>Egress</B><BR/><FONT POINT-SIZE="10">Allowlist, credentials, and call log</FONT>>
+    URL="../packages/egress/"
+    fillcolor="#17251A"
+    color="#70A87B"
+  ]
+  apis [
+    label="Approved external APIs"
+    shape=oval
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
 
   contracts [
-    label="packages/contracts\nshared API schemas, policy, identity signing and verification",
-    URL="../packages/contracts/",
-    fillcolor="#24201B",
-    color="#B6A68B"
-  ];
+    label=<<B>Contracts</B><BR/><FONT POINT-SIZE="10">Shared API schemas used across all surfaces</FONT>>
+    URL="../packages/contracts/"
+    fillcolor="#25221D"
+    color="#B7A98D"
+  ]
 
-  agent -> cli [label="two80 push", color="#D6AD45", fontcolor="#D6AD45"];
-  operator -> dashboard [label="HTTPS", color="#D6AD45", fontcolor="#D6AD45"];
-  cli -> backend [label="sync, blobs, status", color="#D6AD45", fontcolor="#D6AD45"];
-  dashboard -> backend [label="session API", color="#D6AD45", fontcolor="#D6AD45"];
+  legend [
+    shape=plain
+    margin=0
+    label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="7" COLOR="#454842" BGCOLOR="#101210">
+      <TR><TD COLSPAN="2" ALIGN="LEFT"><B>Legend</B></TD></TR>
+      <TR><TD BGCOLOR="#28210F" BORDER="1" COLOR="#D8AA35" WIDTH="24"></TD><TD ALIGN="LEFT">People and user surfaces</TD></TR>
+      <TR><TD BGCOLOR="#17251A" BORDER="1" COLOR="#70A87B"></TD><TD ALIGN="LEFT">Core application and runtime</TD></TR>
+      <TR><TD BGCOLOR="#28172A" BORDER="1" COLOR="#B56BAA"></TD><TD ALIGN="LEFT">Identity and request enforcement</TD></TR>
+      <TR><TD BGCOLOR="#12232C" BORDER="1" COLOR="#65A9D0"></TD><TD ALIGN="LEFT">Infrastructure and external services</TD></TR>
+      <TR><TD BGCOLOR="#25221D" BORDER="1" COLOR="#B7A98D"></TD><TD ALIGN="LEFT">Shared code</TD></TR>
+      <TR><TD BORDER="1" COLOR="#426C84"></TD><TD ALIGN="LEFT">Outlined areas show hosting location</TD></TR>
+    </TABLE>>
+  ]
 
-  backend -> postgres [label="state and policy", color="#D6AD45", fontcolor="#D6AD45"];
-  backend -> r2 [label="store build blobs", color="#D6AD45", fontcolor="#D6AD45"];
-  backend -> depot [label="build context", color="#D6AD45", fontcolor="#D6AD45"];
-  depot -> registry [label="push image", color="#D6AD45", fontcolor="#D6AD45"];
-  backend -> appworker [label="wrangler deploy and rollout", color="#D6AD45", fontcolor="#D6AD45"];
-  registry -> appcontainer [label="pull app image", color="#D6AD45", fontcolor="#D6AD45"];
+  subgraph cluster_surfaces {
+    label="Builder surfaces"
+    style="rounded,filled"
+    color="#6F5B27"
+    fillcolor="#121412"
+    fontcolor="#D8AA35"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    actor
+    cli
+    dashboard
+  }
 
-  viewer -> appworker [label="HTTPS request"];
-  appworker -> gateway [label="service binding\nmint or refresh, JWKS"];
-  gateway -> postgres [label="session, grants, audit"];
-  gateway -> provider [label="central login"];
-  appworker -> appcontainer [label="X 280 Identity"];
-  appcontainer -> sdk [label="app reads verified identity"];
-  appcontainer -> egress [label="outbound request"];
-  egress -> upstream [label="allowlisted request\ncredential attached"];
+  subgraph cluster_control_plane {
+    label="Control plane"
+    style="rounded,filled"
+    color="#416448"
+    fillcolor="#121412"
+    fontcolor="#70A87B"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    backend
+    depot
+    postgres
+  }
 
-  cli -> contracts [style=dashed, color="#77736B", fontcolor="#A9A399", label="uses"];
-  backend -> contracts [style=dashed, color="#77736B", fontcolor="#A9A399", label="uses"];
-  gateway -> contracts [style=dashed, color="#77736B", fontcolor="#A9A399", label="uses"];
-  sdk -> contracts [style=dashed, color="#77736B", fontcolor="#A9A399", label="uses"];
-  egress -> contracts [style=dashed, color="#77736B", fontcolor="#A9A399", label="uses"];
+  subgraph cluster_cloudflare {
+    label="Cloudflare"
+    style="rounded,filled"
+    color="#426C84"
+    fillcolor="#121412"
+    fontcolor="#65A9D0"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    r2
+    registry
+    worker
+    gateway
+    container
+    sdk
+    egress
+  }
 
+  postgres_gateway [
+    label=<<B>Postgres</B>>
+    shape=cylinder
+    fillcolor="#12232C"
+    color="#65A9D0"
+  ]
+
+  subgraph cluster_shared {
+    label="Shared code"
+    style="rounded,filled"
+    color="#675F50"
+    fillcolor="#121412"
+    fontcolor="#B7A98D"
+    fontsize=11
+    penwidth=1.1
+    margin=18
+    contracts
+  }
+
+  { rank=same; actor; viewer; contracts; legend }
+  { rank=same; cli; dashboard }
+  { rank=same; postgres; backend; r2; worker; gateway; postgres_gateway }
+  { rank=same; depot; registry; container; oidc }
+  { rank=same; sdk; egress; apis }
+
+  actor -> cli [label="push", color="#D8AA35", fontcolor="#D8AA35"]
+  actor -> dashboard [label="manage", color="#D8AA35", fontcolor="#D8AA35"]
+  cli -> backend [color="#D8AA35", fontcolor="#D8AA35"]
+  dashboard -> backend [color="#D8AA35", fontcolor="#D8AA35"]
+  backend -> postgres [color="#D8AA35", fontcolor="#D8AA35"]
+  backend -> r2 [label="store blobs", color="#D8AA35", fontcolor="#D8AA35"]
+  backend -> depot [label="build context", color="#D8AA35", fontcolor="#D8AA35"]
+  depot -> registry [label="push image", color="#D8AA35", fontcolor="#D8AA35"]
+  backend -> worker [label="deploy and roll out", color="#D8AA35", fontcolor="#D8AA35"]
+  registry -> container [label="app image", color="#D8AA35", fontcolor="#D8AA35"]
+
+  viewer -> worker [label="HTTPS request"]
+  worker -> gateway [label="mint or refresh"]
+  gateway -> postgres_gateway [label="sessions, grants, audit", constraint=false]
+  gateway -> oidc [dir=both, label="central login"]
+  worker -> container [label="verified request"]
+  container -> sdk [label="read identity"]
+  container -> egress [label="outbound request"]
+  egress -> apis [label="allowlisted request"]
+
+  actor -> viewer [style=invis, weight=20]
+  viewer -> contracts [style=invis, weight=20]
+  contracts -> legend [style=invis, weight=20]
+  cli -> dashboard [style=invis, weight=20]
+  postgres -> backend [style=invis, weight=20]
+  backend -> r2 [style=invis, weight=20]
+  registry -> viewer [style=invis, weight=20]
+  sdk -> egress [style=invis, weight=20]
 }

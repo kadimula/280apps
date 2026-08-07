@@ -17,7 +17,9 @@ data/
 docs/*
 !docs/dev-environment.md
 !docs/architecture.md
-!docs/architecture.dot
+!docs/architecture.excalidraw
+!docs/architecture.mmd
+!docs/architecture-mermaid.svg
 !docs/architecture.svg
 *.local.md
 

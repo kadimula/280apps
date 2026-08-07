@@ -82,11 +82,181 @@ describe('read280', () => {
 
   it('still parses the egress block (phase 3 compatibility)', () => {
     const root = projectWith({
+      secrets: ['K'],
       egress: { allow: ['api.stripe.com'], credentials: [{ host: 'api.stripe.com', secret: 'K' }] },
     });
     const p = read280(root);
     expect(p.egress.allowedHosts).toContain('api.stripe.com');
     expect(p.egress.credentials[0]?.secret).toBe('K');
+  });
+
+  it('parses an untyped credential byte-identically to the pre-typed default', () => {
+    const root = projectWith({
+      secrets: ['STRIPE_KEY'],
+      egress: { credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }] },
+    });
+    expect(read280(root).egress.credentials[0]).toEqual({
+      host: 'api.stripe.com',
+      secret: 'STRIPE_KEY',
+      type: 'header',
+      header: 'authorization',
+      scheme: 'Bearer',
+      scopes: [],
+    });
+  });
+
+  it('parses a google-service-account credential, normalizing (dedup + byte-sort) its scopes', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: {
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'SHEETS_SA',
+            type: 'google-service-account',
+            scopes: [
+              'https://www.googleapis.com/auth/spreadsheets',
+              'https://www.googleapis.com/auth/drive.readonly',
+              'https://www.googleapis.com/auth/spreadsheets',
+            ],
+          },
+        ],
+      },
+    });
+    expect(read280(root).egress.credentials[0]).toEqual({
+      host: 'sheets.googleapis.com',
+      secret: 'SHEETS_SA',
+      type: 'google-service-account',
+      header: '',
+      scheme: '',
+      scopes: [
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/spreadsheets',
+      ],
+    });
+  });
+
+  it('rejects an unknown credential type', () => {
+    const root = projectWith({
+      secrets: ['K'],
+      egress: { credentials: [{ host: 'api.example.com', secret: 'K', type: 'oauth2' }] },
+    });
+    expect(() => read280(root)).toThrow(/unknown type/);
+  });
+
+  it('rejects header/scheme on a typed credential', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: {
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'SHEETS_SA',
+            type: 'google-service-account',
+            header: 'authorization',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+    });
+    expect(() => read280(root)).toThrow(/must not set header or scheme/);
+  });
+
+  it('rejects scopes on a header credential', () => {
+    const root = projectWith({
+      secrets: ['K'],
+      egress: { credentials: [{ host: 'api.example.com', secret: 'K', scopes: ['x'] }] },
+    });
+    expect(() => read280(root)).toThrow(/must not carry scopes/);
+  });
+
+  it('rejects a google-service-account credential with no scopes', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: {
+        credentials: [{ host: 'sheets.googleapis.com', secret: 'SHEETS_SA', type: 'google-service-account' }],
+      },
+    });
+    expect(() => read280(root)).toThrow(/requires at least one scope/);
+  });
+
+  it('rejects a typed credential on a host outside the provider suffix', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: {
+        credentials: [
+          {
+            host: 'evil.example.com',
+            secret: 'SHEETS_SA',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+    });
+    expect(() => read280(root)).toThrow(/is not a valid google-service-account host/);
+  });
+
+  it('rejects a typed credential on a wildcard host', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: {
+        credentials: [
+          {
+            host: '*.googleapis.com',
+            secret: 'SHEETS_SA',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+    });
+    expect(() => read280(root)).toThrow(/is not a valid google-service-account host/);
+  });
+
+  it('rejects two credentials for the same host', () => {
+    const root = projectWith({
+      secrets: ['A', 'B'],
+      egress: {
+        credentials: [
+          { host: 'api.example.com', secret: 'A' },
+          { host: 'api.example.com', secret: 'B' },
+        ],
+      },
+    });
+    expect(() => read280(root)).toThrow(/duplicate egress credential/);
+  });
+
+  it('rejects a credential whose secret is not declared in secrets', () => {
+    const root = projectWith({
+      secrets: ['OTHER'],
+      egress: { credentials: [{ host: 'api.example.com', secret: 'MISSING' }] },
+    });
+    expect(() => read280(root)).toThrow(/not declared in secrets/);
+  });
+
+  it('rejects a credential naming a reserved platform binding', () => {
+    const root = projectWith({
+      secrets: ['GATEWAY'],
+      egress: { credentials: [{ host: 'api.example.com', secret: 'GATEWAY' }] },
+    });
+    expect(() => read280(root)).toThrow(/reserved platform binding/);
+  });
+
+  it('rejects a non-string credential type before upload', () => {
+    const root = projectWith({
+      secrets: ['K'],
+      egress: { credentials: [{ host: 'api.example.com', secret: 'K', type: 5 }] },
+    });
+    expect(() => read280(root)).toThrow(/"type" must be a string/);
+  });
+
+  it('rejects a scopes field that is not a list of strings', () => {
+    const root = projectWith({
+      secrets: ['SHEETS_SA'],
+      egress: { credentials: [{ host: 'sheets.googleapis.com', secret: 'SHEETS_SA', scopes: 'nope' }] },
+    });
+    expect(() => read280(root)).toThrow(/"scopes" must be a list of strings/);
   });
 });
 

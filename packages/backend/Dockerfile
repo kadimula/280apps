@@ -20,16 +20,20 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/backend/package.json packages/backend/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/gateway/package.json packages/gateway/package.json
+COPY packages/egress/package.json packages/egress/package.json
 RUN pnpm install --frozen-lockfile
 
-# Sources, then build the packages the platform runs on plus @280/gateway, whose
-# verify-and-forward middleware is vendored into the per-app harness Worker below.
+# Sources, then build the packages the platform runs on plus @280/gateway (its
+# verify-and-forward middleware) and @280/egress (its outbound credential handler),
+# both vendored into the per-app harness Worker below.
 COPY packages/contracts packages/contracts
 COPY packages/backend packages/backend
 COPY packages/gateway packages/gateway
+COPY packages/egress packages/egress
 RUN pnpm --filter @280/contracts build \
  && pnpm --filter @280/backend build \
- && pnpm --filter @280/gateway build
+ && pnpm --filter @280/gateway build \
+ && pnpm --filter @280/egress build
 
 # A self-contained deploy tree: prod deps (including the built @280/contracts,
 # flattened into node_modules) plus the platform package's dist.
@@ -71,13 +75,17 @@ COPY --from=build /app /app
 # time. @280/gateway declares @280/backend as a dep, but the middleware never imports
 # it, so it is intentionally not vendored (and never enters the tenant bundle).
 # TWO80_WORKER_ENTRY points the generated roll config at the vendored entry (absolute,
-# so it resolves from any build-context cwd).
+# so it resolves from any build-context cwd). @280/egress (the outbound credential
+# handler container.js imports) is vendored the same way; it depends on @280/contracts,
+# already flat in this node_modules, so its import resolves at bundle time too.
 COPY platform/appcontainer /app/appcontainer
 RUN npm install --omit=dev --prefix /app/appcontainer
 COPY --from=build /repo/packages/gateway/package.json /app/appcontainer/node_modules/@280/gateway/package.json
 COPY --from=build /repo/packages/gateway/dist /app/appcontainer/node_modules/@280/gateway/dist
 COPY --from=build /repo/packages/contracts/package.json /app/appcontainer/node_modules/@280/contracts/package.json
 COPY --from=build /repo/packages/contracts/dist /app/appcontainer/node_modules/@280/contracts/dist
+COPY --from=build /repo/packages/egress/package.json /app/appcontainer/node_modules/@280/egress/package.json
+COPY --from=build /repo/packages/egress/dist /app/appcontainer/node_modules/@280/egress/dist
 ENV TWO80_WORKER_ENTRY=/app/appcontainer/src/worker.js
 
 EXPOSE 8080

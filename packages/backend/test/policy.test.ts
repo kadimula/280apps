@@ -149,7 +149,7 @@ describe('policy preflight (fail closed)', () => {
   });
 });
 
-describe('static egress preflight (fail closed)', () => {
+describe('egress preflight (typed + static, fail closed)', () => {
   async function expectEgressRejected(egress: Manifest['egress'], over: Partial<Manifest> = {}): Promise<void> {
     const h = await harness();
     const { manifest } = policyManifest({ egress, ...over });
@@ -163,6 +163,69 @@ describe('static egress preflight (fail closed)', () => {
       egress: {
         allowedHosts: ['api.stripe.com'],
         credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+      },
+    });
+    const appId = await pushLive(h, 'usr_ok', manifest, digest, body);
+    expect(await h.store.appPolicy(appId)).not.toBeNull();
+  });
+
+  // The CLI ships the NORMALIZED wire form: a static credential carries scopes:[] and
+  // defaulted header/scheme, a google credential carries header:''/scheme:'' plus
+  // scopes. validateEgressPolicy reads field presence and would reject both; the
+  // backend runs validateWireEgressPolicy, which restores presence first. Without it,
+  // every credentialed push fails enforcement — so these two are the load-bearing
+  // reconciliation tests.
+  it('accepts the normalized wire form of a static credential', async () => {
+    const h = await harness();
+    const { manifest, digest, body } = policyManifest({
+      secrets: ['STRIPE_KEY'],
+      egress: {
+        allowedHosts: ['api.stripe.com'],
+        credentials: [
+          { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'header', header: 'authorization', scheme: 'Bearer', scopes: [] },
+        ],
+      },
+    });
+    const appId = await pushLive(h, 'usr_ok', manifest, digest, body);
+    expect(await h.store.appPolicy(appId)).not.toBeNull();
+  });
+
+  it('accepts the normalized wire form of a google-service-account credential', async () => {
+    const h = await harness();
+    const { manifest, digest, body } = policyManifest({
+      secrets: ['GOOGLE_SA'],
+      egress: {
+        allowedHosts: ['sheets.googleapis.com'],
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'GOOGLE_SA',
+            type: 'google-service-account',
+            header: '',
+            scheme: '',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+    });
+    const appId = await pushLive(h, 'usr_ok', manifest, digest, body);
+    expect(await h.store.appPolicy(appId)).not.toBeNull();
+  });
+
+  it('accepts the raw authored form of a google-service-account credential', async () => {
+    const h = await harness();
+    const { manifest, digest, body } = policyManifest({
+      secrets: ['GOOGLE_SA'],
+      egress: {
+        allowedHosts: ['sheets.googleapis.com'],
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'GOOGLE_SA',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          } as unknown as Manifest['egress']['credentials'][number],
+        ],
       },
     });
     const appId = await pushLive(h, 'usr_ok', manifest, digest, body);
@@ -227,18 +290,66 @@ describe('static egress preflight (fail closed)', () => {
     );
   });
 
-  it('rejects a credential whose type this floor does not implement', async () => {
-    await expectEgressRejected({
-      allowedHosts: [],
-      credentials: [
-        {
-          host: 'sheets.googleapis.com',
-          secret: 'STRIPE_KEY',
-          header: 'authorization',
-          scheme: 'Bearer',
-          type: 'google-service-account',
-        } as unknown as Manifest['egress']['credentials'][number],
-      ],
-    });
+  it('rejects an unknown credential type', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [
+          { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'aws-sigv4' } as unknown as Manifest['egress']['credentials'][number],
+        ],
+      },
+      { secrets: ['STRIPE_KEY'] },
+    );
+  });
+
+  it('rejects a google-service-account credential on a non-provider host', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [
+          {
+            host: 'evil.example.com',
+            secret: 'GOOGLE_SA',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          } as unknown as Manifest['egress']['credentials'][number],
+        ],
+      },
+      { secrets: ['GOOGLE_SA'] },
+    );
+  });
+
+  it('rejects a google-service-account credential on a wildcard host', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [
+          {
+            host: '*.googleapis.com',
+            secret: 'GOOGLE_SA',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          } as unknown as Manifest['egress']['credentials'][number],
+        ],
+      },
+      { secrets: ['GOOGLE_SA'] },
+    );
+  });
+
+  it('rejects a google-service-account credential with no scopes', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'GOOGLE_SA',
+            type: 'google-service-account',
+            scopes: [],
+          } as unknown as Manifest['egress']['credentials'][number],
+        ],
+      },
+      { secrets: ['GOOGLE_SA'] },
+    );
   });
 });

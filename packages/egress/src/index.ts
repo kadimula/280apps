@@ -20,8 +20,25 @@ export type {
 export type { Vault } from './vault.js';
 export { envVault, mapVault } from './vault.js';
 
-export type { CallLog, CallLogEvent, CallOutcome } from './calllog.js';
-export { consoleCallLog } from './calllog.js';
+export type {
+  CallLog,
+  CallLogEvent,
+  CallOutcome,
+  MintLog,
+  MintEvent,
+  MintOutcome,
+  EgressAuditEvent,
+} from './calllog.js';
+export { consoleCallLog, consoleMintLog } from './calllog.js';
+
+export type {
+  Minter,
+  MinterDeps,
+  MintInput,
+  MintResult,
+  MintFailureCategory,
+} from './minters.js';
+export { makeMinters, MintError } from './minters.js';
 
 export type { EgressHandlerOptions } from './handler.js';
 export { makeEgressHandler } from './handler.js';

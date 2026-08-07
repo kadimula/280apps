@@ -2,6 +2,9 @@
   "name": "280-appcontainer",
   "version": "0.0.0",
   "private": true,
+  "scripts": {
+    "smoke": "bash scripts/bundle-smoke.sh"
+  },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
     "zod": "^3.24.0"

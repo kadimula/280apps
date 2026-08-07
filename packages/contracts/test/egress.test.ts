@@ -12,6 +12,7 @@ import {
   normalizeEgressPolicy,
   normalizeScopes,
   validateEgressPolicy,
+  validateWireEgressPolicy,
   isEgressCredentialType,
   googleServiceAccountHostAllowed,
   isReservedBindingName,
@@ -266,6 +267,33 @@ describe('validateEgressPolicy', () => {
 
   it('rejects a secret that collides with a reserved binding name', () => {
     rejects({ credentials: [{ host: 'api.stripe.com', secret: 'EGRESS_POLICY' }] }, ['EGRESS_POLICY']);
+  });
+});
+
+describe('validateWireEgressPolicy accepts the normalized form the CLI actually sends', () => {
+  const wire = (egress: unknown): EgressPolicy =>
+    normalizeEgressPolicy(egressPolicySchema.parse(egress) as EgressPolicy);
+
+  it('accepts a normalized static credential that the raw gate rejects', () => {
+    const w = wire({ allowedHosts: [], credentials: [{ host: 'api.stripe.com', secret: 'K', header: 'authorization', scheme: 'Bearer' }] });
+    // normalizeEgressPolicy baked scopes:[] onto the header credential; the raw gate
+    // reads presence and rejects that, the wire gate restores it and accepts.
+    expect(() => validateEgressPolicy(w, ['K'])).toThrow();
+    expect(() => validateWireEgressPolicy(w, ['K'])).not.toThrow();
+  });
+
+  it('accepts a normalized google credential that the raw gate rejects', () => {
+    const w = wire({ allowedHosts: [], credentials: [google()] });
+    // normalizeEgressPolicy baked header:''/scheme:'' onto the typed credential.
+    expect(() => validateEgressPolicy(w, ['GSA'])).toThrow();
+    expect(() => validateWireEgressPolicy(w, ['GSA'])).not.toThrow();
+  });
+
+  it('still rejects security-relevant violations that survive normalization', () => {
+    const badHost = wire({ allowedHosts: [], credentials: [google({ host: 'api.stripe.com' })] });
+    expect(() => validateWireEgressPolicy(badHost, ['GSA'])).toThrow();
+    const undeclared = wire({ allowedHosts: [], credentials: [google()] });
+    expect(() => validateWireEgressPolicy(undeclared, [])).toThrow();
   });
 });
 

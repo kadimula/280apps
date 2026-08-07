@@ -11,11 +11,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { normalizeEgressPolicy, type EgressPolicy } from '@280/contracts';
+import { makeEgressHandler } from '../src/handler.js';
 import { registerEgress, applyEgressPolicy } from '../src/register.js';
 import { mapVault } from '../src/vault.js';
-import type { CallLogEvent } from '../src/calllog.js';
-import type { EgressContainerClass } from '../src/types.js';
+import type { CallLogEvent, MintEvent } from '../src/calllog.js';
+import type { EgressContainerClass, OutboundHandlerCtx } from '../src/types.js';
 import { FakeContainer } from './fake-container.js';
+import { makeServiceAccount, fakeUpstream, googleParams } from './google-fixtures.js';
 
 const SECRET_VALUE = 'sk_live_must_never_reach_the_container';
 
@@ -149,5 +151,77 @@ describe('exfiltration / egress fail-closed', () => {
 
     const bare = await container.outboundFetch(new Request('https://supabase.co/'));
     expect(bare.status).toBe(520);
+  });
+});
+
+// The minted-credential exfiltration guarantee. What 280 guarantees: the service
+// account private key and the minted access token never appear in the container's own
+// (app-observable) request, the returned platform error body, or any audit event. The
+// token is attached only to the outbound request to the Google API and is therefore
+// visible to Google — that is intended. What is explicitly OUTSIDE the absolute
+// guarantee: arbitrary provider RESPONSE content. Google (or any provider) could echo
+// a token or key material in a response body, which the app then sees; 280 does not
+// and cannot control that, so these tests deliberately do not assert on it.
+describe('exfiltration / minted Google credentials', () => {
+  function driveGoogle(secret: string, upstream = fakeUpstream()) {
+    const events: CallLogEvent[] = [];
+    const mints: MintEvent[] = [];
+    const handler = makeEgressHandler({
+      vaultFrom: () => mapVault({ GOOGLE_SA: secret }),
+      callLog: (e) => events.push(e),
+      mintLog: (e) => mints.push(e),
+      fetchImpl: upstream.fetchImpl,
+      clock: () => 1_000_000,
+    });
+    const ctx: OutboundHandlerCtx = { containerId: 'c', className: 'App280Container', params: googleParams() };
+    return { handler, events, mints, upstream, ctx };
+  }
+
+  it('the private key and minted token never reach the app request, the error, or any log', async () => {
+    const sa = await makeServiceAccount();
+    const ACCESS_TOKEN = 'ya29.super-secret-access-token';
+    const upstream = fakeUpstream({ defaultToken: { access_token: ACCESS_TOKEN, expires_in: 3600 } });
+    const { handler, events, mints, ctx } = driveGoogle(sa.json, upstream);
+
+    // The container issues a plain request with no auth header.
+    const containerReq = new Request('https://sheets.googleapis.com/v4/spreadsheets/x/values/A1');
+    expect(containerReq.headers.get('authorization')).toBeNull();
+
+    const res = await handler(containerReq, {}, ctx);
+    expect(res.status).toBe(200);
+
+    // The private key material is never in any audit event.
+    const logs = JSON.stringify([...events, ...mints]);
+    expect(logs).not.toContain(sa.privateKeyPem);
+    expect(logs).not.toContain('PRIVATE KEY');
+    // The minted access token is never in any audit event...
+    expect(logs).not.toContain(ACCESS_TOKEN);
+    // ...but the mint event still records safe, non-sensitive fields.
+    expect(mints[0]).toMatchObject({ kind: 'mint', secret: 'GOOGLE_SA', type: 'google-service-account' });
+
+    // The token is attached to the outbound Google request only (intended), and the
+    // container's original request object was never mutated to carry it.
+    expect(upstream.downstreamCalls[0]!.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
+    expect(containerReq.headers.get('authorization')).toBeNull();
+  });
+
+  it('a mint failure returns only the safe category, never the private key or assertion', async () => {
+    const sa = await makeServiceAccount();
+    // Force a token-endpoint rejection so the failure path is exercised end to end.
+    const upstream = fakeUpstream({
+      tokenResponse: () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
+    });
+    const { handler, events, mints, ctx } = driveGoogle(sa.json, upstream);
+
+    const res = await handler(new Request('https://sheets.googleapis.com/v4/x'), {}, ctx);
+    const body = await res.text();
+    expect(res.status).toBe(520);
+    expect(body).toBe('invalid_grant'); // fixed category, no values
+    expect(body).not.toContain('PRIVATE KEY');
+
+    const logs = JSON.stringify([...events, ...mints]);
+    expect(logs).not.toContain(sa.privateKeyPem);
+    expect(logs).not.toContain('PRIVATE KEY');
+    expect(mints.at(-1)).toMatchObject({ outcome: 'failed', reason: 'invalid_grant' });
   });
 });

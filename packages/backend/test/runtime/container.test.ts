@@ -69,7 +69,9 @@ describe('ContainerRuntime (over a builder)', () => {
     // Concretely: hosts lowercased, sorted, credential host folded into the allowlist.
     expect(builder.rollouts[0]!.egress).toEqual({
       allowedHosts: ['api.stripe.com', 'data.example.com'],
-      credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+      credentials: [
+        { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'header', header: 'authorization', scheme: 'Bearer', scopes: [] },
+      ],
     });
   });
 

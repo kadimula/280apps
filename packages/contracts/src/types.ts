@@ -5,7 +5,8 @@
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { errorSchema } from './errors.js';
+import { DeployCode, errorSchema } from './errors.js';
+import { DeployErr } from './deploy/error.js';
 
 // MaxBuildContextBytes caps the total size of an uploaded container build
 // context, the coarse guard preflight applies before any state changes.
@@ -73,17 +74,105 @@ export type BuildSpec = z.infer<typeof buildSpecSchema>;
 
 const ZERO_BUILD: BuildSpec = { builder: '', dockerfile: '', port: 0 };
 
+// The closed set of egress credential types. `header` is the static path: the
+// handler attaches a vault-held secret under an author-chosen header/scheme.
+// `google-service-account` is minted at the edge: the platform exchanges a
+// vault-held service-account JSON for a scoped Google access token. Absent type
+// means `header`, the back-compatible default.
+export const EGRESS_CREDENTIAL_TYPE = {
+  Header: 'header',
+  GoogleServiceAccount: 'google-service-account',
+} as const;
+export type EgressCredentialType = (typeof EGRESS_CREDENTIAL_TYPE)[keyof typeof EGRESS_CREDENTIAL_TYPE];
+
+export function isEgressCredentialType(t: string): t is EgressCredentialType {
+  return t === EGRESS_CREDENTIAL_TYPE.Header || t === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount;
+}
+
+// credentialType folds an absent/blank type to the default `header`. Callers still
+// pass the result through isEgressCredentialType to reject an unknown recognized type.
+export function credentialType(c: { type?: string }): string {
+  return (c.type ?? '').trim() || EGRESS_CREDENTIAL_TYPE.Header;
+}
+
+// A `google-service-account` credential may only target Google's API surface: the
+// exact apex `googleapis.com` or a label-boundary `*.googleapis.com` subdomain.
+// Wildcards, paths, and leading dots are rejected so a typed credential can never
+// be attached to an author-chosen host.
+export function googleServiceAccountHostAllowed(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === '' || h.startsWith('.') || h.includes('*') || h.includes('/')) return false;
+  return h === 'googleapis.com' || h.endsWith('.googleapis.com');
+}
+
+// Worker binding/var names the platform roll owns. A credential secret (which the
+// roll delivers as a Worker secret binding) must not collide with these or the
+// TWO80_ platform namespace, or it would clobber identity/egress/route wiring.
+// One exported set so CLI and backend validation agree. See registry-builder rollConfig.
+export const RESERVED_BINDING_NAMES: ReadonlySet<string> = new Set([
+  'APP',
+  'GATEWAY',
+  'EGRESS_POLICY',
+  'APP_ID',
+  'TWO80_ROUTE_POLICY',
+  'TWO80_APP_ID',
+  'TWO80_SCRIPT',
+  'TWO80_APP_HOST_SUFFIX',
+  'TWO80_APP_DOMAIN',
+  'TWO80_ID_ISSUER',
+  'TWO80_ID_SKEW_SECS',
+  'TWO80_FRAME_ANCESTORS',
+]);
+
+export function isReservedBindingName(name: string): boolean {
+  return RESERVED_BINDING_NAMES.has(name) || name.startsWith('TWO80_');
+}
+
+// Bounds on a typed credential's scope list, keeping line-based digest records and
+// the mint cache key finite.
+export const MAX_EGRESS_SCOPES = 50;
+export const MAX_EGRESS_SCOPE_BYTES = 4096;
+
+// normalizeScopes trims, drops empties, dedupes, and byte-sorts a scope list so
+// scope order and duplicate spelling collapse to one canonical form (one digest,
+// one cache key). It never throws; validateEgressPolicy enforces the reject rules.
+export function normalizeScopes(scopes: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const s of scopes) {
+    const t = s.trim();
+    if (t !== '') seen.add(t);
+  }
+  return [...seen].sort(byteCompare);
+}
+
+// Presence-preserving optional string: absent/null both fold to undefined, but an
+// explicit '' stays ''. This is what lets validation reject an author-supplied
+// transport field on a typed credential — a definite default would erase presence.
+const optStr = () =>
+  z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined);
+const optStrArr = () =>
+  z
+    .array(z.string())
+    .nullish()
+    .transform((v) => v ?? undefined);
+
 // EgressCredential binds one allowed host to a platform-held secret the outbound
 // handler attaches in-flight. Only the secret NAME travels on the wire; its value
-// lives in the Worker vault and never enters the app's container. header defaults
-// to authorization and scheme to Bearer, so `{host, secret}` covers bearer APIs;
-// a raw-value header (e.g. apikey) sets scheme to ''.
+// lives in the Worker vault and never enters the app's container. Fields carry raw
+// presence (see optStr): normalizeEgressPolicy applies the type-specific defaults
+// (header→authorization/Bearer, google→scopes) so a manifest can be validated for
+// author-supplied fields before those defaults are baked in.
 export const egressCredentialSchema = z
   .object({
     host: str(),
     secret: str(), // the secret's name; the value is resolved from the vault at call time
-    header: str('authorization'),
-    scheme: str('Bearer'),
+    type: optStr(),
+    header: optStr(),
+    scheme: optStr(),
+    scopes: optStrArr(),
   })
   .passthrough();
 export type EgressCredential = z.infer<typeof egressCredentialSchema>;
@@ -174,12 +263,35 @@ export type RouteGate = z.infer<typeof routeGateSchema>;
 // never open.
 export const OWNER_ONLY_GATE: RouteGate = { path: '', appRole: 'owner', role: '' };
 
+// normalizeCredential resolves one credential to its deterministic wire form: host
+// lowercased/trimmed, type defaulted, and the type-specific transport fields baked.
+// A `header` credential keeps its author header/scheme (defaulting to bearer-auth);
+// a `google-service-account` credential drops any transport fields to '' and carries
+// only normalized scopes. Total and non-throwing, so canonicalDigest can call it on
+// any manifest — validateEgressPolicy is the separate gate that rejects bad input.
+function normalizeCredential(c: EgressCredential): EgressCredential {
+  const host = c.host.trim().toLowerCase();
+  const type = credentialType(c);
+  if (type === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount) {
+    return { ...c, host, type, header: '', scheme: '', scopes: normalizeScopes(c.scopes ?? []) };
+  }
+  return {
+    ...c,
+    host,
+    type: EGRESS_CREDENTIAL_TYPE.Header,
+    header: c.header ?? 'authorization',
+    scheme: c.scheme ?? 'Bearer',
+    scopes: [],
+  };
+}
+
 // normalizeEgressPolicy is the one place the allowlist is derived, so the CLI that
 // builds the policy and the runtime that applies it never disagree: a credential's
-// host is implicitly allowed, hosts are lowercased/trimmed, and duplicates drop.
+// host is implicitly allowed, hosts are lowercased/trimmed, duplicates drop, and
+// each credential's transport fields are resolved to their canonical form.
 export function normalizeEgressPolicy(p: EgressPolicy): EgressPolicy {
   const credentials = p.credentials
-    .map((c) => ({ ...c, host: c.host.trim().toLowerCase() }))
+    .map(normalizeCredential)
     .filter((c) => c.host !== '');
   const hosts = new Set<string>();
   for (const h of p.allowedHosts) {
@@ -188,6 +300,107 @@ export function normalizeEgressPolicy(p: EgressPolicy): EgressPolicy {
   }
   for (const c of credentials) hosts.add(c.host);
   return { allowedHosts: [...hosts].sort(), credentials };
+}
+
+// validateEgressPolicy is the strict semantic gate the fake preflight and the
+// backend both run before a deploy changes state. It rejects everything
+// normalizeEgressPolicy is deliberately lenient about: unknown types, typed
+// credentials on non-provider or wildcard hosts, author-supplied transport fields
+// on a typed credential, scopes on a static credential, malformed or missing
+// scopes, duplicate credential hosts, and secrets that are undeclared or collide
+// with a reserved Worker binding. Throws PreflightRejected; never mints anything.
+export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: readonly string[]): void {
+  const declared = new Set(declaredSecrets);
+  const seenHosts = new Set<string>();
+  for (const c of policy.credentials ?? []) {
+    const host = c.host.trim().toLowerCase();
+    if (host === '') rejectEgress('an egress credential has an empty host', 'give every egress credential a "host"');
+    const type = credentialType(c);
+    if (!isEgressCredentialType(type)) {
+      rejectEgress(
+        `egress credential for ${host} has unknown type ${JSON.stringify(type)}`,
+        `set "type" to one of: ${EGRESS_CREDENTIAL_TYPE.Header}, ${EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount}`,
+      );
+    }
+    if (c.secret === '') {
+      rejectEgress(`egress credential for ${host} must name a secret`, 'add a "secret" naming a declared secret');
+    }
+    if (isReservedBindingName(c.secret)) {
+      rejectEgress(
+        `egress credential secret ${JSON.stringify(c.secret)} is a reserved platform binding name`,
+        'rename the secret so it does not collide with a platform Worker binding',
+      );
+    }
+    if (!declared.has(c.secret)) {
+      rejectEgress(
+        `egress credential for ${host} references secret ${JSON.stringify(c.secret)} which is not declared in secrets`,
+        'declare the secret in 280.json "secrets"',
+      );
+    }
+    if (seenHosts.has(host)) {
+      rejectEgress(`duplicate egress credential for host ${host}`, 'declare at most one credential per host');
+    }
+    seenHosts.add(host);
+
+    if (type === EGRESS_CREDENTIAL_TYPE.Header) {
+      if (c.scopes !== undefined) {
+        rejectEgress(`egress credential for ${host} is type header and must not carry scopes`, 'remove "scopes"');
+      }
+    } else {
+      if (c.header !== undefined || c.scheme !== undefined) {
+        rejectEgress(
+          `egress credential for ${host} is type ${type} and must not set header or scheme`,
+          'remove "header"/"scheme"; the platform mints and attaches the token',
+        );
+      }
+      if (!googleServiceAccountHostAllowed(host)) {
+        rejectEgress(
+          `egress credential host ${host} is not a valid ${type} host`,
+          'use an exact Google API host, e.g. sheets.googleapis.com',
+        );
+      }
+      validateScopesOrThrow(c.scopes, host, type);
+    }
+  }
+}
+
+function validateScopesOrThrow(raw: string[] | undefined, host: string, type: string): void {
+  for (const s of raw ?? []) {
+    const t = s.trim();
+    if (t === '') rejectEgress(`egress credential for ${host} has an empty scope`, 'remove blank scope entries');
+    if (hasWhitespaceOrControl(t)) {
+      rejectEgress(
+        `egress credential for ${host} has a scope with whitespace or control characters`,
+        'each scope must be a single token with no spaces',
+      );
+    }
+  }
+  const norm = normalizeScopes(raw ?? []);
+  if (norm.length === 0) {
+    rejectEgress(`egress credential for ${host} is type ${type} and requires at least one scope`, 'add a "scopes" list');
+  }
+  if (norm.length > MAX_EGRESS_SCOPES) {
+    rejectEgress(`egress credential for ${host} declares more than ${MAX_EGRESS_SCOPES} scopes`, 'reduce the scope list');
+  }
+  const bytes = norm.reduce((n, s) => n + Buffer.byteLength(s, 'utf8'), 0);
+  if (bytes > MAX_EGRESS_SCOPE_BYTES) {
+    rejectEgress(`egress credential for ${host} scopes exceed ${MAX_EGRESS_SCOPE_BYTES} bytes`, 'reduce the scope list');
+  }
+}
+
+// True if any codepoint is ASCII whitespace or a control character (<= 0x20 or
+// 0x7f). A scope carrying one would make the newline-delimited digest record and
+// the OAuth space-separated scope string ambiguous.
+function hasWhitespaceOrControl(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c <= 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
+
+function rejectEgress(message: string, fix: string): never {
+  throw new DeployErr({ code: DeployCode.PreflightRejected, message, fix });
 }
 
 // Manifest is a container build-context descriptor: the build recipe plus every
@@ -471,7 +684,14 @@ export function canonicalDigest(m: Manifest): Digest {
   const eg = normalizeEgressPolicy(m.egress ?? ZERO_EGRESS);
   for (const host of eg.allowedHosts) h.update(`egress-host:${host}\n`);
   for (const c of [...eg.credentials].sort((a, b) => byteCompare(a.host, b.host))) {
+    // The static line is byte-identical to the pre-typed digest: a `header`
+    // credential emits only this. Typed credentials add records only on departure
+    // from the default — one type line, then one line per scope (never a joined
+    // list, since commas are legal in scope URIs) — so static manifests are unchanged.
+    const type = credentialType(c);
     h.update(`egress-cred:${c.host}:${c.header}:${c.scheme}:${c.secret}\n`);
+    if (type !== EGRESS_CREDENTIAL_TYPE.Header) h.update(`egress-cred-type:${c.host}:${type}\n`);
+    for (const scope of c.scopes ?? []) h.update(`egress-cred-scope:${c.host}:${scope}\n`);
   }
   // Access mode, feature roles, route gates, and secret names are the app's trust
   // boundary, so a change to any must produce a new deploy id (and re-register the

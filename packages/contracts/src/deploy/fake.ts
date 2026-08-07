@@ -13,6 +13,7 @@ import {
   digestBytes,
   manifestBlobs,
   canonicalDigest,
+  validateEgressPolicy,
   type App,
   type Digest,
   type Identity,
@@ -383,6 +384,9 @@ function preflight(m: Manifest): void {
   if (total > MAX_BUILD_CONTEXT_BYTES) {
     reject(`build context is ${total} bytes; the limit is ${MAX_BUILD_CONTEXT_BYTES}`);
   }
+  // Same typed-egress gate the backend runs: validateEgressPolicy throws its own
+  // PreflightRejected DeployErr, so the fake rejects the identical policy errors.
+  validateEgressPolicy(m.egress ?? { allowedHosts: [], credentials: [] }, m.secrets ?? []);
 }
 
 // quote mirrors Go's %q on a string: double-quoted, with the escaping Go's

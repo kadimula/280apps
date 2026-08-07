@@ -203,8 +203,9 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
   //               legacy wildcard so it wins during migration.
   //   - services: the GATEWAY service binding to the central gateway's GatewayRPC
   //               (mint/jwks), the only channel the middleware uses.
-  //   - vars:     the baked route policy plus the identity vars the middleware reads
-  //               (app id/script, host suffix/domain, issuer, edge skew).
+  //   - vars:     the baked route policy, the egress policy the container boundary
+  //               enforces, plus the identity vars the middleware reads (app
+  //               id/script, host suffix/domain, issuer, edge skew).
   protected rollConfig(job: RolloutJob, image: string): Record<string, unknown> {
     const script = job.app.script;
     const host = `${script}${this.hostSuffix}.${this.appDomain}`;
@@ -229,6 +230,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
       vars: {
         TWO80_ROUTE_POLICY: JSON.stringify(job.policy),
+        EGRESS_POLICY: JSON.stringify(job.egress),
         TWO80_APP_ID: job.app.id,
         TWO80_SCRIPT: script,
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,

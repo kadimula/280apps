@@ -10,7 +10,14 @@
 // Build and rollout are separate so a completed image can wait for the owner's
 // secret configuration without exposing a new serving version.
 
-import { DeployCode, DeployErr, appPolicyFromManifest, type BuildSpec } from '@280/contracts';
+import {
+  DeployCode,
+  DeployErr,
+  appPolicyFromManifest,
+  normalizeEgressPolicy,
+  type BuildSpec,
+  type EgressPolicy,
+} from '@280/contracts';
 import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult, SecretDelivery } from '../../seams.js';
 
 // RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
@@ -36,6 +43,10 @@ export interface RolloutJob {
   // The app's trust boundary (access + routes + roles + secret names), baked into
   // the per-app Worker so its middleware can enforce the route gate locally.
   policy: RolloutPolicy;
+  // The app's outbound contract (allowed hosts + per-host credential wiring),
+  // normalized, baked into the per-app Worker (EGRESS_POLICY) so the container's
+  // fail-closed egress boundary and in-flight credential injection match 280.json.
+  egress: EgressPolicy;
 }
 
 // RolloutResult is what a successful rollout reports back. imageRef is the pushed
@@ -89,6 +100,7 @@ export class ContainerRuntime implements RuntimeSeam {
       build: act.manifest.build,
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
       policy: appPolicyFromManifest(act.manifest),
+      egress: normalizeEgressPolicy(act.manifest.egress ?? { allowedHosts: [], credentials: [] }),
     };
   }
 

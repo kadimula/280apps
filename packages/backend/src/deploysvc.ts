@@ -453,6 +453,88 @@ export function preflight(m: Manifest): void {
   // than register a policy the gateway would misread. The CLI validates the human
   // 280.json too; this is the server-side backstop that does not trust the client.
   preflightPolicy(m.access ?? '', m.roles ?? [], m.routes ?? [], reject);
+
+  // The egress policy is the app's outbound trust boundary; a malformed one must
+  // fail closed here rather than reach a per-app Worker binding or the container gate.
+  preflightEgress(m.egress ?? { allowedHosts: [], credentials: [] }, m.secrets ?? [], reject);
+}
+
+// RESERVED_BINDINGS are the Worker binding and var names the roll owns
+// (registry-builder rollConfig). A declared secret is delivered into the same
+// Worker binding namespace, so a secret whose name collides with one of these would
+// silently shadow a platform binding — reject it at preflight.
+export const RESERVED_BINDINGS: ReadonlySet<string> = new Set([
+  'APP',
+  'GATEWAY',
+  'EGRESS_POLICY',
+  'TWO80_ROUTE_POLICY',
+  'TWO80_APP_ID',
+  'TWO80_SCRIPT',
+  'TWO80_APP_HOST_SUFFIX',
+  'TWO80_APP_DOMAIN',
+  'TWO80_ID_ISSUER',
+  'TWO80_ID_SKEW_SECS',
+  'TWO80_FRAME_ANCESTORS',
+]);
+
+// A hostname the egress allowlist can carry: DNS labels, optionally a single
+// leading "*." wildcard (the container library's subdomain glob). No scheme, port,
+// path, or whitespace — those would never match the container's host check.
+const EGRESS_HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+// A legal HTTP header field name (RFC 7230 token).
+const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+// Credential types this platform floor accepts. Absent/'' means the static header
+// form; any other type is a typed credential a later handler version owns and this
+// floor cannot inject, so it fails closed here (matches the runtime type guard).
+const SUPPORTED_CRED_TYPES: ReadonlySet<string> = new Set(['', 'header']);
+
+// preflightEgress rejects a static egress policy the platform cannot safely bake
+// into a per-app Worker: a malformed host, a duplicate credentialed host (runtime
+// dispatch would pick one arbitrarily), an illegal header, a credential with no
+// declared secret, a secret name colliding with a reserved binding, or a credential
+// type this floor does not implement. Type is read defensively off the wire object
+// because the typed-credential contract is owned by a separate workstream.
+function preflightEgress(
+  egress: { allowedHosts?: string[]; credentials?: Array<Record<string, unknown>> },
+  secrets: string[],
+  reject: (why: string) => never,
+): void {
+  for (const raw of egress.allowedHosts ?? []) {
+    const host = String(raw ?? '').trim().toLowerCase();
+    if (host !== '' && !EGRESS_HOST_RE.test(host)) {
+      reject(`egress host "${raw}" is not a valid hostname`);
+    }
+  }
+
+  const declared = new Set(secrets.filter((s) => s !== ''));
+  const seenHosts = new Set<string>();
+  for (const cred of egress.credentials ?? []) {
+    const host = String(cred.host ?? '').trim().toLowerCase();
+    if (host === '' || !EGRESS_HOST_RE.test(host)) {
+      reject(`egress credential host "${cred.host ?? ''}" is not a valid hostname`);
+    }
+    if (seenHosts.has(host)) reject(`egress declares two credentials for host "${host}"`);
+    seenHosts.add(host);
+
+    const type = String(cred.type ?? '');
+    if (!SUPPORTED_CRED_TYPES.has(type)) {
+      reject(`egress credential for "${host}" has unsupported type "${type}"`);
+    }
+
+    const header = String(cred.header ?? '');
+    if (header !== '' && !HEADER_NAME_RE.test(header)) {
+      reject(`egress credential for "${host}" sets an illegal header name "${header}"`);
+    }
+
+    const secret = String(cred.secret ?? '');
+    if (secret === '') reject(`egress credential for "${host}" names no secret`);
+    if (RESERVED_BINDINGS.has(secret)) {
+      reject(`egress credential secret "${secret}" is a reserved platform binding name`);
+    }
+    if (!declared.has(secret)) {
+      reject(`egress credential for "${host}" names secret "${secret}", which is not in this app's declared secrets`);
+    }
+  }
 }
 
 // preflightPolicy rejects an access mode the platform does not enforce, a route with

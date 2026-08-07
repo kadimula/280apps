@@ -41,7 +41,7 @@ export default {
     // authorized request, so unauthenticated visitors do not start the container.
     const guarded = {
       fetch: async (req) => {
-        await applyEgressPolicy(container, readEgressPolicy(env), env.APP_ID || '');
+        await applyEgressPolicy(container, readEgressPolicy(env), env.TWO80_APP_ID || '');
         return container.fetch(req);
       },
     };

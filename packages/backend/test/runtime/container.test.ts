@@ -3,7 +3,7 @@
 // are proven in depot-builder.test.ts.
 
 import { describe, it, expect } from 'vitest';
-import { DeployErr, State, digestBytes, type Digest, type Manifest } from '@280/contracts';
+import { DeployErr, State, digestBytes, normalizeEgressPolicy, type Digest, type Manifest } from '@280/contracts';
 import type { Activation, RuntimeApp, SecretDelivery } from '../../src/seams.js';
 import { deliveryFailed } from '../../src/secret-delivery.js';
 import { ContainerRuntime, FakeBuilder } from '../../src/runtime/container/index.js';
@@ -51,6 +51,34 @@ describe('ContainerRuntime (over a builder)', () => {
     expect(builder.rollouts).toHaveLength(1);
     expect(builder.rollouts[0]!.files.map((f) => f.path).sort()).toEqual(['Dockerfile', 'server.js']);
     expect(builder.rollouts[0]!.build.port).toBe(8080);
+  });
+
+  it('carries the manifest egress policy into the rollout job, normalized', async () => {
+    const builder = new FakeBuilder();
+    const rt = new ContainerRuntime(builder);
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    // Deliberately un-normalized: mixed case, a stray un-credentialed allow entry,
+    // and a credentialed host absent from allowedHosts. job() must normalize it.
+    act.manifest.egress = {
+      allowedHosts: ['Data.Example.com'],
+      credentials: [{ host: 'API.Stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+    };
+    await rt.activate(act);
+    expect(builder.rollouts).toHaveLength(1);
+    expect(builder.rollouts[0]!.egress).toEqual(normalizeEgressPolicy(act.manifest.egress));
+    // Concretely: hosts lowercased, sorted, credential host folded into the allowlist.
+    expect(builder.rollouts[0]!.egress).toEqual({
+      allowedHosts: ['api.stripe.com', 'data.example.com'],
+      credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+    });
+  });
+
+  it('defaults to an empty egress policy when the manifest declares none', async () => {
+    const builder = new FakeBuilder();
+    const rt = new ContainerRuntime(builder);
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    await rt.activate(act);
+    expect(builder.rollouts[0]!.egress).toEqual({ allowedHosts: [], credentials: [] });
   });
 
   it('surfaces a builder failure as a DeployErr through the seam', async () => {

@@ -1,10 +1,16 @@
 // The outbound handler: it runs in the Workers runtime (outside the container
 // sandbox), attaches the app's credential in-flight, logs the call, and forwards.
 // The container makes a plain request with no auth; this handler adds it from the
-// vault so the secret is never in the container's image, env, or code.
+// vault so the secret is never in the container's image, env, or code. The credential
+// is produced by a minter chosen from a closed type registry: `header` reproduces the
+// original static injection, `google-service-account` mints a scoped token. An unknown
+// type fails closed (520) and never falls through to static injection.
 
-import type { CallLog } from './calllog.js';
-import { consoleCallLog } from './calllog.js';
+import { credentialType, EGRESS_CREDENTIAL_TYPE } from '@280/contracts';
+import type { CallLog, MintLog } from './calllog.js';
+import { consoleCallLog, consoleMintLog } from './calllog.js';
+import type { Minter, MintInput } from './minters.js';
+import { makeMinters, MintError } from './minters.js';
 import type { EgressCallParams, OutboundHandler } from './types.js';
 import type { Vault } from './vault.js';
 import { envVault } from './vault.js';
@@ -21,9 +27,15 @@ export interface EgressHandlerOptions {
   vaultFrom?: (env: unknown) => Vault;
   // The audit sink; defaults to a structured log line.
   callLog?: CallLog;
+  // The mint audit sink; defaults to a structured log line.
+  mintLog?: MintLog;
   // The fetch used to reach upstream; defaults to the global fetch. Injected in
   // tests so no real network is touched.
   fetchImpl?: typeof fetch;
+  // The clock, injected for deterministic cache/expiry tests. Defaults to Date.now.
+  clock?: () => number;
+  // WebCrypto, injected in tests. Defaults to the runtime's global crypto.
+  crypto?: Crypto;
 }
 
 function asParams(raw: unknown): EgressCallParams {
@@ -32,18 +44,41 @@ function asParams(raw: unknown): EgressCallParams {
     appId: p.appId ?? '',
     host: p.host ?? '',
     secret: p.secret ?? '',
+    type: p.type ?? '',
     header: p.header || 'authorization',
     scheme: p.scheme ?? '',
+    scopes: Array.isArray(p.scopes) ? p.scopes : [],
+  };
+}
+
+function mintInput(params: EgressCallParams, value: string): MintInput {
+  return {
+    appId: params.appId,
+    secret: params.secret,
+    host: params.host,
+    scopes: params.scopes,
+    header: params.header,
+    scheme: params.scheme,
+    value,
   };
 }
 
 // makeEgressHandler builds the single named handler registered on the container
-// class. It is generic: the per-host secret name and header wiring arrive as
-// ctx.params, so one handler serves every allowlisted host of every app.
+// class. It is generic: the per-host secret name, credential type, and header/scope
+// wiring arrive as ctx.params, so one handler serves every allowlisted host of every
+// app. The minter registry is per-isolate (built once here), so the token cache lives
+// for the isolate's lifetime.
 export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHandler {
   const vaultFrom = opts.vaultFrom ?? envVault;
   const callLog = opts.callLog ?? consoleCallLog;
+  const mintLog = opts.mintLog ?? consoleMintLog;
   const doFetch = opts.fetchImpl ?? fetch;
+  const clock = opts.clock ?? (() => Date.now());
+  const minters = makeMinters({
+    fetchImpl: doFetch,
+    now: clock,
+    crypto: opts.crypto ?? crypto,
+  });
 
   return async (req, env, ctx) => {
     const params = asParams(ctx.params);
@@ -51,16 +86,22 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
     const host = params.host || url.hostname;
     const method = req.method;
     const path = url.pathname; // query intentionally omitted from the audit trail
-    const now = Date.now();
+    const now = clock();
+    const type = credentialType(params);
+    const minted = type !== EGRESS_CREDENTIAL_TYPE.Header;
 
     let outReq = req;
     let credentialAttached = false;
+    let activeMinter: Minter | undefined;
+    let activeCacheKey: string | undefined;
+
     if (params.secret) {
       const value = vaultFrom(env).get(params.secret);
       if (!value) {
         // Fail closed: the app declared a credentialed host but the vault has no
         // value. Do not forward an un-credentialed request to an authed API.
         callLog({
+          kind: 'request',
           appId: params.appId,
           host,
           method,
@@ -74,15 +115,53 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
         });
         return new Response(DISALLOWED, { status: DISALLOWED_STATUS });
       }
+
+      const minter = minters[type];
+      const input = mintInput(params, value);
+      if (!minter) {
+        return failMint(params, host, method, path, now, 'mint-failed', callLog, mintLog);
+      }
+
+      let result;
+      try {
+        result = await minter.mint(input);
+      } catch (err) {
+        const reason = err instanceof MintError ? err.category : 'mint-failed';
+        return failMint(params, host, method, path, now, reason, callLog, mintLog, minted);
+      }
+
+      if (minted) {
+        mintLog({
+          kind: 'mint',
+          appId: params.appId,
+          secret: params.secret,
+          type,
+          scopes: params.scopes,
+          expiresAtMs: result.expiresAtMs,
+          outcome: result.cached ? 'cache' : 'minted',
+          reason: '',
+          at: now,
+        });
+        activeMinter = minter;
+        activeCacheKey = result.cacheKey;
+      }
+
       const headers = new Headers(req.headers);
-      headers.set(params.header, params.scheme ? `${params.scheme} ${value}` : value);
+      headers.set(result.header, result.value);
       outReq = new Request(req, { headers });
       credentialAttached = true;
     }
 
     try {
       const res = await doFetch(outReq);
+      // A downstream 401 means the minted token is stale/revoked: evict so the next
+      // call re-mints. (Google may keep already-minted tokens valid after key
+      // deletion, so this converges only on the next call, not instantly.)
+      if (res.status === 401 && activeMinter?.invalidate && activeCacheKey) {
+        activeMinter.invalidate(activeCacheKey);
+      }
       callLog({
+        kind: 'request',
         appId: params.appId,
         host,
         method,
@@ -97,6 +176,7 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
       return res;
     } catch (err) {
       callLog({
+        kind: 'request',
         appId: params.appId,
         host,
         method,
@@ -111,4 +191,46 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
       throw err;
     }
   };
+}
+
+// Emit the safe failure audit and return the fixed 520. The 520 body carries only the
+// value-free category; no assertion, key, token, or provider response is ever in it.
+function failMint(
+  params: EgressCallParams,
+  host: string,
+  method: string,
+  path: string,
+  now: number,
+  reason: string,
+  callLog: CallLog,
+  mintLog: MintLog,
+  emitMintEvent = true,
+): Response {
+  if (emitMintEvent) {
+    mintLog({
+      kind: 'mint',
+      appId: params.appId,
+      secret: params.secret,
+      type: params.type,
+      scopes: params.scopes,
+      expiresAtMs: 0,
+      outcome: 'failed',
+      reason,
+      at: now,
+    });
+  }
+  callLog({
+    kind: 'request',
+    appId: params.appId,
+    host,
+    method,
+    path,
+    status: 0,
+    credentialAttached: false,
+    secret: params.secret,
+    outcome: 'denied',
+    reason,
+    at: now,
+  });
+  return new Response(reason, { status: DISALLOWED_STATUS });
 }

@@ -43,12 +43,16 @@ export interface EgressContainerClass {
   outboundHandlers?: Record<string, OutboundHandler>;
 }
 
-// The per-host config bound as ctx.params: only names and header wiring, no
-// secret values. Kept flat and JSON-serializable for the DO boundary.
+// The per-host config bound as ctx.params: only names, the credential type, and
+// header/scope wiring — no secret values. Kept flat and JSON-serializable for the DO
+// boundary. `type` selects the minter ('' means the static header path); `scopes`
+// are the deploy-declared OAuth scopes for a minted type.
 export interface EgressCallParams {
   appId: string;
   host: string;
   secret: string; // secret NAME, '' when the host is allowlisted without a credential
+  type: string; // credential type; '' or 'header' is the static path
   header: string;
   scheme: string;
+  scopes: string[];
 }

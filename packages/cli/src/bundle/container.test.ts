@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MANIFEST_KIND_CONTAINER } from '@280/contracts';
-import { buildNextContainer, APP_PORT } from './container.js';
+import { buildNextContainer, egressDisclosure, APP_PORT } from './container.js';
 import { PreflightError } from './walk.js';
 
 function write(path: string, body: string): void {
@@ -179,6 +179,7 @@ describe('280.json egress allowlist', () => {
     const root = nextProject({
       '280.json': JSON.stringify({
         name: 'demo',
+        secrets: ['STRIPE_KEY'],
         egress: {
           allow: ['data.example.com'],
           credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }],
@@ -212,5 +213,55 @@ describe('280.json egress allowlist', () => {
   it('rejects invalid 280.json before deploy', () => {
     const root = nextProject({ '280.json': '{ not json' });
     expect(() => buildNextContainer(root)).toThrow(PreflightError);
+  });
+
+  it('discloses host, type, and normalized scopes per credential without any secret value', () => {
+    const root = nextProject({
+      '280.json': JSON.stringify({
+        name: 'demo',
+        secrets: ['STRIPE_KEY', 'SHEETS_SA'],
+        egress: {
+          credentials: [
+            { host: 'api.stripe.com', secret: 'STRIPE_KEY' },
+            {
+              host: 'sheets.googleapis.com',
+              secret: 'SHEETS_SA',
+              type: 'google-service-account',
+              scopes: [
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/drive.readonly',
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const notes = buildNextContainer(root).notes.join('\n');
+    expect(notes).toContain('api.stripe.com  →  header via secret STRIPE_KEY');
+    expect(notes).toContain(
+      'sheets.googleapis.com  →  google-service-account via secret SHEETS_SA, scopes: https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets',
+    );
+    // The disclosure names the secret but never carries its value or a header/scheme
+    // for the minted typed token.
+    expect(notes).not.toContain('Bearer');
+  });
+});
+
+describe('egressDisclosure', () => {
+  it('returns nothing when there are no credentials', () => {
+    expect(egressDisclosure({ allowedHosts: ['data.example.com'], credentials: [] })).toEqual([]);
+  });
+
+  it('omits scopes for a header credential and reports its type', () => {
+    const lines = egressDisclosure({
+      allowedHosts: ['api.stripe.com'],
+      credentials: [
+        { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'header', header: 'authorization', scheme: 'Bearer', scopes: [] },
+      ],
+    });
+    expect(lines).toEqual([
+      'egress credentials this push will configure (secret values stay in the vault):',
+      '  api.stripe.com  →  header via secret STRIPE_KEY',
+    ]);
   });
 });

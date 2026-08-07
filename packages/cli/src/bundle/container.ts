@@ -20,6 +20,7 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
+import { credentialType, EGRESS_CREDENTIAL_TYPE, type EgressPolicy } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { fail, fileExists, walkContext } from './walk.js';
@@ -248,6 +249,7 @@ function assemble(
   if (policy.egress.allowedHosts.length) {
     extra.push(`egress allowlist: ${policy.egress.allowedHosts.join(', ')} (everything else is blocked)`);
   }
+  extra.push(...egressDisclosure(policy.egress));
   // The route → gate diff, so the builder sees exactly what each route requires
   // (and which fall through to Owner-only) in the same push. Route discovery reads
   // Next.js conventions from the context file paths, so it works whether 280
@@ -255,6 +257,26 @@ function assemble(
   const diff = routeGateDiff(discoverNextRoutes(files.map((f) => f.path)), policy.routes);
 
   return { manifest, content, notes: [...notes, ...extra, ...diff] };
+}
+
+// egressDisclosure is the prospective policy summary the push prints: for each
+// credential, the exact host, its credential type, and (for a minted typed token)
+// the normalized scopes this push will configure. It discloses what the platform
+// will attach, not consent; only the secret NAME appears — the value never leaves
+// the vault and never enters this output. The policy is already normalized, so
+// scopes are deduped and byte-sorted here.
+export function egressDisclosure(egress: EgressPolicy): string[] {
+  if (egress.credentials.length === 0) return [];
+  const lines = ['egress credentials this push will configure (secret values stay in the vault):'];
+  for (const c of egress.credentials) {
+    const type = credentialType(c);
+    const scopes =
+      type === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount && c.scopes?.length
+        ? `, scopes: ${c.scopes.join(' ')}`
+        : '';
+    lines.push(`  ${c.host}  →  ${type} via secret ${c.secret}${scopes}`);
+  }
+  return lines;
 }
 
 // buildNextContainer assembles the context for a Next.js project.

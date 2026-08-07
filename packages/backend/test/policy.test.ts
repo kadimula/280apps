@@ -148,3 +148,97 @@ describe('policy preflight (fail closed)', () => {
     await expectRejected({ routes: [route('/x', { appRole: 'superuser' })] });
   });
 });
+
+describe('static egress preflight (fail closed)', () => {
+  async function expectEgressRejected(egress: Manifest['egress'], over: Partial<Manifest> = {}): Promise<void> {
+    const h = await harness();
+    const { manifest } = policyManifest({ egress, ...over });
+    await expect(h.platform.for('usr_x').sync({ identity: ident(), manifest })).rejects.toThrow();
+  }
+
+  it('accepts a well-formed static credential naming a declared secret', async () => {
+    const h = await harness();
+    const { manifest, digest, body } = policyManifest({
+      secrets: ['STRIPE_KEY'],
+      egress: {
+        allowedHosts: ['api.stripe.com'],
+        credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+      },
+    });
+    const appId = await pushLive(h, 'usr_ok', manifest, digest, body);
+    expect(await h.store.appPolicy(appId)).not.toBeNull();
+  });
+
+  it('rejects a malformed allowlist host', async () => {
+    await expectEgressRejected({ allowedHosts: ['https://api.stripe.com/v1'], credentials: [] });
+  });
+
+  it('rejects a malformed credential host', async () => {
+    await expectEgressRejected({
+      allowedHosts: [],
+      credentials: [{ host: 'not a host', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+    });
+  });
+
+  it('rejects two credentials for the same host', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [
+          { host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' },
+          { host: 'api.stripe.com', secret: 'OTHER_KEY', header: 'x-api-key', scheme: '' },
+        ],
+      },
+      { secrets: ['STRIPE_KEY', 'OTHER_KEY'] },
+    );
+  });
+
+  it('rejects an illegal header name', async () => {
+    await expectEgressRejected({
+      allowedHosts: [],
+      credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'bad header', scheme: 'Bearer' }],
+    });
+  });
+
+  it('rejects a credential with no secret', async () => {
+    await expectEgressRejected({
+      allowedHosts: [],
+      credentials: [{ host: 'api.stripe.com', secret: '', header: 'authorization', scheme: 'Bearer' }],
+    });
+  });
+
+  it('rejects a credential naming an undeclared secret', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [{ host: 'api.stripe.com', secret: 'GHOST_KEY', header: 'authorization', scheme: 'Bearer' }],
+      },
+      { secrets: ['STRIPE_KEY'] },
+    );
+  });
+
+  it('rejects a secret whose name collides with a reserved platform binding', async () => {
+    await expectEgressRejected(
+      {
+        allowedHosts: [],
+        credentials: [{ host: 'api.stripe.com', secret: 'EGRESS_POLICY', header: 'authorization', scheme: 'Bearer' }],
+      },
+      { secrets: ['EGRESS_POLICY'] },
+    );
+  });
+
+  it('rejects a credential whose type this floor does not implement', async () => {
+    await expectEgressRejected({
+      allowedHosts: [],
+      credentials: [
+        {
+          host: 'sheets.googleapis.com',
+          secret: 'STRIPE_KEY',
+          header: 'authorization',
+          scheme: 'Bearer',
+          type: 'google-service-account',
+        } as unknown as Manifest['egress']['credentials'][number],
+      ],
+    });
+  });
+});

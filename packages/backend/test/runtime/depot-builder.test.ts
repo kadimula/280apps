@@ -45,13 +45,17 @@ function activation(files: Record<string, string>): { act: Activation } {
   };
 }
 
-function rolloutOf(act: Activation, over: { policy?: Record<string, unknown> } = {}) {
+function rolloutOf(
+  act: Activation,
+  over: { policy?: Record<string, unknown>; egress?: Record<string, unknown> } = {},
+) {
   return {
     app: act.app,
     deployId: act.deployId,
     build: act.manifest.build,
     files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
     policy: over.policy ?? { access: 'invited', roles: [], routes: [], secrets: [] },
+    egress: over.egress ?? { allowedHosts: [], credentials: [] },
   };
 }
 
@@ -273,6 +277,60 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
     expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://console.280apps.com');
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('writes the exact normalized egress policy to EGRESS_POLICY, keyed to the emitted app id', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return { code: 0, output: '' };
+    };
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({
+      accountId: 'acct1',
+      apiToken: 't',
+      depotToken: 'd',
+      projectId: 'p',
+      workerEntry: 'harness.js',
+      workdir,
+      exec,
+      api,
+      fetch: credsFetch(),
+    });
+    // A policy the roll must bake verbatim: an allowlisted (credential-less) host and
+    // a credentialed host. This is already normalized (sorted hosts, cred host folded
+    // into allowedHosts), so it must survive to the var byte for byte.
+    const egress = {
+      allowedHosts: ['api.stripe.com', 'data.example.com'],
+      credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
+    };
+    const vars = () => (rollConfig.vars as Record<string, string>);
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { egress }));
+
+    expect(vars().EGRESS_POLICY).toBe(JSON.stringify(egress));
+    // The egress Worker reads env.TWO80_APP_ID for its audit app id; the roll must
+    // emit exactly that var so audit events are not keyed to an empty id.
+    expect(vars().TWO80_APP_ID).toBe('app_1');
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('defaults EGRESS_POLICY to an empty default-deny policy when the app declares none', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return { code: 0, output: '' };
+    };
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    expect((rollConfig.vars as Record<string, string>).EGRESS_POLICY).toBe('{"allowedHosts":[],"credentials":[]}');
     await rm(workdir, { recursive: true, force: true });
   });
 

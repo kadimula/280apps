@@ -12,7 +12,7 @@ import {
 } from "@/lib/variables";
 
 export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; slug: string }; autoOpen?: boolean }) {
-  const [open, setOpen] = useState(autoOpen);
+  const [open, setOpen] = useState(false);
   const [variables, setVariables] = useState<AppVariable[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
@@ -38,8 +38,11 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
     refresh();
   }
 
+  // Open from a client-only effect, never from initial state: seeding open from
+  // autoOpen would evaluate createPortal(..., document.body) during SSR, where
+  // document is undefined, and throw at render time.
   useEffect(() => {
-    if (autoOpen) queueMicrotask(() => void refresh());
+    if (autoOpen) queueMicrotask(() => { setOpen(true); void refresh(); });
   }, [autoOpen, refresh]);
 
   function close() {

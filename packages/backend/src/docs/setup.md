@@ -79,11 +79,11 @@ After they confirm, push again.
 
 ## 6. Secret values (also the user's browser)
 
-When push says it is waiting on secret values, relay the link and wait. Never ask for the values yourself.
+When push exits reporting missing credentials, relay the link and ask the user to enter the values. Never ask for the values yourself.
 
 > Enter values for STRIPE_KEY at: <url>
 
-Push finishes on its own once they are saved. If it timed out waiting, push again.
+Push does not wait: once the user confirms the values are saved, run `two80 push` again to resume.
 
 ## 7. Verify, then hand over the link
 

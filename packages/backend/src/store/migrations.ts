@@ -185,6 +185,10 @@ export function migrations(schema: string): string[] {
     // The dashboard's general-access dial: '' = no override (280.json's access
     // applies); else a valid AppAccess that wins durably across redeploys.
     `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS access_override TEXT NOT NULL DEFAULT ''`,
+    // The live deploy's declared config (non-secret env the app reads): a JSON array
+    // of {name,value,sensitive}. Lets the store prune stale dashboard-entered config
+    // values and the dashboard know which config names to prompt for. Defaults ''.
+    `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS config TEXT NOT NULL DEFAULT ''`,
 
     `CREATE TABLE IF NOT EXISTS ${t('app_secrets')} (
        app_id   TEXT NOT NULL,
@@ -192,8 +196,12 @@ export function migrations(schema: string): string[] {
        envelope TEXT NOT NULL,
        set_by   TEXT NOT NULL,
        set_at   BIGINT NOT NULL,
+       kind     TEXT NOT NULL DEFAULT 'secret',
        PRIMARY KEY (app_id, name)
      )`,
+    // Discriminates the config channel (a non-secret value the app reads) from the
+    // secret channel that shares this encrypted store. Existing rows are secrets.
+    `ALTER TABLE ${t('app_secrets')} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'secret'`,
 
     // Owner-authorized dashboard preview grants, modeled on device_codes: only the
     // opaque token's hash is stored. The control plane inserts; the gateway reads

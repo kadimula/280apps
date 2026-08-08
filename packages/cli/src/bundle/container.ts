@@ -20,7 +20,7 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
-import { credentialType, EGRESS_CREDENTIAL_TYPE, type EgressPolicy } from '@280/contracts';
+import { credentialType, EGRESS_CREDENTIAL_TYPE, type ConfigEntry, type EgressPolicy } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { fail, fileExists, walkContext } from './walk.js';
@@ -31,6 +31,7 @@ const EMPTY_POLICY: Policy280 = {
   roles: [],
   routes: [],
   secrets: [],
+  config: [],
 };
 
 // APP_PORT is the port the platform routes to and the buildpack makes the app
@@ -240,6 +241,7 @@ function assemble(
     roles: policy.roles,
     routes: policy.routes,
     secrets: policy.secrets,
+    config: policy.config,
   };
 
   const extra: string[] = [];
@@ -250,6 +252,7 @@ function assemble(
     extra.push(`egress allowlist: ${policy.egress.allowedHosts.join(', ')} (everything else is blocked)`);
   }
   extra.push(...egressDisclosure(policy.egress));
+  extra.push(...configDisclosure(policy.config));
   // The route → gate diff, so the builder sees exactly what each route requires
   // (and which fall through to Owner-only) in the same push. Route discovery reads
   // Next.js conventions from the context file paths, so it works whether 280
@@ -275,6 +278,21 @@ export function egressDisclosure(egress: EgressPolicy): string[] {
         ? `, scopes: ${c.scopes.join(' ')}`
         : '';
     lines.push(`  ${c.host}  →  ${type} via secret ${c.secret}${scopes}`);
+  }
+  return lines;
+}
+
+// configDisclosure is the config summary the push prints: the non-secret env vars
+// the app will read via process.env. A committed-public value is shown; a
+// dashboard-entered value (sensitive, no committed value) shows the name only and
+// notes the deploy waits for it; a committed-sensitive value is redacted.
+export function configDisclosure(config: ConfigEntry[]): string[] {
+  if (config.length === 0) return [];
+  const lines = ['config the app reads (process.env), injected into the container:'];
+  for (const c of config) {
+    if (c.value === '') lines.push(`  ${c.name}  →  entered in the dashboard (deploy waits until set)`);
+    else if (c.sensitive) lines.push(`  ${c.name}  →  set (sensitive; value hidden)`);
+    else lines.push(`  ${c.name} = ${c.value}`);
   }
   return lines;
 }

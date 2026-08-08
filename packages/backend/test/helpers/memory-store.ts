@@ -416,11 +416,13 @@ export class MemoryStore implements Store {
       roles: policy.roles,
       routes: policy.routes,
       secrets: policy.secrets,
+      config: policy.config,
       ownerTenant: ownerTenant !== '' ? ownerTenant : (existing?.ownerTenant ?? ''),
       updatedAt: 0,
     });
+    const declaredNames = new Set([...policy.secrets, ...policy.config.map((c) => c.name)]);
     for (const [k, secret] of [...this.secrets.entries()]) {
-      if (secret.appId === appId && !policy.secrets.includes(secret.name)) {
+      if (secret.appId === appId && !declaredNames.has(secret.name)) {
         this.secrets.delete(k);
         this.record({
           userId: this.userIdFor(appId),
@@ -463,6 +465,7 @@ export class MemoryStore implements Store {
       roles: [...p.roles],
       routes: [...p.routes],
       secrets: [...p.secrets],
+      config: [...p.config],
     };
   }
 

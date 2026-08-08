@@ -350,7 +350,7 @@ describe('secrets manage', () => {
     expect((await secretAction(app, session, appId, 'delete', 'STRIPE_KEY')).status).toBe(204);
     expect(await store.appSecrets(appId)).toEqual([]);
     expect(await (await list(app, session, appId)).json()).toEqual({
-      secrets: [{ name: 'STRIPE_KEY', configured: false }],
+      secrets: [{ name: 'STRIPE_KEY', kind: 'secret', configured: false }],
     });
   });
 
@@ -442,7 +442,7 @@ describe('secrets lifecycle across deploys', () => {
 
     await goLive(['STRIPE_KEY']);
     const data = (await (await list(app, session, appId)).json()) as { secrets: Array<Record<string, unknown>> };
-    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', configured: false }]);
+    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', kind: 'secret', configured: false }]);
   });
 });
 
@@ -452,7 +452,7 @@ describe('secrets without an encryption key', () => {
     const res = await list(app, session, appId);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { secrets: unknown[] };
-    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', configured: false }]);
+    expect(data.secrets).toEqual([{ name: 'STRIPE_KEY', kind: 'secret', configured: false }]);
 
     expect((await put(app, session, appId, { name: 'STRIPE_KEY', value: 'x' })).status).toBe(503);
     expect(await store.appSecrets(appId)).toHaveLength(0);

@@ -392,6 +392,35 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect((await store.latestDeploy(a.id))?.id).toBe('dep_b');
   });
 
+  it('putAppSecret persists the kind (secret default, config when set)', async () => {
+    const a = appFixture({ slug: 'kinds' });
+    await store.createApp(a);
+    const base = { appId: a.id, setBy: 'boss@firm.com', setAt: 100 };
+    await store.putAppSecret({ ...base, name: 'A_SECRET', envelope: 'e1' });
+    await store.putAppSecret({ ...base, name: 'A_CONFIG', envelope: 'e2', kind: 'config' });
+    const byName = new Map((await store.appSecrets(a.id)).map((s) => [s.name, s.kind]));
+    expect(byName.get('A_SECRET')).toBe('secret');
+    expect(byName.get('A_CONFIG')).toBe('config');
+  });
+
+  it('finishLive keeps config-kind values whose names the live manifest declares', async () => {
+    const a = appFixture({ slug: 'keeps-config' });
+    await store.createApp(a);
+    const base = { appId: a.id, setBy: 'boss@firm.com', setAt: 100 };
+    await store.putAppSecret({ ...base, name: 'SHEET_ID', envelope: 'env-sheet', kind: 'config' });
+    await store.putAppSecret({ ...base, name: 'STALE', envelope: 'env-stale', kind: 'config' });
+
+    const manifest = {
+      ...manifestFor('e'.repeat(64)),
+      config: [{ name: 'SHEET_ID', value: '', sensitive: true }],
+    };
+    await store.openDeploy({ appId: a.id, id: 'dep_cfg', manifest, state: State.Uploading, failure: null });
+    await store.finishLive(a.id, 'dep_cfg');
+
+    expect((await store.appSecrets(a.id)).map((s) => s.name)).toEqual(['SHEET_ID']);
+    expect((await store.appPolicy(a.id))?.config).toEqual([{ name: 'SHEET_ID', value: '', sensitive: true }]);
+  });
+
   it('finishLive erases secrets the live manifest no longer declares', async () => {
     const a = appFixture({ slug: 'erases-secrets' });
     await store.createApp(a);

@@ -133,6 +133,49 @@ describe('sync + activation', () => {
     expect(builder.rollouts).toHaveLength(1);
   });
 
+  it('parks before rollout until required config (sensitive, no committed value) is entered', async () => {
+    const builder = new FakeBuilder();
+    const { h, port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { manifest, content } = mkBundle('worker');
+    manifest.config = [{ name: 'GOOGLE_SHEET_ID', value: '', sensitive: true }];
+    const res = await port.sync({ identity: ident({ clientRef: 'cfg-parked' }), manifest });
+
+    await uploadAll(port, res.app.id, res.missing, content);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.WaitingSecrets);
+    expect(builder.rollouts).toHaveLength(0);
+
+    await h.store.putAppSecret({
+      appId: res.app.id, name: 'GOOGLE_SHEET_ID', envelope: '', setBy: 'owner@test', setAt: 1, kind: 'config',
+    });
+    const app = await h.store.app('usr_test', res.app.id);
+    await h.platform.resumeWaitingSecrets(app!);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+    expect(builder.rollouts).toHaveLength(1);
+  });
+
+  it('does not park when config carries a committed value', async () => {
+    const builder = new FakeBuilder();
+    const { port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { manifest, content } = mkBundle('worker');
+    manifest.config = [{ name: 'REGION', value: 'us-east-1', sensitive: false }];
+    const res = await port.sync({ identity: ident({ clientRef: 'cfg-live' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+    expect(builder.rollouts).toHaveLength(1);
+  });
+
+  it('rejects a manifest whose config collides with a secret at preflight', async () => {
+    const { port } = await fresh();
+    const { manifest } = mkBundle('worker');
+    manifest.secrets = ['SHARED'];
+    manifest.config = [{ name: 'SHARED', value: 'x', sensitive: false }];
+    await expect(port.sync({ identity: ident({ clientRef: 'bad-cfg' }), manifest })).rejects.toMatchObject({
+      code: DeployCode.PreflightRejected,
+    });
+  });
+
   it('resumes parked deploys oldest first so the newest becomes the serving version', async () => {
     const { h, port } = await fresh();
     const identity = ident({ clientRef: 'multi' });
@@ -240,7 +283,7 @@ describe('push secret notice', () => {
 
     expect(await h.store.appPolicy(res.app.id)).toBeNull();
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secrets are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}?variables=1`,
+      `declared variables are not configured: STRIPE_KEY, SUPABASE_SERVICE_ROLE_KEY. Configure them at https://dashboard.example/dashboard/${res.app.id}?variables=1`,
     );
   });
 
@@ -271,7 +314,7 @@ describe('push secret notice', () => {
     await uploadAll(port, res.app.id, res.missing, content);
 
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
-      `declared secret is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}?variables=1`,
+      `declared variable is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}?variables=1`,
     );
   });
 });

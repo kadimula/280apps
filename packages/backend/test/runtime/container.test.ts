@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { DeployErr, State, digestBytes, normalizeEgressPolicy, type Digest, type Manifest } from '@280/contracts';
-import type { Activation, RuntimeApp, SecretDelivery } from '../../src/seams.js';
+import type { Activation, ConfigDelivery, RuntimeApp, SecretDelivery } from '../../src/seams.js';
 import { deliveryFailed } from '../../src/secret-delivery.js';
 import { ContainerRuntime, FakeBuilder } from '../../src/runtime/container/index.js';
 import { bodyOf, newPlatform, portFor, testManifest } from '../helpers/harness.js';
@@ -81,6 +81,38 @@ describe('ContainerRuntime (over a builder)', () => {
     const { act } = activation({ Dockerfile: 'FROM node:20' });
     await rt.activate(act);
     expect(builder.rollouts[0]!.egress).toEqual({ allowedHosts: [], credentials: [] });
+  });
+
+  it('carries committed-public config into the rollout job (no delivery needed)', async () => {
+    const builder = new FakeBuilder();
+    const rt = new ContainerRuntime(builder);
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    act.manifest.config = [
+      { name: 'REGION', value: 'us-east-1', sensitive: false },
+      { name: 'SHEET_ID', value: '', sensitive: true }, // dashboard-entered: absent without delivery
+    ];
+    await rt.activate(act);
+    expect(builder.rollouts[0]!.config).toEqual({ REGION: 'us-east-1' });
+  });
+
+  it('merges dashboard-entered config via ConfigDelivery, never a secret value', async () => {
+    const builder = new FakeBuilder();
+    // A hostile delivery would still only be asked to resolve config; but prove the
+    // seam is what merges, and that the secret value never rides in job.config.
+    const config: ConfigDelivery = {
+      resolve: async (_app, entries) => {
+        const out: Record<string, string> = {};
+        for (const c of entries) out[c.name] = c.value !== '' ? c.value : 'revealed-sheet-id';
+        return out;
+      },
+    };
+    const rt = new ContainerRuntime(builder, undefined, config);
+    const { act } = activation({ Dockerfile: 'FROM node:20' });
+    act.manifest.secrets = ['SECRET_TOKEN'];
+    act.manifest.config = [{ name: 'SHEET_ID', value: '', sensitive: true }];
+    await rt.activate(act);
+    expect(builder.rollouts[0]!.config).toEqual({ SHEET_ID: 'revealed-sheet-id' });
+    expect(JSON.stringify(builder.rollouts[0]!.config)).not.toContain('SECRET_TOKEN');
   });
 
   it('surfaces a builder failure as a DeployErr through the seam', async () => {

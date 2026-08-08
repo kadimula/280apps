@@ -28,7 +28,8 @@ Any other stack ships a repo root Dockerfile that listens on port 8080 (the plat
 
 | Not supported | Do this instead |
 | --- | --- |
-| Inline credentials (keys, tokens, connection strings in code or env) | Declare in `280.json`; 280 injects them at egress (steps 2 and 3) |
+| Inline credentials the app never reads (keys, tokens, connection strings) | Declare a `secret` bound to its host; 280 injects it at egress (steps 2 and 3) |
+| Values the app must read (resource ids, regions, public client ids, flags) | Declare them in `config`; 280 sets them as env vars the app reads (step 4) |
 | Authenticated SDKs (`googleapis`, AWS SDK, password-based Postgres clients) | Call the provider's HTTP API directly (step 2) |
 | Unrestricted outbound network | Allowlist every host in `280.json` `egress.allow` (others get HTTP 520) |
 | Raw TCP outbound (Postgres on `:5432`) | Reach the database over its HTTPS endpoint |
@@ -51,25 +52,47 @@ Before anything else, strip out every authenticated SDK. 280 injects credentials
 - **The app never holds a secret value** — no reading env, embedding in code, building auth headers, or logging. If the running app can see a credential, it's wrong.
 - **The app never manages secrets** — write plain API calls with no auth wiring. 280 attaches the credential in-flight from `280.json`; the value never enters the container.
 
-So your only task is to declare them. For each credential the app uses (env vars, API keys, connection strings, tokens), add its name to `secrets` and bind it to the host it authenticates against:
+The test is simple: **a value is a secret only if the app never reads it.** A credential the app hands to no code (an API key, a service-account JSON, a connection token) is a secret; 280 attaches it at egress. A value the app *does* read to work (a resource id, a region, a public client id) is **config**, not a secret: declare it in `config` instead (step 4).
+
+So your only task is to declare each secret and bind it to the host it authenticates against:
 
     {
-      "secrets": ["<SECRET_NAME>"],
       "egress": {
-        "allow": ["<api-host>"],
         "credentials": [{ "host": "<api-host>", "secret": "<SECRET_NAME>" }]
       }
     }
 
-280 injects the value on requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` to differ). Remove the app's own secret handling, and author names only — never write a value anywhere. Users enter values in the 280 dashboard (step 6).
+Binding a secret to a host is what declares it: you do not repeat it in a top-level `secrets` list, and you do not add its host to `allow` (a credentialed host is allowed automatically). 280 injects the value on requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` to differ). Remove the app's own secret handling, and author names only — never write a value anywhere. Users enter values in the 280 dashboard (step 7).
 
-## 4. Install the CLI and push
+## 4. Declare config the app reads
+
+Config is the mirror of secrets: values the app **reads** with `process.env` to function (resource ids, regions, public client ids, feature flags, internal hostnames). Never a credential — if the app never reads it, it is a secret (step 3). Declare config as a map of env-var name to value:
+
+    {
+      "config": {
+        "REGION": "us-east-1",
+        "SHEET_ID": { "sensitive": true }
+      }
+    }
+
+Two forms:
+
+- **`"NAME": "value"`** — a committed-public value. It lives in `280.json`, so editing it redeploys.
+- **`"NAME": { "sensitive": true }`** — a value the user enters in the dashboard (step 7); it is stored encrypted, kept out of logs, and the deploy waits until it is set. Use this for a mildly confidential value the app still reads (a private resource id, an internal host). It stays config — the app reads it — it is never promoted to a secret.
+
+Each declared name arrives as an environment variable in the container, so the app reads it directly:
+
+    const sheetId = process.env.SHEET_ID;
+
+Names must be valid env identifiers; `PORT`, `HOSTNAME`, `NODE_ENV`, `NODE_EXTRA_CA_CERTS`, and the `TWO80_` prefix are reserved.
+
+## 5. Install the CLI and push
 
     npx -y two80@latest push
 
 Auto-inits new projects. Safe to re-run; every step resumes, nothing duplicates.
 
-## 5. Login (in the user's browser)
+## 6. Login (in the user's browser)
 
 When push prints a login link, relay it and wait. Never open it yourself.
 
@@ -77,15 +100,15 @@ When push prints a login link, relay it and wait. Never open it yourself.
 
 After they confirm, push again.
 
-## 6. Secret values (also the user's browser)
+## 7. Variable values (also the user's browser)
 
-When push exits reporting missing credentials, relay the link and ask the user to enter the values. Never ask for the values yourself.
+When push exits reporting missing values, relay the link and ask the user to enter them. Never ask for the values yourself. This covers both secrets and dashboard-entered (`sensitive`) config — the dashboard calls them variables.
 
 > Enter values for STRIPE_KEY at: <url>
 
 Push does not wait: once the user confirms the values are saved, run `two80 push` again to resume.
 
-## 7. Verify, then hand over the link
+## 8. Verify, then hand over the link
 
 Push exits with the live URL. The edge can lag up to a minute.
 

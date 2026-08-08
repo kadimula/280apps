@@ -4,7 +4,7 @@
 // racy transition is a conditional UPDATE whose row count names the winner, every
 // uniqueness rule an index.
 
-import type { AppAccess, AppPolicy, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
+import type { AppAccess, AppPolicy, ConfigEntry, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
 import {
   APP_ACCESS,
   appPolicyFromManifest,
@@ -221,11 +221,11 @@ const appReadCols = `${appCols}, created_at`;
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
 
-const policyCols = 'app_id, access, access_override, roles, routes, secrets, owner_tenant, updated_at';
+const policyCols = 'app_id, access, access_override, roles, routes, secrets, config, owner_tenant, updated_at';
 
 // The columns a live deploy (re)registers. access_override is deliberately
 // absent: the dashboard's dial survives every redeploy untouched (design D5).
-const registerPolicyCols = 'app_id, access, roles, routes, secrets, owner_tenant, updated_at';
+const registerPolicyCols = 'app_id, access, roles, routes, secrets, config, owner_tenant, updated_at';
 
 // Seconds since the epoch, for columns the store writes rather than defaults (it
 // holds no clock of its own). Mirrors migrations' epochDefault.
@@ -256,6 +256,24 @@ function decodeRoutes(raw: string): RouteGate[] {
         role: typeof r.role === 'string' ? r.role : '',
       }))
       .filter((r) => r.path !== '');
+  } catch {
+    return [];
+  }
+}
+
+function decodeConfig(raw: string): ConfigEntry[] {
+  if (raw === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((c): c is Record<string, unknown> => c !== null && typeof c === 'object')
+      .map((c) => ({
+        name: typeof c.name === 'string' ? c.name : '',
+        value: typeof c.value === 'string' ? c.value : '',
+        sensitive: c.sensitive === true,
+      }))
+      .filter((c) => c.name !== '');
   } catch {
     return [];
   }
@@ -404,6 +422,7 @@ function rowToAppPolicy(r: Row): AppPolicy {
     roles: decodeStringArray(r.roles),
     routes: decodeRoutes(r.routes),
     secrets: decodeStringArray(r.secrets),
+    config: decodeConfig(r.config ?? ''),
     ownerTenant: r.owner_tenant,
     updatedAt: toNum(r.updated_at),
   };
@@ -416,6 +435,7 @@ function rowToAppSecret(r: Row): AppSecret {
     envelope: r.envelope,
     setBy: r.set_by,
     setAt: toNum(r.set_at),
+    kind: r.kind === 'config' ? 'config' : 'secret',
   };
 }
 
@@ -939,12 +959,13 @@ class PgStore implements Store {
 
     await tx.query(
       `INSERT INTO ${this.t('app_policies')} (${registerPolicyCols})
-       VALUES ($1,$2,$3,$4,$5,$6, ${epochNow})
+       VALUES ($1,$2,$3,$4,$5,$6,$7, ${epochNow})
        ON CONFLICT (app_id) DO UPDATE SET
          access       = EXCLUDED.access,
          roles        = EXCLUDED.roles,
          routes       = EXCLUDED.routes,
          secrets      = EXCLUDED.secrets,
+         config       = EXCLUDED.config,
          owner_tenant = CASE WHEN EXCLUDED.owner_tenant <> '' THEN EXCLUDED.owner_tenant
                              ELSE ${this.t('app_policies')}.owner_tenant END,
          updated_at   = ${epochNow}`,
@@ -954,15 +975,19 @@ class PgStore implements Store {
         JSON.stringify(policy.roles),
         JSON.stringify(policy.routes),
         JSON.stringify(policy.secrets),
+        JSON.stringify(policy.config),
         ownerTenant,
       ],
     );
 
-    // Values whose names the live manifest no longer declares are erased, never
-    // resurrected by a later redeclaration; the secret.removed event is the tombstone.
+    // Stored values whose names the live manifest no longer declares are erased,
+    // never resurrected by a later redeclaration; the secret.removed event is the
+    // tombstone. The keep-set spans both channels sharing this store: declared
+    // secrets and declared config names (a config value would otherwise be pruned).
+    const declaredNames = [...policy.secrets, ...policy.config.map((c) => c.name)];
     const erased = await tx.query(
       `DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1 AND NOT (name = ANY($2)) RETURNING name`,
-      [appId, policy.secrets],
+      [appId, declaredNames],
     );
     for (const row of erased.rows) {
       await this.insertAppEvent(tx, appId, deployId, EventKind.SecretRemoved, eventDetail({ name: row.name }));
@@ -1112,13 +1137,14 @@ class PgStore implements Store {
   async putAppSecret(secret: AppSecret): Promise<void> {
     await this.inTx(async (tx) => {
       await tx.query(
-        `INSERT INTO ${this.t('app_secrets')} (app_id, name, envelope, set_by, set_at)
-         VALUES ($1,$2,$3,$4,$5)
+        `INSERT INTO ${this.t('app_secrets')} (app_id, name, envelope, set_by, set_at, kind)
+         VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (app_id, name) DO UPDATE SET
            envelope = EXCLUDED.envelope,
            set_by = EXCLUDED.set_by,
-           set_at = EXCLUDED.set_at`,
-        [secret.appId, secret.name, secret.envelope, secret.setBy, secret.setAt],
+           set_at = EXCLUDED.set_at,
+           kind = EXCLUDED.kind`,
+        [secret.appId, secret.name, secret.envelope, secret.setBy, secret.setAt, secret.kind ?? 'secret'],
       );
       await this.insertAppEvent(
         tx,
@@ -1150,7 +1176,7 @@ class PgStore implements Store {
 
   async appSecrets(appId: string): Promise<AppSecret[]> {
     const res = await this.db.query(
-      `SELECT app_id, name, envelope, set_by, set_at
+      `SELECT app_id, name, envelope, set_by, set_at, kind
        FROM ${this.t('app_secrets')} WHERE app_id = $1 ORDER BY name`,
       [appId],
     );

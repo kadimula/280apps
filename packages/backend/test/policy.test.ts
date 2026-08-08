@@ -270,14 +270,18 @@ describe('egress preflight (typed + static, fail closed)', () => {
     });
   });
 
-  it('rejects a credential naming an undeclared secret', async () => {
-    await expectEgressRejected(
-      {
-        allowedHosts: [],
+  it('accepts a credential whose secret is not in the top-level secrets list', async () => {
+    // Leanness: a credential self-declares its secret, so it need not appear in
+    // "secrets". The empty declared list here still yields a live policy.
+    const h = await harness();
+    const { manifest, digest, body } = policyManifest({
+      egress: {
+        allowedHosts: ['api.stripe.com'],
         credentials: [{ host: 'api.stripe.com', secret: 'GHOST_KEY', header: 'authorization', scheme: 'Bearer' }],
       },
-      { secrets: ['STRIPE_KEY'] },
-    );
+    });
+    const appId = await pushLive(h, 'usr_selfdecl', manifest, digest, body);
+    expect(await h.store.appPolicy(appId)).not.toBeNull();
   });
 
   it('rejects a secret whose name collides with a reserved platform binding', async () => {

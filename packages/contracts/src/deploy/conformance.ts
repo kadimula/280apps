@@ -108,6 +108,7 @@ function mkContext(files: Record<string, Uint8Array>): Bundle {
       roles: [],
       routes: [],
       secrets: [],
+      config: [],
     },
     content,
   };

@@ -5,6 +5,9 @@ import { cookieHeader } from "@/lib/session";
 
 export type AppVariable = {
   name: string;
+  // 'secret': a credential the app never reads, injected at egress. 'config': a
+  // non-secret value the app reads via process.env, entered in the dashboard.
+  kind?: "secret" | "config";
   configured: boolean;
   setBy?: string;
   setAt?: number;

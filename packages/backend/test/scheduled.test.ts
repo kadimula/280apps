@@ -91,6 +91,8 @@ describe('scheduled cleanup', () => {
       clientRef: '',
       storeId: '',
       activeDeploy: '',
+      createdAt: 0,
+      lastDeployAt: null,
     });
     await store.openDeploy({
       appId: 'app_waiting',

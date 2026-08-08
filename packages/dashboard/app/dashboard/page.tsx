@@ -15,6 +15,21 @@ import { getMe, logoutHref } from "@/lib/session";
 // call to the backend carrying the browser's session, the same seam /activate
 // uses.
 
+// UTC keeps the rendered time stable regardless of where the server runs, and
+// matches the epoch-seconds the backend stores.
+const timeFormat = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "UTC",
+});
+
+function whenText(seconds: number): string {
+  return timeFormat.format(new Date(seconds * 1000)) + " UTC";
+}
+
 export default async function Dashboard() {
   const user = await getMe();
   if (!user) {
@@ -73,18 +88,36 @@ export default async function Dashboard() {
                   <span className="min-w-0 truncate font-sans text-[1.0625rem] font-semibold leading-tight tracking-tight text-[var(--color-ink)]">
                     {app.slug}
                   </span>
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                    className="h-4 w-4 shrink-0 text-[var(--color-muted)] transition-colors group-hover:text-[var(--color-ink)]"
-                  >
-                    <path d="m9 6 6 6-6 6" />
-                  </svg>
+                  <div className="flex shrink-0 items-center gap-5">
+                    <dl className="hidden grid-cols-[auto_auto] items-baseline gap-x-3 gap-y-1 sm:grid">
+                      <dt className="text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
+                        Created
+                      </dt>
+                      <dd className="text-right text-[12.5px] leading-tight text-[var(--color-body)]">
+                        {whenText(app.createdAt)}
+                      </dd>
+                      <dt className="text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
+                        Deployed
+                      </dt>
+                      <dd className="text-right text-[12.5px] leading-tight text-[var(--color-body)]">
+                        {app.lastDeployAt === null
+                          ? "Not yet"
+                          : whenText(app.lastDeployAt)}
+                      </dd>
+                    </dl>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                      className="h-4 w-4 shrink-0 text-[var(--color-muted)] transition-colors group-hover:text-[var(--color-ink)]"
+                    >
+                      <path d="m9 6 6 6-6 6" />
+                    </svg>
+                  </div>
                 </Link>
               </li>
             ))}

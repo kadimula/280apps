@@ -64,6 +64,9 @@ export interface App {
 
   storeId: string; // the app's SQL store, assigned on first activation
   activeDeploy: string; // the deploy the app is serving
+
+  createdAt: number; // seconds since epoch, when the app was first created
+  lastDeployAt: number | null; // when the live deploy was created; null before first live deploy
 }
 
 export interface Deploy {

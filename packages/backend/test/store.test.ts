@@ -40,6 +40,8 @@ function appFixture(over: Partial<App> = {}): App {
     clientRef: over.clientRef ?? '',
     storeId: over.storeId ?? '',
     activeDeploy: over.activeDeploy ?? '',
+    createdAt: over.createdAt ?? 0,
+    lastDeployAt: over.lastDeployAt ?? null,
   };
 }
 

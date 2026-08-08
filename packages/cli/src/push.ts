@@ -15,6 +15,8 @@ import {
   type App,
   type Digest,
   type Manifest,
+  type DeployError,
+  DeployCode,
   State,
   Resolution,
   stateTerminal,
@@ -57,14 +59,12 @@ export interface Events {
   onResolve?: (app: App, r: string) => void; // app resolved (persist happens right after)
   onUpload?: (done: number, total: number) => void; // a blob landed
   onWait?: () => void; // upload complete, awaiting activation
-  // The server's declared-but-unconfigured secrets note. An event rather than a
-  // Result field so it still reaches the user when the deploy fails.
+  // The server's secret notice on a terminal response.
   onSecretNotice?: (notice: string) => void;
 }
 
 const DEFAULT_ATTEMPTS = 6;
 const MAX_BACKOFF_MS = 5000;
-const WAITING_BACKOFF_MS = 15000;
 
 function attempts(o: Options): number {
   return o.maxAttempts && o.maxAttempts > 0 ? o.maxAttempts : DEFAULT_ATTEMPTS;
@@ -178,21 +178,28 @@ async function poll(
   opts: Options,
   ev: Events,
 ): Promise<DeployStatus> {
-  let secretNoticeEmitted = false;
   for (let attempt = 0; ; attempt++) {
     const status = await retry(opts, () => port.status(app.id, deployId));
-    if (status.state === State.WaitingSecrets && !secretNoticeEmitted) {
-      const detail = status.secretNotice === '' ? '' : ` ${status.secretNotice}`;
-      ev.onSecretNotice?.(`waiting on secrets before going live.${detail} Push continues automatically.`);
-      secretNoticeEmitted = true;
-    }
+    if (status.state === State.WaitingSecrets) throw credentialsRequired(status.secretNotice);
     if (stateTerminal(status.state)) {
-      if (status.secretNotice !== '' && !secretNoticeEmitted) ev.onSecretNotice?.(status.secretNotice);
+      if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
       return status;
     }
-    const delay = backoffFor(opts, attempt);
-    await sleep(status.state === State.WaitingSecrets && delay > 0 ? Math.max(delay, WAITING_BACKOFF_MS) : delay);
+    await sleep(backoffFor(opts, attempt));
   }
+}
+
+function credentialsRequired(notice: string): DeployError {
+  const dashboardUrl = notice.match(/https?:\/\/\S+/)?.[0].replace(/[.,;:!?]+$/, '');
+  return {
+    code: DeployCode.CredentialsRequired,
+    message: notice || 'deployment is waiting for credentials before it can go live',
+    fix: dashboardUrl
+      ? `ask your user to configure the missing credentials at ${dashboardUrl}, then run \`two80 push\` again`
+      : 'ask your user to configure the missing credentials in the 280 dashboard, then run `two80 push` again',
+    retryable: false,
+    candidates: [],
+  };
 }
 
 // retry runs fn, repeating only on the seam's Retryable errors, with backoff.

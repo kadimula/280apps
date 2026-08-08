@@ -93,7 +93,7 @@ describe('push.run against the Fake', () => {
     expect(syncs).toBeGreaterThanOrEqual(2); // one failure then a real Sync
   });
 
-  it('prints the waiting-secrets progress once and keeps polling until live', async () => {
+  it('returns an actionable credential requirement after the first waiting status', async () => {
     const { root, cfg } = project();
     let statuses = 0;
     const notice = 'declared secret is not configured: STRIPE_KEY. Configure it at https://console.280apps.com/dashboard/app_1?variables=1';
@@ -111,23 +111,20 @@ describe('push.run against the Fake', () => {
       async putBlob() {},
       async status() {
         statuses++;
-        return statuses < 3
-          ? { state: 'waiting_secrets', url: '', notice: '', secretNotice: notice, failure: undefined }
-          : { state: 'live', url: 'https://demo.280apps.run', notice: '', secretNotice: '', failure: undefined };
+        return { state: 'waiting_secrets', url: '', notice: '', secretNotice: notice, failure: undefined };
       },
       async delete() {
         return { app: { id: '', slug: '', url: '' }, deleted: false };
       },
     };
-    const seen: string[] = [];
 
-    await push.run(port, cfg, testBundle(), { root }, { onSecretNotice: (line) => seen.push(line) });
-
-    expect(statuses).toBe(3);
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toContain('waiting on secrets before going live');
-    expect(seen[0]).toContain('STRIPE_KEY');
-    expect(seen[0]).toContain('Push continues automatically');
+    await expect(push.run(port, cfg, testBundle(), { root })).rejects.toMatchObject({
+      code: 'credentials_required',
+      message: notice,
+      fix: 'ask your user to configure the missing credentials at https://console.280apps.com/dashboard/app_1?variables=1, then run `two80 push` again',
+      retryable: false,
+    });
+    expect(statuses).toBe(1);
   });
 
   it('keeps polling an unknown state from a newer server and surfaces its eventual failure', async () => {

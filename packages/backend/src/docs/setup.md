@@ -1,10 +1,10 @@
 280apps.com is an opinionated platform which helps agents and teams securely build internal tools. The platform is built around three tenets:
 
 **Tenet 1. Zero-trust for agent-generated code.**
-Application code never holds or manages a credential (Google service-account JWTs, AWS SigV4, raw DB passwords, etc.); 280 injects it at the egress boundary.
+Application code never sees or manages credentials (Google service-account JWTs, AWS SigV4, raw DB passwords, etc.)
 
 **Tenet 2. Agents own deployment and debugging.**
-An agent-optimized CLI handles all such housekeeping.
+An agent-optimized CLI handles all housekeeping.
 
 **Tenet 3. Humans own login, secrets, and access control.**
 Granting access to trusted identities and entering secret values stay a human's job.
@@ -13,7 +13,27 @@ Following are the steps necessary to securely deploy to the platform.
 
 ## 1. Check app compatibility
 
-280 supports most CRUD apps an internal team builds, but the support set is limited. Check https://280apps.com/platform-support.md first, review the user's stack, and install the CLI only if it is supported. (You can also offer to change the unsupported parts.)
+280 runs most CRUD apps a team builds, but the support set is limited. Check the user's stack against these tables before installing the CLI; offer to change any unsupported parts.
+
+**Supported**
+
+| Stack | Notes |
+| --- | --- |
+| Static HTML | Any static site (HTML, CSS, JS, assets); served with SPA fallback to index.html |
+| Next.js | Full Node 20 container, so SSR, API routes, SSG/ISR, Server Actions, middleware, next/image, and native/WASM deps all work |
+
+Any other stack ships a repo root Dockerfile that listens on port 8080 (the platform sets `PORT=8080`); Next.js and static sites build automatically.
+
+**Not supported**
+
+| Not supported | Do this instead |
+| --- | --- |
+| Inline credentials (keys, tokens, connection strings in code or env) | Declare in `280.json`; 280 injects them at egress (steps 2 and 3) |
+| Authenticated SDKs (`googleapis`, AWS SDK, password-based Postgres clients) | Call the provider's HTTP API directly (step 2) |
+| Unrestricted outbound network | Allowlist every host in `280.json` `egress.allow` (others get HTTP 520) |
+| Raw TCP outbound (Postgres on `:5432`) | Reach the database over its HTTPS endpoint |
+| Background work while idle (`setInterval`, polling loops) | An instance sleeps after ~2 min idle; use request handlers |
+| Websockets | Poll instead |
 
 ## 2. Call provider APIs directly, not through credentialed SDKs
 

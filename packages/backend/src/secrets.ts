@@ -139,7 +139,7 @@ function sealedBytes(value: unknown): value is SealedBytes {
 function decodeKey(value: string): Buffer {
   const key = fromBase64(value.trim());
   if (key.byteLength !== KEY_BYTES) {
-    throw new Error('TWO80_SECRET_ENCRYPTION_KEY must be a base64 encoded 32 byte key');
+    throw new Error('APP_SECRETS_LOCAL_MASTER_KEY must be a base64 encoded 32 byte key');
   }
   return key;
 }

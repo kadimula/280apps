@@ -37,7 +37,6 @@ Fetch 280apps.com/setup.md and push.
 ## Agent facing docs
 
 * [setup.md](packages/backend/src/docs/setup.md): Start here
-* [platform-support.md](packages/backend/src/docs/platform-support.md): Current platform support
 
 
 ## Project structure

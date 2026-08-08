@@ -13,10 +13,6 @@ import {
 import { newPlatform, testDeps } from './helpers/harness.js';
 
 const SETUP_MARKDOWN = readFileSync(new URL('../src/docs/setup.md', import.meta.url), 'utf8');
-const PLATFORM_SUPPORT_MARKDOWN = readFileSync(
-  new URL('../src/docs/platform-support.md', import.meta.url),
-  'utf8',
-);
 
 describe('docs endpoints', () => {
   async function server() {
@@ -33,22 +29,6 @@ describe('docs endpoints', () => {
       expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
       expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
       expect(await res.text()).toBe(SETUP_MARKDOWN);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('serves the support matrix as markdown', async () => {
-    const { app, cleanup } = await server();
-    try {
-      const res = await app.request('/v1/docs/platform-support.md');
-      expect(res.status).toBe(200);
-      expect(res.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
-      const body = await res.text();
-      expect(body).toBe(PLATFORM_SUPPORT_MARKDOWN);
-      // The matrix is a real table an agent parses, not an empty stub.
-      expect(body).toContain('| Stack | Feature | Supported | Notes |');
-      expect(body).toContain(CAPABILITY_REQUIREMENT);
     } finally {
       await cleanup();
     }

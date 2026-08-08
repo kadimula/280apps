@@ -181,10 +181,6 @@ export function docsCapabilities(): DocsCapabilities {
 }
 
 const SETUP_MARKDOWN = readFileSync(new URL('./docs/setup.md', import.meta.url), 'utf8');
-const PLATFORM_SUPPORT_MARKDOWN = readFileSync(
-  new URL('./docs/platform-support.md', import.meta.url),
-  'utf8',
-);
 
 const MARKDOWN_HEADERS = {
   'Content-Type': 'text/markdown; charset=utf-8',
@@ -199,9 +195,6 @@ export function docsRoutes(): Hono {
   const docs = new Hono();
 
   docs.get('/setup.md', (c) => c.body(SETUP_MARKDOWN, 200, MARKDOWN_HEADERS));
-  docs.get('/platform-support.md', (c) =>
-    c.body(PLATFORM_SUPPORT_MARKDOWN, 200, MARKDOWN_HEADERS),
-  );
   docs.get('/capabilities', (c) =>
     c.json(docsCapabilities(), 200, {
       'Cache-Control': 'public, max-age=300',

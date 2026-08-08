@@ -215,6 +215,8 @@ function toNum(v: unknown): number {
 
 const appCols =
   'id, user_id, slug, framework, url, script, salt, fingerprint, client_ref, store_id, active_deploy';
+// created_at is DB-defaulted, so it is read but never part of the INSERT column list.
+const appReadCols = `${appCols}, created_at`;
 
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
@@ -313,6 +315,8 @@ function rowToApp(r: Row): App {
     clientRef: r.client_ref,
     storeId: r.store_id,
     activeDeploy: r.active_deploy,
+    createdAt: toNum(r.created_at),
+    lastDeployAt: r.last_deploy_at == null ? null : toNum(r.last_deploy_at),
   };
 }
 
@@ -673,7 +677,7 @@ class PgStore implements Store {
 
   async app(userId: string, appId: string): Promise<App | null> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND id = $2`,
+      `SELECT ${appReadCols} FROM ${this.t('apps')} WHERE user_id = $1 AND id = $2`,
       [userId, appId],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
@@ -682,15 +686,22 @@ class PgStore implements Store {
   // More than one match is the ambiguous_identity case.
   async appsByFingerprint(userId: string, fingerprint: string): Promise<App[]> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
+      `SELECT ${appReadCols} FROM ${this.t('apps')} WHERE user_id = $1 AND fingerprint = $2 ORDER BY created_at, id`,
       [userId, fingerprint],
     );
     return res.rows.map(rowToApp);
   }
 
   async appsByUser(userId: string): Promise<App[]> {
+    const cols = appReadCols
+      .split(', ')
+      .map((c) => `a.${c}`)
+      .join(', ');
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 ORDER BY created_at DESC, id`,
+      `SELECT ${cols}, d.created_at AS last_deploy_at
+       FROM ${this.t('apps')} a
+       LEFT JOIN ${this.t('deploys')} d ON d.app_id = a.id AND d.id = a.active_deploy
+       WHERE a.user_id = $1 ORDER BY a.created_at DESC, a.id`,
       [userId],
     );
     return res.rows.map(rowToApp);
@@ -698,7 +709,7 @@ class PgStore implements Store {
 
   async appByClientRef(userId: string, ref: string): Promise<App | null> {
     const res = await this.db.query(
-      `SELECT ${appCols} FROM ${this.t('apps')} WHERE user_id = $1 AND client_ref = $2`,
+      `SELECT ${appReadCols} FROM ${this.t('apps')} WHERE user_id = $1 AND client_ref = $2`,
       [userId, ref],
     );
     return res.rows.length ? rowToApp(res.rows[0]) : null;
@@ -769,7 +780,7 @@ class PgStore implements Store {
   }
 
   async appByScript(script: string): Promise<App | null> {
-    const res = await this.db.query(`SELECT ${appCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
+    const res = await this.db.query(`SELECT ${appReadCols} FROM ${this.t('apps')} WHERE script = $1`, [script]);
     return res.rows.length ? rowToApp(res.rows[0]) : null;
   }
 

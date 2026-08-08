@@ -226,28 +226,34 @@ export class MemoryStore implements Store {
     return true;
   }
 
+  private view(a: StoredApp): App {
+    if (a.activeDeploy === '') return cloneApp(a, null);
+    const d = this.deploys.get(key(a.id, a.activeDeploy));
+    return cloneApp(a, d ? d.createdAt : null);
+  }
+
   async app(userId: string, appId: string): Promise<App | null> {
     const a = this.apps.get(appId);
-    return a && a.userId === userId ? cloneApp(a) : null;
+    return a && a.userId === userId ? this.view(a) : null;
   }
 
   async appsByFingerprint(userId: string, fingerprint: string): Promise<App[]> {
     return [...this.apps.values()]
       .filter((a) => a.userId === userId && a.fingerprint === fingerprint)
       .sort((x, y) => x.createdAt - y.createdAt || cmp(x.id, y.id))
-      .map(cloneApp);
+      .map((a) => this.view(a));
   }
 
   async appsByUser(userId: string): Promise<App[]> {
     return [...this.apps.values()]
       .filter((a) => a.userId === userId)
       .sort((x, y) => y.createdAt - x.createdAt || cmp(x.id, y.id))
-      .map(cloneApp);
+      .map((a) => this.view(a));
   }
 
   async appByClientRef(userId: string, ref: string): Promise<App | null> {
     for (const a of this.apps.values()) {
-      if (a.userId === userId && a.clientRef !== '' && a.clientRef === ref) return cloneApp(a);
+      if (a.userId === userId && a.clientRef !== '' && a.clientRef === ref) return this.view(a);
     }
     return null;
   }
@@ -288,7 +294,7 @@ export class MemoryStore implements Store {
 
   async appByScript(script: string): Promise<App | null> {
     for (const a of this.apps.values()) {
-      if (a.script === script) return cloneApp(a);
+      if (a.script === script) return this.view(a);
     }
     return null;
   }
@@ -586,10 +592,9 @@ function cloneGrant(g: Grant): Grant {
   return { ...g, dataScope: g.dataScope === null ? null : { ...g.dataScope } };
 }
 
-function cloneApp(a: StoredApp): App {
-  const { createdAt: _c, ...rest } = a;
-  void _c;
-  return { ...rest };
+function cloneApp(a: StoredApp, lastDeployAt: number | null): App {
+  const { createdAt, ...rest } = a;
+  return { ...rest, createdAt, lastDeployAt };
 }
 
 function cloneDeploy(d: StoredDeploy): Deploy {

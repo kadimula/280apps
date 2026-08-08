@@ -10,6 +10,9 @@ export type App = {
   slug: string;
   url: string;
   live: boolean;
+  // Seconds since the epoch. lastDeployAt is null until a deploy has gone live.
+  createdAt: number;
+  lastDeployAt: number | null;
 };
 
 // getApps returns null when the backend could not be reached, which pages render

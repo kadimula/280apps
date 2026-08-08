@@ -341,6 +341,8 @@ export class Server {
         // ActiveDeploy is set only once a deploy has gone live, so it doubles as
         // "is this URL serving anything".
         live: a.activeDeploy !== '',
+        createdAt: a.createdAt,
+        lastDeployAt: a.lastDeployAt,
       })),
     });
   }

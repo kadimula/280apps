@@ -237,6 +237,9 @@ export class Service implements Port {
       clientRef: id.forceNew ? '' : id.clientRef,
       storeId: '',
       activeDeploy: '',
+      // The store authors created_at on insert; this draft value is never read back.
+      createdAt: 0,
+      lastDeployAt: null,
     };
 
     try {

@@ -38,9 +38,9 @@ function mockSignedOut(init?: RequestInit): boolean {
 // The app list the dashboard renders. One not-live app exercises the "no live
 // app to preview" branch; the live ones drive the embedded preview and View-as.
 const MOCK_APPS: App[] = [
-  { id: "app-notes", slug: "team-notes", url: "https://team-notes.280apps.run", live: true },
-  { id: "app-tracker", slug: "bug-tracker", url: "https://bug-tracker.280apps.run", live: true },
-  { id: "app-draft", slug: "new-idea", url: "https://new-idea.280apps.run", live: false },
+  { id: "app-notes", slug: "team-notes", url: "https://team-notes.280apps.run", live: true, createdAt: 1784111520, lastDeployAt: 1786025100 },
+  { id: "app-tracker", slug: "bug-tracker", url: "https://bug-tracker.280apps.run", live: true, createdAt: 1785575700, lastDeployAt: 1786092000 },
+  { id: "app-draft", slug: "new-idea", url: "https://new-idea.280apps.run", live: false, createdAt: 1785946800, lastDeployAt: null },
 ];
 
 const mockVariableNames: Record<string, string[]> = {

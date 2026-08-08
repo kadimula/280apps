@@ -2,6 +2,7 @@
 // static bundler and real Fake port, the closest a unit test gets to `two80 push`.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DeployStatus } from '@280/contracts';
 import { Fake } from '@280/contracts/deploy/fake';
 import { build } from '../src/bundle/index.js';
 import * as config from '../src/config.js';
@@ -21,6 +22,26 @@ const realBundle = { buildBundle: async (root: string, framework: string) => bui
 
 function staticSite(): string {
   return tmpProject({ 'package.json': JSON.stringify({ name: 'demo' }), 'index.html': '<h1>hi</h1>' });
+}
+
+class CredentialWaitFake extends Fake {
+  configured = false;
+  statusCalls = 0;
+
+  async status(appId: string, deployId: string): Promise<DeployStatus> {
+    this.statusCalls++;
+    const status = await super.status(appId, deployId);
+    if (this.configured) return status;
+    return {
+      state: 'waiting_secrets',
+      url: '',
+      notice: '',
+      secretNotice:
+        `declared secrets are not configured: STRIPE_KEY, GOOGLE_SERVICE_ACCOUNT. ` +
+        `Configure them at https://console.280apps.com/dashboard/${appId}?variables=1`,
+      failure: undefined,
+    };
+  }
 }
 
 describe('fake push (real bundler + real Fake, through app.run)', () => {
@@ -44,6 +65,32 @@ describe('fake push (real bundler + real Fake, through app.run)', () => {
     expect(second.code).toBe(0);
     expect(fake.appCount()).toBe(1);
     expect(parseToon(second.out).appId).toBe(parseToon(first.out).appId);
+  });
+
+  it('returns a credential action promptly and resumes the same push after configuration', async () => {
+    const root = staticSite();
+    const fake = new CredentialWaitFake();
+
+    const waiting = await runCli(['push'], { root, port: fake, deps: realBundle });
+
+    expect(waiting.code).toBe(1);
+    expect(parseToon(waiting.out).error).toBe('credentials_required');
+    expect(waiting.out).toContain('STRIPE_KEY, GOOGLE_SERVICE_ACCOUNT');
+    expect(waiting.out).toContain('https://console.280apps.com/dashboard/app_000001?variables=1');
+    expect(waiting.out).toContain('ask your user to configure the missing credentials');
+    expect(waiting.out).toContain('then run `two80 push` again');
+    expect(waiting.err).not.toContain('Push continues automatically');
+    expect(fake.statusCalls).toBe(1);
+    expect(fake.appCount()).toBe(1);
+    const appId = config.load(root).cfg.appId;
+
+    fake.configured = true;
+    const resumed = await runCli(['push'], { root, port: fake, deps: realBundle });
+
+    expect(resumed.code).toBe(0);
+    expect(parseToon(resumed.out).appId).toBe(appId);
+    expect(parseToon(resumed.out).url).toContain('280apps.run');
+    expect(fake.appCount()).toBe(1);
   });
 
   it('push then delete by slug removes the app, exit 0', async () => {

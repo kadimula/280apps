@@ -13,6 +13,7 @@ export const DeployCode = {
   DigestMismatch: 'digest_mismatch',
   InvalidBlob: 'invalid_blob',
   ConfirmationRequired: 'confirmation_required',
+  CredentialsRequired: 'credentials_required',
   NotFound: 'not_found',
   Unavailable: 'unavailable',
   CLITooOld: 'cli_too_old',

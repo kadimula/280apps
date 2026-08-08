@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { DeployStatus } from '@280/contracts';
 import { Fake } from '@280/contracts/deploy/fake';
 import * as config from '../src/config.js';
 import * as credentials from '../src/credentials.js';
@@ -23,6 +24,21 @@ function freshHome(): void {
 
 function demoProject(): string {
   return tmpProject({ 'package.json': JSON.stringify({ name: 'demo' }), 'index.html': '<h1>hi</h1>' });
+}
+
+class CredentialWaitFake extends Fake {
+  async status(appId: string, deployId: string): Promise<DeployStatus> {
+    await super.status(appId, deployId);
+    return {
+      state: 'waiting_secrets',
+      url: '',
+      notice: '',
+      secretNotice:
+        `declared secrets are not configured: STRIPE_KEY, GOOGLE_SERVICE_ACCOUNT. ` +
+        `Configure them at https://console.280apps.com/dashboard/${appId}?variables=1`,
+      failure: undefined,
+    };
+  }
 }
 
 // normalize replaces the release version so fixtures survive a version bump.
@@ -163,6 +179,15 @@ const scenarios: Scenario[] = [
       const fake = new Fake();
       await runCli(['push'], { root, port: fake });
       return runCli(['delete'], { root, port: fake });
+    },
+  },
+  {
+    name: 'error-credentials-required',
+    code: 1,
+    check: { error: 'credentials_required' },
+    run: () => {
+      freshHome();
+      return runCli(['push'], { root: demoProject(), port: new CredentialWaitFake() });
     },
   },
   {

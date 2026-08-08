@@ -62,7 +62,32 @@ So your only task is to declare each secret and bind it to the host it authentic
       }
     }
 
-Binding a secret to a host is what declares it: you do not repeat it in a top-level `secrets` list, and you do not add its host to `allow` (a credentialed host is allowed automatically). 280 injects the value on requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` to differ). Remove the app's own secret handling, and author names only — never write a value anywhere. Users enter values in the 280 dashboard (step 7).
+Binding a secret to a host is what declares it: you do not repeat it in a top-level `secrets` list, and you do not add its host to `allow` (a credentialed host is allowed automatically). 280 injects the value on requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` to differ). Remove the app's own secret handling, and author names only, never a value anywhere. Users enter values in the 280 dashboard (step 7).
+
+### Static header vs. minted provider tokens
+
+The binding above is **static header injection**: 280 attaches the vault-held value verbatim as a request header. Use it when the secret value *is* the authorization the API accepts, an API key or a long-lived bearer or personal access token (Stripe, GitHub, most REST APIs).
+
+Some providers do not accept their durable credential as a header. A Google service account holds a JSON key that must be exchanged for a short-lived, scoped access token that expires; the app cannot mint or refresh that token without holding the JSON key, which zero-trust forbids. For these, declare a **typed credential**: 280 keeps the durable credential in the vault, mints a scoped provider token in-flight, caches and refreshes it, and attaches it. The app still makes plain unauthenticated calls.
+
+Google service accounts use `type: "google-service-account"`. Bind the service account JSON secret to the exact Google API host and list the OAuth scopes the minted token must carry:
+
+    {
+      "egress": {
+        "credentials": [
+          {
+            "host": "sheets.googleapis.com",
+            "secret": "SHEETS_SERVICE_ACCOUNT",
+            "type": "google-service-account",
+            "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+          }
+        ]
+      }
+    }
+
+The same lean rule holds: the binding declares both the secret and the host, so `SHEETS_SERVICE_ACCOUNT` goes in no top-level `secrets` list and `sheets.googleapis.com` goes in no `allow` list. Do not set `header` or `scheme`; the platform mints and attaches the token. The host must be an exact Google API host (`*.googleapis.com`), and `scopes` is required.
+
+The dashboard value the user enters (step 7) is the **durable service account JSON key**, never a short-lived Google access token. 280 does the token exchange in-flight; the app never reads the JSON or the minted token and makes unauthenticated HTTP calls to `sheets.googleapis.com`.
 
 ## 4. Declare config the app reads
 

@@ -1,14 +1,7 @@
-// The container runtime: it turns a content-complete build context into a
-// running Cloudflare Container application, behind the same Runtime seam the
-// Workers-for-Platforms runtime used to sit behind. It is driven unchanged by
-// deploysvc + the AppActivator Durable Object.
-//
-// The runtime itself owns no Docker and no Cloudflare API: it reads the build
-// context out of the blob store and hands it to a ContainerBuilder. That builder
-// is the one seam the build-home decision plugs into (the live path is DepotBuilder
-// on the Node host; the self-hosted Docker/HTTP builders are retained but dormant).
-// Build and rollout are separate so a completed image can wait for the owner's
-// secret configuration without exposing a new serving version.
+// Turns a content-complete build context into a running Cloudflare Container app,
+// via the ContainerBuilder build-home seam (live path: DepotBuilder on the Node
+// host). Build and rollout are separate so a completed image can wait on the
+// owner's secret configuration before it goes live.
 
 import {
   DeployCode,
@@ -28,50 +21,40 @@ import type {
   SecretDelivery,
 } from '../../seams.js';
 
-// RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
-// per-app Worker (TWO80_ROUTE_POLICY): access mode + feature roles + route gates +
-// declared secret names. It is exactly appPolicyFromManifest's output.
+// The manifest slice baked into the per-app Worker as TWO80_ROUTE_POLICY: access
+// mode, feature roles, route gates, and declared secret names.
 type RolloutPolicy = ReturnType<typeof appPolicyFromManifest>;
 
-// ContextFile is one file of the build context, read lazily so a large context
-// streams file by file instead of materializing in memory all at once.
+// Read lazily so a large build context streams instead of loading fully into memory.
 export interface ContextFile {
-  path: string; // context-relative, e.g. "Dockerfile" or "app/page.tsx"
+  path: string; // relative to the build context root, e.g. "Dockerfile"
   read(): Promise<Uint8Array>;
 }
 
-// RolloutJob is everything the builder needs to make one deploy the app's serving
-// image: the app identity (its stable script name is the container application
-// name), the deploy id (the image tag), the build recipe, and the context files.
 export interface RolloutJob {
   app: RuntimeApp;
   deployId: string;
   build: BuildSpec;
   files: ContextFile[];
-  // The app's trust boundary (access + routes + roles + secret names), baked into
-  // the per-app Worker so its middleware can enforce the route gate locally.
+  // The app's trust boundary, baked into the per-app Worker so its middleware
+  // enforces the route gate locally.
   policy: RolloutPolicy;
-  // The app's outbound contract (allowed hosts + per-host credential wiring),
-  // normalized, baked into the per-app Worker (EGRESS_POLICY) so the container's
-  // fail-closed egress boundary and in-flight credential injection match 280.json.
+  // Normalized outbound contract baked into the per-app Worker (EGRESS_POLICY):
+  // fail-closed egress boundary plus in-flight credential injection, per 280.json.
   egress: EgressPolicy;
-  // The non-secret config the app reads (TWO80_CONFIG → container process.env): the
-  // manifest's committed-public values, with dashboard-entered ('config' kind)
-  // values merged in by ConfigDelivery at rollout. Never carries a secret value.
+  // Committed-public config values (TWO80_CONFIG); dashboard-entered values are
+  // merged in by ConfigDelivery at rollout. Never carries a secret value.
   config: Record<string, string>;
 }
 
-// RolloutResult is what a successful rollout reports back. imageRef is the pushed
-// image (registry.cloudflare.com/...); it is diagnostic only in Phase 1 — the
-// control plane addresses the app by its deterministic script name, so nothing
-// here has to be persisted through the unchanged RuntimeResult.
+// imageRef is diagnostic only: the control plane addresses the app by its
+// deterministic script name, not by this pushed image ref.
 export interface RolloutResult {
   imageRef: string;
 }
 
-// ContainerBuilder is the build-home boundary. Build pushes the image without
-// changing the serving app; rollout switches the app to that deterministic image.
-// Every method is idempotent.
+// The build-home boundary: build pushes an image without touching the serving
+// app; rollout switches the app to it. Every method is idempotent.
 export interface ContainerBuilder {
   imageRef(app: RuntimeApp, deployId: string): string;
   build(job: RolloutJob): Promise<RolloutResult>;
@@ -79,11 +62,8 @@ export interface ContainerBuilder {
   teardown(app: RuntimeApp): Promise<void>;
 }
 
-// buildFailed shapes a builder error as the seam's agent-actionable throwable.
-// A deterministic build failure (the app's own Dockerfile/build) carries the log
-// tail and a fix and is marked non-retryable; a transient one (cannot reach the
-// build host) stays retryable so the loop tries again. The builder decides which
-// by throwing a DeployErr itself; anything else is treated as retryable infra.
+// Deterministic build failures (bad Dockerfile) are non-retryable with a log tail
+// and fix; anything else is treated as transient/retryable infra.
 function buildFailed(err: unknown): DeployErr {
   if (err instanceof DeployErr) return err;
   return new DeployErr({
@@ -106,7 +86,7 @@ export class ContainerRuntime implements RuntimeSeam {
     private readonly config?: ConfigDelivery,
   ) {}
 
-  private job(act: Activation): RolloutJob {
+  private buildJob(act: Activation): RolloutJob {
     return {
       app: act.app,
       deployId: act.deployId,
@@ -114,15 +94,14 @@ export class ContainerRuntime implements RuntimeSeam {
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
       policy: appPolicyFromManifest(act.manifest),
       egress: normalizeEgressPolicy(act.manifest.egress ?? { allowedHosts: [], credentials: [] }),
-      // Committed-public values only; dashboard-entered values are merged in
-      // activate() via ConfigDelivery (which alone can reveal them).
+      // Dashboard-entered values are merged in by activate() via ConfigDelivery.
       config: publicConfig(act.manifest.config ?? []),
     };
   }
 
   async prepare(act: Activation): Promise<void> {
     try {
-      await this.builder.build(this.job(act));
+      await this.builder.build(this.buildJob(act));
       this.prepared.add(`${act.app.id}/${act.deployId}`);
     } catch (err) {
       throw buildFailed(err);
@@ -130,7 +109,7 @@ export class ContainerRuntime implements RuntimeSeam {
   }
 
   async activate(act: Activation): Promise<RuntimeResult> {
-    const job = this.job(act);
+    const job = this.buildJob(act);
     if (this.config) job.config = await this.config.resolve(act.app, act.manifest.config ?? []);
     const key = `${act.app.id}/${act.deployId}`;
     if (!this.prepared.has(key)) await this.prepare(act);
@@ -154,10 +133,8 @@ export class ContainerRuntime implements RuntimeSeam {
   }
 }
 
-// FakeBuilder records rollouts and teardowns instead of performing them, so the
-// container runtime can be exercised without Docker or Cloudflare. Optional
-// one-shot failure injection mirrors MemoryRuntime.failNext for the tests that
-// assert the seam surfaces a build failure as an activation failure.
+// Records rollouts/teardowns instead of performing them, so the runtime can be
+// exercised without Docker or Cloudflare. failNext injects one build failure.
 export class FakeBuilder implements ContainerBuilder {
   readonly builds: RolloutJob[] = [];
   readonly rollouts: RolloutJob[] = [];

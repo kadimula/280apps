@@ -65,9 +65,9 @@ describe('ContainerRuntime (over a builder)', () => {
     };
     await rt.activate(act);
     expect(builder.rollouts).toHaveLength(1);
-    expect(builder.rollouts[0]!.egress).toEqual(normalizeEgressPolicy(act.manifest.egress));
+    expect(builder.rollouts[0]!.runtime.egress).toEqual(normalizeEgressPolicy(act.manifest.egress));
     // Concretely: hosts lowercased, sorted, credential host folded into the allowlist.
-    expect(builder.rollouts[0]!.egress).toEqual({
+    expect(builder.rollouts[0]!.runtime.egress).toEqual({
       allowedHosts: ['api.stripe.com', 'data.example.com'],
       credentials: [
         { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'header', header: 'authorization', scheme: 'Bearer', scopes: [] },
@@ -80,7 +80,7 @@ describe('ContainerRuntime (over a builder)', () => {
     const rt = new ContainerRuntime(builder);
     const { act } = activation({ Dockerfile: 'FROM node:20' });
     await rt.activate(act);
-    expect(builder.rollouts[0]!.egress).toEqual({ allowedHosts: [], credentials: [] });
+    expect(builder.rollouts[0]!.runtime.egress).toEqual({ allowedHosts: [], credentials: [] });
   });
 
   it('carries committed-public config into the rollout job (no delivery needed)', async () => {
@@ -92,13 +92,13 @@ describe('ContainerRuntime (over a builder)', () => {
       { name: 'SHEET_ID', value: '', sensitive: true }, // dashboard-entered: absent without delivery
     ];
     await rt.activate(act);
-    expect(builder.rollouts[0]!.config).toEqual({ REGION: 'us-east-1' });
+    expect(builder.rollouts[0]!.runtime.env).toEqual({ REGION: 'us-east-1' });
   });
 
   it('merges dashboard-entered config via ConfigDelivery, never a secret value', async () => {
     const builder = new FakeBuilder();
     // A hostile delivery would still only be asked to resolve config; but prove the
-    // seam is what merges, and that the secret value never rides in job.config.
+    // seam is what merges, and that the secret value never rides in runtime.env.
     const config: ConfigDelivery = {
       resolve: async (_app, entries) => {
         const out: Record<string, string> = {};
@@ -111,8 +111,8 @@ describe('ContainerRuntime (over a builder)', () => {
     act.manifest.secrets = ['SECRET_TOKEN'];
     act.manifest.config = [{ name: 'SHEET_ID', value: '', sensitive: true }];
     await rt.activate(act);
-    expect(builder.rollouts[0]!.config).toEqual({ SHEET_ID: 'revealed-sheet-id' });
-    expect(JSON.stringify(builder.rollouts[0]!.config)).not.toContain('SECRET_TOKEN');
+    expect(builder.rollouts[0]!.runtime.env).toEqual({ SHEET_ID: 'revealed-sheet-id' });
+    expect(JSON.stringify(builder.rollouts[0]!.runtime.env)).not.toContain('SECRET_TOKEN');
   });
 
   it('surfaces a builder failure as a DeployErr through the seam', async () => {

@@ -12,6 +12,7 @@ import { DeployErr, digestBytes, type Digest, type Manifest } from '@280/contrac
 import type { Activation, RuntimeApp } from '../../src/seams.js';
 import type { Logger } from '../../src/observe.js';
 import { DepotBuilder, type DepotApi } from '../../src/runtime/container/depot-builder.js';
+import type { RolloutJob } from '../../src/runtime/container/container.js';
 import type { ExecFn } from '../../src/runtime/container/registry-builder.js';
 
 function app(over: Partial<RuntimeApp> = {}): RuntimeApp {
@@ -45,18 +46,18 @@ function activation(files: Record<string, string>): { act: Activation } {
   };
 }
 
-function rolloutOf(
-  act: Activation,
-  over: { policy?: Record<string, unknown>; egress?: Record<string, unknown>; config?: Record<string, string> } = {},
-) {
+function rolloutOf(act: Activation, over: Partial<RolloutJob['runtime']> = {}): RolloutJob {
   return {
     app: act.app,
     deployId: act.deployId,
     build: act.manifest.build,
     files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
-    policy: over.policy ?? { access: 'invited', roles: [], routes: [], secrets: [] },
-    egress: over.egress ?? { allowedHosts: [], credentials: [] },
-    config: over.config ?? {},
+    runtime: {
+      routes: over.routes ?? [],
+      secrets: [],
+      egress: over.egress ?? { allowedHosts: [], credentials: [] },
+      env: over.env ?? {},
+    },
   };
 }
 
@@ -268,15 +269,15 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: credsFetch(),
     });
-    const policy = { access: 'public', roles: [], routes: [{ path: '/reports/*', appRole: '', role: 'analyst' }], secrets: ['API_KEY'] };
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { policy }));
+    const routes = [{ path: '/reports/*', appRole: '', role: 'analyst' }];
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { routes }));
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },
     ]);
     // Depot shares the same rollConfig spine: route + GATEWAY binding + baked policy.
     expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
-    expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
+    expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual({ routes });
     expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://console.280apps.com');
     // A config-less roll omits TWO80_CONFIG entirely (byte-identical to pre-config).
     expect((rollConfig.vars as Record<string, string>).TWO80_CONFIG).toBeUndefined();
@@ -299,7 +300,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     });
     await deploy(
       builder,
-      rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { config: { GOOGLE_SHEET_ID: '1AbC', REGION: 'us-east-1' } }),
+      rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { env: { GOOGLE_SHEET_ID: '1AbC', REGION: 'us-east-1' } }),
     );
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_CONFIG)).toEqual({
       GOOGLE_SHEET_ID: '1AbC',

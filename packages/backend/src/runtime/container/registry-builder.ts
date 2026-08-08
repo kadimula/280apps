@@ -229,8 +229,8 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
       vars: {
-        TWO80_ROUTE_POLICY: JSON.stringify(job.policy),
-        EGRESS_POLICY: JSON.stringify(job.egress),
+        TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
+        EGRESS_POLICY: JSON.stringify(job.runtime.egress),
         TWO80_APP_ID: job.app.id,
         TWO80_SCRIPT: script,
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,
@@ -241,8 +241,8 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
         // Non-secret config the container reads via process.env. A plaintext var
         // like EGRESS_POLICY (never a Worker secret): it carries only non-secret
         // values. Omitted when empty so a config-less roll is byte-identical.
-        ...(job.config && Object.keys(job.config).length > 0
-          ? { TWO80_CONFIG: JSON.stringify(job.config) }
+        ...(Object.keys(job.runtime.env).length > 0
+          ? { TWO80_CONFIG: JSON.stringify(job.runtime.env) }
           : {}),
       },
     };

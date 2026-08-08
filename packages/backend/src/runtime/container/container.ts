@@ -6,11 +6,11 @@
 import {
   DeployCode,
   DeployErr,
-  appPolicyFromManifest,
   normalizeEgressPolicy,
   publicConfig,
   type BuildSpec,
   type EgressPolicy,
+  type RouteGate,
 } from '@280/contracts';
 import type {
   Activation,
@@ -20,10 +20,6 @@ import type {
   RuntimeResult,
   SecretDelivery,
 } from '../../seams.js';
-
-// The manifest slice baked into the per-app Worker as TWO80_ROUTE_POLICY: access
-// mode, feature roles, route gates, and declared secret names.
-type RolloutPolicy = ReturnType<typeof appPolicyFromManifest>;
 
 // Read lazily so a large build context streams instead of loading fully into memory.
 export interface ContextFile {
@@ -36,15 +32,12 @@ export interface RolloutJob {
   deployId: string;
   build: BuildSpec;
   files: ContextFile[];
-  // The app's trust boundary, baked into the per-app Worker so its middleware
-  // enforces the route gate locally.
-  policy: RolloutPolicy;
-  // Normalized outbound contract baked into the per-app Worker (EGRESS_POLICY):
-  // fail-closed egress boundary plus in-flight credential injection, per 280.json.
-  egress: EgressPolicy;
-  // Committed-public config values (TWO80_CONFIG); dashboard-entered values are
-  // merged in by ConfigDelivery at rollout. Never carries a secret value.
-  config: Record<string, string>;
+  runtime: {
+    routes: RouteGate[];
+    secrets: string[];
+    egress: EgressPolicy;
+    env: Record<string, string>;
+  };
 }
 
 // imageRef is diagnostic only: the control plane addresses the app by its
@@ -92,10 +85,12 @@ export class ContainerRuntime implements RuntimeSeam {
       deployId: act.deployId,
       build: act.manifest.build,
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
-      policy: appPolicyFromManifest(act.manifest),
-      egress: normalizeEgressPolicy(act.manifest.egress ?? { allowedHosts: [], credentials: [] }),
-      // Dashboard-entered values are merged in by activate() via ConfigDelivery.
-      config: publicConfig(act.manifest.config ?? []),
+      runtime: {
+        routes: act.manifest.routes ?? [],
+        secrets: act.manifest.secrets ?? [],
+        egress: normalizeEgressPolicy(act.manifest.egress ?? { allowedHosts: [], credentials: [] }),
+        env: publicConfig(act.manifest.config ?? []),
+      },
     };
   }
 
@@ -110,12 +105,12 @@ export class ContainerRuntime implements RuntimeSeam {
 
   async activate(act: Activation): Promise<RuntimeResult> {
     const job = this.buildJob(act);
-    if (this.config) job.config = await this.config.resolve(act.app, act.manifest.config ?? []);
+    if (this.config) job.runtime.env = await this.config.resolve(act.app, act.manifest.config ?? []);
     const key = `${act.app.id}/${act.deployId}`;
     if (!this.prepared.has(key)) await this.prepare(act);
     try {
       await this.builder.rollout(job, this.builder.imageRef(job.app, job.deployId));
-      await this.secrets?.rollout(act.app, job.policy.secrets);
+      await this.secrets?.rollout(act.app, job.runtime.secrets);
     } catch (err) {
       throw buildFailed(err);
     } finally {

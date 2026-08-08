@@ -15,8 +15,11 @@ import {
   digestBytes,
   isAppAccess,
   manifestBlobs,
+  requiredConfigNames,
   stateTerminal,
+  validateConfig,
   validateWireEgressPolicy,
+  type ConfigEntry,
   type EgressPolicy,
   type App as PublicApp,
   type Digest,
@@ -109,12 +112,19 @@ export class Platform {
     for (const dep of open) {
       if (
         dep.state === State.WaitingSecrets &&
-        (dep.manifest.secrets ?? []).every((name) => present.has(name))
+        requiredVariableNames(dep.manifest).every((name) => present.has(name))
       ) {
         await this.activator.activate(app, dep.id);
       }
     }
   }
+}
+
+// The names a human must enter before a deploy can serve: declared secrets plus
+// required config (sensitive config with no committed value). Both share the
+// app_secrets store, so one set of names drives the waiting gate and the notice.
+function requiredVariableNames(m: Manifest): string[] {
+  return [...(m.secrets ?? []), ...requiredConfigNames(m.config ?? [])];
 }
 
 // Service implements the deploy Port for one authenticated user.
@@ -400,10 +410,10 @@ export class Service implements Port {
     const configured = await this.p.store.appSecretNames(appId).catch(() => null);
     if (configured === null) return '';
     const present = new Set(configured);
-    const missing = (m.secrets ?? []).filter((name) => !present.has(name));
+    const missing = requiredVariableNames(m).filter((name) => !present.has(name));
     if (missing.length === 0) return '';
     const single = missing.length === 1;
-    return `declared ${single ? 'secret is' : 'secrets are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?variables=1`;
+    return `declared ${single ? 'variable is' : 'variables are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?variables=1`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,
@@ -462,6 +472,20 @@ export function preflight(m: Manifest): void {
   // The egress policy is the app's outbound trust boundary; a malformed one must
   // fail closed here rather than reach a per-app Worker binding or the container gate.
   preflightEgress(m.egress ?? { allowedHosts: [], credentials: [] }, m.secrets ?? [], reject);
+
+  // The config block reaches the container's process.env; a malformed one (bad
+  // identifier, secret/config overlap, reserved name, or a required value with no
+  // home) must fail closed here too, not just at the CLI. Same gate the CLI runs.
+  preflightConfig(m.config ?? [], m.secrets ?? [], reject);
+}
+
+function preflightConfig(config: ConfigEntry[], secrets: string[], reject: (why: string) => never): void {
+  try {
+    validateConfig(config, secrets);
+  } catch (err) {
+    const d = deployShaped(err);
+    reject(d?.message ?? errText(err));
+  }
 }
 
 // A hostname the egress allowlist can carry: DNS labels, optionally a single

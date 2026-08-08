@@ -146,7 +146,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
           <div role="dialog" aria-modal="true" aria-labelledby={headingId} className="w-full max-w-[560px] rounded-[18px] border border-[var(--color-line)] bg-[var(--color-paper)] px-6 pb-5 pt-6 shadow-[0_24px_70px_-18px_rgba(10,10,10,0.55)]">
             <div className="flex items-center justify-between gap-3">
               <h2 id={headingId} className="min-w-0 truncate font-sans text-[1.5rem] leading-tight tracking-tight text-[var(--color-ink)]">
-                {variables === null ? "Variables" : `${variables.length} secret ${variables.length === 1 ? "variable" : "variables"} for`} <span className="text-[var(--color-muted)]">&ldquo;{app.slug}&rdquo;</span>
+                {variables === null ? "Variables" : `${variables.length} ${variables.length === 1 ? "variable" : "variables"} for`} <span className="text-[var(--color-muted)]">&ldquo;{app.slug}&rdquo;</span>
               </h2>
               <button type="button" onClick={close} aria-label="Close variables" className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]">
                 <CloseIcon />
@@ -167,6 +167,9 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
                   <div className="flex min-h-9 items-center gap-3">
                     <span className="shrink-0 font-mono text-[13px] text-[var(--color-muted)]">{"{}"}</span>
                     <p className="min-w-0 flex-1 truncate font-mono text-[13.5px] font-medium text-[var(--color-ink)]">{variable.name}</p>
+                    {variable.kind === "config" && (
+                      <span className="shrink-0 rounded-full border border-[var(--color-line)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]" title="Config: a value the app reads via process.env">config</span>
+                    )}
 
                     {variable.configured ? (
                       <div className="flex min-w-0 flex-1 items-center gap-2">

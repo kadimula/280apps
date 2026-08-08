@@ -227,12 +227,16 @@ describe('read280', () => {
     expect(() => read280(root)).toThrow(/duplicate egress credential/);
   });
 
-  it('rejects a credential whose secret is not declared in secrets', () => {
+  it('self-declares a credential secret and folds it into the manifest secrets', () => {
+    // Leanness: a credential secret need not be listed in "secrets"; read280 accepts
+    // it and carries the union (explicit + credential) so delivery still sees it.
     const root = projectWith({
       secrets: ['OTHER'],
       egress: { credentials: [{ host: 'api.example.com', secret: 'MISSING' }] },
     });
-    expect(() => read280(root)).toThrow(/not declared in secrets/);
+    const policy = read280(root);
+    expect(policy.secrets).toContain('OTHER');
+    expect(policy.secrets).toContain('MISSING');
   });
 
   it('rejects a credential naming a reserved platform binding', () => {
@@ -257,6 +261,63 @@ describe('read280', () => {
       egress: { credentials: [{ host: 'sheets.googleapis.com', secret: 'SHEETS_SA', scopes: 'nope' }] },
     });
     expect(() => read280(root)).toThrow(/"scopes" must be a list of strings/);
+  });
+
+  it('reads the leanest sheets shape: a credential plus config, no allow, no secrets list', () => {
+    const root = projectWith({
+      egress: {
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            secret: 'GOOGLE_SA_JSON',
+            type: 'google-service-account',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+      config: { GOOGLE_SHEET_ID: '1AbCdEf' },
+    });
+    const p = read280(root);
+    // The credential host is implied into the allowlist, the secret self-declared.
+    expect(p.egress.allowedHosts).toEqual(['sheets.googleapis.com']);
+    expect(p.secrets).toEqual(['GOOGLE_SA_JSON']);
+    expect(p.config).toEqual([{ name: 'GOOGLE_SHEET_ID', value: '1AbCdEf', sensitive: false }]);
+  });
+});
+
+describe('read280 config', () => {
+  it('parses the three config forms, name-sorted', () => {
+    const p = read280(
+      projectWith({
+        config: {
+          REGION: 'us-east-1',
+          COMMITTED_SECRET: { value: 'v', sensitive: true },
+          SHEET_ID: { sensitive: true },
+        },
+      }),
+    );
+    expect(p.config).toEqual([
+      { name: 'COMMITTED_SECRET', value: 'v', sensitive: true },
+      { name: 'REGION', value: 'us-east-1', sensitive: false },
+      { name: 'SHEET_ID', value: '', sensitive: true },
+    ]);
+  });
+
+  it('rejects a name that is both config and a secret', () => {
+    const root = projectWith({ secrets: ['SHARED'], config: { SHARED: 'x' } });
+    expect(() => read280(root)).toThrow(/both config and a secret/);
+  });
+
+  it('rejects a reserved config name', () => {
+    expect(() => read280(projectWith({ config: { PORT: '9000' } }))).toThrow(/reserved/);
+  });
+
+  it('rejects a non-sensitive config entry with no value', () => {
+    expect(() => read280(projectWith({ config: { EMPTY: { sensitive: false } } }))).toThrow(/has no value/);
+  });
+
+  it('rejects config that is not an object', () => {
+    expect(() => read280(projectWith({ config: ['REGION'] }))).toThrow(/must be an object/);
   });
 });
 

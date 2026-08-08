@@ -6,6 +6,7 @@ import {
   DeployCode,
   DeployErr,
   State,
+  requiredConfigNames,
   stateTerminal,
   type Digest,
   type DeployError,
@@ -88,12 +89,15 @@ export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Pr
 
   if (state === State.Activating) await deps.runtime.prepare(act);
 
-  const secrets = dep.manifest.secrets ?? [];
-  if (secrets.length > 0 && (await secretsUnconfigured(deps, app.id, secrets))) {
+  // The deploy parks until every value a human must enter is present: declared
+  // secrets and required config (sensitive config with no committed value). Both
+  // share app_secrets, so one presence check by name covers them.
+  const required = [...(dep.manifest.secrets ?? []), ...requiredConfigNames(dep.manifest.config ?? [])];
+  if (required.length > 0 && (await secretsUnconfigured(deps, app.id, required))) {
     await deps.store.parkActivation(app.id, dep.id, (deps.now ?? nowSecs)());
     // A value saved between the check above and the park found nothing to resume;
     // re-checking after the park closes that window.
-    if (await secretsUnconfigured(deps, app.id, secrets)) return;
+    if (await secretsUnconfigured(deps, app.id, required)) return;
     state = State.WaitingSecrets;
   }
 

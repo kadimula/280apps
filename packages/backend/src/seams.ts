@@ -4,7 +4,7 @@
 // failures rejecting; conditional transitions that report a winner return boolean.
 
 import type { BlobBody } from '@280/contracts';
-import type { Manifest, Digest, BlobInfo, DeployError, AppAccess, AppPolicy, PreviewGrant } from '@280/contracts';
+import type { Manifest, Digest, BlobInfo, DeployError, AppAccess, AppPolicy, PreviewGrant, ConfigEntry } from '@280/contracts';
 
 export type { AppPolicy, PreviewGrant, ViewAsTarget } from '@280/contracts';
 
@@ -115,12 +115,17 @@ export interface Event {
   createdAt: number;
 }
 
+// A stored, encrypted app value. `kind` discriminates the two channels that share
+// this store: 'secret' (delivered to the Worker vault, injected at egress, never
+// read by the app) and 'config' (a non-secret value the app reads, revealed into
+// the container env at rollout). Absent means 'secret', the back-compatible default.
 export interface AppSecret {
   appId: string;
   name: string;
   envelope: string;
   setBy: string;
   setAt: number;
+  kind?: 'secret' | 'config';
 }
 
 export interface ExpiryCounts {
@@ -307,4 +312,13 @@ export interface SecretDelivery {
   rollout(app: RuntimeApp, declared: string[]): Promise<void>;
   set(app: RuntimeApp, name: string): Promise<void>;
   delete(app: RuntimeApp, name: string): Promise<void>;
+}
+
+// ConfigDelivery resolves the full container-env map for a rollout: the manifest's
+// committed-public values merged with the dashboard-entered ('config' kind) values
+// revealed from the store. Parallel to SecretDelivery, but it returns a value map
+// baked into the container env (TWO80_CONFIG), never the Worker vault — config is
+// non-secret by definition.
+export interface ConfigDelivery {
+  resolve(app: RuntimeApp, config: ConfigEntry[]): Promise<Record<string, string>>;
 }

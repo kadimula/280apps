@@ -122,10 +122,32 @@ export const RESERVED_BINDING_NAMES: ReadonlySet<string> = new Set([
   'TWO80_ID_ISSUER',
   'TWO80_ID_SKEW_SECS',
   'TWO80_FRAME_ANCESTORS',
+  'TWO80_CONFIG',
 ]);
 
 export function isReservedBindingName(name: string): boolean {
   return RESERVED_BINDING_NAMES.has(name) || name.startsWith('TWO80_');
+}
+
+// A valid environment-variable identifier: a letter or underscore, then letters,
+// digits, or underscores. Config keys become container env vars, so they must be
+// names a shell and process.env accept.
+export const CONFIG_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Container env names the platform's own image and runtime own. Config may not set
+// these: PORT/HOSTNAME are baked by the generated Dockerfile and drive gateway
+// routing; NODE_ENV/NODE_EXTRA_CA_CERTS drive the build mode and the egress CA. The
+// TWO80_ prefix is reserved separately (isReservedConfigName), keeping the platform
+// namespace clean.
+export const RESERVED_CONFIG_NAMES: ReadonlySet<string> = new Set([
+  'PORT',
+  'HOSTNAME',
+  'NODE_ENV',
+  'NODE_EXTRA_CA_CERTS',
+]);
+
+export function isReservedConfigName(name: string): boolean {
+  return RESERVED_CONFIG_NAMES.has(name) || name.startsWith('TWO80_');
 }
 
 // Bounds on a typed credential's scope list, keeping line-based digest records and
@@ -310,7 +332,14 @@ export function normalizeEgressPolicy(p: EgressPolicy): EgressPolicy {
 // scopes, duplicate credential hosts, and secrets that are undeclared or collide
 // with a reserved Worker binding. Throws PreflightRejected; never mints anything.
 export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: readonly string[]): void {
-  const declared = new Set(declaredSecrets);
+  // A credential's own secret is declared by the credential itself: binding a host
+  // to a secret is what makes that secret exist, so it need not be repeated in the
+  // top-level "secrets" list (still accepted, for back-compat and non-credential
+  // secrets). The reserved-name check below still rejects a colliding secret name.
+  const declared = new Set<string>(declaredSecrets);
+  for (const c of policy.credentials ?? []) {
+    if (c.secret !== '') declared.add(c.secret);
+  }
   const seenHosts = new Set<string>();
   for (const c of policy.credentials ?? []) {
     const host = c.host.trim().toLowerCase();
@@ -426,6 +455,81 @@ function rejectEgress(message: string, fix: string): never {
   throw new DeployErr({ code: DeployCode.PreflightRejected, message, fix });
 }
 
+// ConfigEntry is one non-secret environment variable the app READS at runtime
+// (process.env.NAME): URL path segments, resource ids, region, public client ids,
+// feature flags. This is the opposite of a secret — a secret is a value the app
+// never reads (attached at the egress boundary, never entering the container).
+// `value` is the committed-public (or committed-sensitive) literal; '' means the
+// value is entered in the dashboard. `sensitive` keeps a value out of logs and
+// (when value is '') routes entry to the dashboard, parking the deploy until set.
+// Sensitivity never promotes config to a secret: the app still reads it.
+export const configEntrySchema = z
+  .object({
+    name: str(),
+    value: str(),
+    sensitive: bool(),
+  })
+  .passthrough();
+export type ConfigEntry = z.infer<typeof configEntrySchema>;
+
+// publicConfig is the container-env map from every config entry that carries a
+// committed value (public or committed-sensitive). Dashboard-entered entries
+// (value '') are absent here; the backend reveals and merges them at rollout.
+export function publicConfig(config: readonly ConfigEntry[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of config) if (c.value !== '') out[c.name] = c.value;
+  return out;
+}
+
+// requiredConfigNames are the config entries a human must enter in the dashboard
+// before the app can serve: sensitive with no committed value. The deploy parks in
+// waiting_secrets until each is present (activator), same gate as required secrets.
+export function requiredConfigNames(config: readonly ConfigEntry[]): string[] {
+  return config.filter((c) => c.sensitive && c.value === '').map((c) => c.name);
+}
+
+// validateConfig is the strict semantic gate for the config block, run by the CLI
+// at authoring time and the backend preflight as a backstop. It rejects invalid
+// identifiers, duplicates, reserved container/platform names, a name that is also a
+// secret (a value is config or secret, never both), and a non-sensitive entry with
+// no value (nothing to inject). Throws PreflightRejected.
+export function validateConfig(config: readonly ConfigEntry[], declaredSecrets: readonly string[]): void {
+  const secrets = new Set(declaredSecrets);
+  const seen = new Set<string>();
+  for (const c of config) {
+    if (!CONFIG_NAME_RE.test(c.name)) {
+      rejectConfig(
+        `config name ${JSON.stringify(c.name)} is not a valid environment variable name`,
+        'use letters, digits, and underscores, starting with a letter or underscore',
+      );
+    }
+    if (isReservedConfigName(c.name)) {
+      rejectConfig(
+        `config name ${JSON.stringify(c.name)} is reserved by the platform`,
+        'rename it; PORT, HOSTNAME, NODE_ENV, NODE_EXTRA_CA_CERTS and the TWO80_ prefix are reserved',
+      );
+    }
+    if (seen.has(c.name)) rejectConfig(`config declares ${JSON.stringify(c.name)} twice`, 'remove the duplicate');
+    seen.add(c.name);
+    if (secrets.has(c.name)) {
+      rejectConfig(
+        `${JSON.stringify(c.name)} is declared as both config and a secret`,
+        'a value the app reads is config; a credential it never reads is a secret — pick one',
+      );
+    }
+    if (!c.sensitive && c.value === '') {
+      rejectConfig(
+        `config ${JSON.stringify(c.name)} has no value`,
+        'give it a value, or mark it "sensitive" to enter it in the dashboard',
+      );
+    }
+  }
+}
+
+function rejectConfig(message: string, fix: string): never {
+  throw new DeployErr({ code: DeployCode.PreflightRejected, message, fix });
+}
+
 // Manifest is a container build-context descriptor: the build recipe plus every
 // file in the context, each content-addressed so the deploy loop transfers only
 // what the server lacks. It also carries the app's trust boundary from 280.json —
@@ -443,6 +547,7 @@ export const manifestSchema = z
     roles: arr(z.string()),
     routes: arr(routeGateSchema),
     secrets: arr(z.string()),
+    config: arr(configEntrySchema),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
@@ -458,6 +563,7 @@ export interface AppPolicy {
   roles: string[];
   routes: RouteGate[];
   secrets: string[];
+  config: ConfigEntry[]; // declared non-secret env vars (names + committed values + sensitive flag)
   ownerTenant: string; // '' until the owner is known; anyone-at-tenant fails closed while empty
   updatedAt: number;
 }
@@ -472,6 +578,7 @@ export function appPolicyFromManifest(
     roles: [...(m.roles ?? [])],
     routes: [...(m.routes ?? [])],
     secrets: [...(m.secrets ?? [])],
+    config: [...(m.config ?? [])],
   };
 }
 
@@ -730,6 +837,13 @@ export function canonicalDigest(m: Manifest): Digest {
     h.update(`route:${g.path}:${g.appRole}:${g.role}\n`);
   }
   for (const s of [...(m.secrets ?? [])].sort(byteCompare)) h.update(`secret:${s}\n`);
+  // Config (non-secret env the app reads) is part of the trust boundary: editing a
+  // committed value must redeploy. Emitted only when present and sorted by name, so a
+  // config-less manifest hashes byte-identically to a pre-config one. A dashboard
+  // value rides as value '', so entering it in the dashboard does not change the id.
+  for (const c of [...(m.config ?? [])].sort((a, b) => byteCompare(a.name, b.name))) {
+    h.update(`config:${c.name}:${c.value}:${c.sensitive ? '1' : '0'}\n`);
+  }
   return h.digest('hex');
 }
 

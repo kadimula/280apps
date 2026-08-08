@@ -1,0 +1,15 @@
+{
+  "egress": {
+    "credentials": [
+      {
+        "host": "sheets.googleapis.com",
+        "secret": "GOOGLE_SA_JSON",
+        "type": "google-service-account",
+        "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+      }
+    ]
+  },
+  "config": {
+    "GOOGLE_SHEET_ID": "1AbCdEf_ExampleSpreadsheetId"
+  }
+}

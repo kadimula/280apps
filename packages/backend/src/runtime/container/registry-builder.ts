@@ -238,6 +238,12 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
         TWO80_ID_ISSUER: this.idIssuer,
         TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
         TWO80_FRAME_ANCESTORS: this.frameAncestors,
+        // Non-secret config the container reads via process.env. A plaintext var
+        // like EGRESS_POLICY (never a Worker secret): it carries only non-secret
+        // values. Omitted when empty so a config-less roll is byte-identical.
+        ...(job.config && Object.keys(job.config).length > 0
+          ? { TWO80_CONFIG: JSON.stringify(job.config) }
+          : {}),
       },
     };
   }

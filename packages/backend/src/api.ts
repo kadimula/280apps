@@ -15,6 +15,7 @@ import {
   deleteRequestSchema,
   isAppAccess,
   isConsumerEmailDomain,
+  requiredConfigNames,
   statusForCode,
   syncRequestSchema,
   tenantFromEmail,
@@ -539,36 +540,47 @@ export class Server {
 
   private async handleSecretsList(c: Context<HonoEnv>): Promise<Response> {
     const { app } = await this.ownedApp(c);
-    const [declared, stored] = await Promise.all([
-      this.declaredSecrets(c, app.id),
+    const [{ secrets, config }, stored] = await Promise.all([
+      this.declaredVariables(c, app.id),
       this.deps(c).platform.store.appSecrets(app.id),
     ]).catch(() => {
       throw unavailable('could not read the app secrets');
     });
     const byName = new Map(stored.map((s) => [s.name, s]));
+    const row = (name: string, kind: 'secret' | 'config') => {
+      const s = byName.get(name);
+      return s ? { name, kind, configured: true, setBy: s.setBy, setAt: s.setAt } : { name, kind, configured: false };
+    };
     return c.json({
-      secrets: declared.map((name) => {
-        const s = byName.get(name);
-        return s ? { name, configured: true, setBy: s.setBy, setAt: s.setAt } : { name, configured: false };
-      }),
+      secrets: [
+        ...secrets.map((name) => row(name, 'secret')),
+        ...config.map((name) => row(name, 'config')),
+      ],
     });
   }
 
-  // Names the owner may configure: the live policy's, every open deploy's (a parked
-  // deploy must always be configurable), and the newest deploy's (even failed, so an
-  // expired park can be configured before the re-push).
-  private async declaredSecrets(c: Context<HonoEnv>, appId: string): Promise<string[]> {
+  // The variables the owner may configure, split by channel. Both are gathered from
+  // the live policy, every open deploy (a parked deploy must always be configurable),
+  // and the newest deploy (even failed, so an expired park can be configured before
+  // the re-push). `config` is the dashboard-entered kind only: required config
+  // (sensitive with no committed value); public config carries its value in 280.json.
+  private async declaredVariables(
+    c: Context<HonoEnv>,
+    appId: string,
+  ): Promise<{ secrets: string[]; config: string[] }> {
     const store = this.deps(c).platform.store;
     const [policy, latest, open] = await Promise.all([
       store.appPolicy(appId),
       store.latestDeploy(appId).catch(() => null),
       store.openDeploys(appId).catch(() => []),
     ]);
-    const names = new Set(policy?.secrets ?? []);
+    const secrets = new Set(policy?.secrets ?? []);
+    const config = new Set(requiredConfigNames(policy?.config ?? []));
     for (const dep of [latest, ...open]) {
-      for (const name of dep?.manifest.secrets ?? []) names.add(name);
+      for (const name of dep?.manifest.secrets ?? []) secrets.add(name);
+      for (const name of requiredConfigNames(dep?.manifest.config ?? [])) config.add(name);
     }
-    return [...names];
+    return { secrets: [...secrets], config: [...config] };
   }
 
   private async handleSecretPut(c: Context<HonoEnv>): Promise<Response> {
@@ -583,10 +595,11 @@ export class Server {
 
     const cipher = this.deps(c).secretCipher;
     if (cipher === undefined) throw unavailable('secret storage is not configured');
-    const declared = await this.declaredSecrets(c, app.id).catch(() => {
+    const { secrets, config } = await this.declaredVariables(c, app.id).catch(() => {
       throw unavailable('could not read the app secrets');
     });
-    if (!declared.includes(req.name)) {
+    const isConfig = config.includes(req.name);
+    if (!isConfig && !secrets.includes(req.name)) {
       throw badRequest(`"${req.name}" is not declared in this app's 280.json`);
     }
 
@@ -597,6 +610,7 @@ export class Server {
         envelope: await cipher.protect(app.id, req.name, req.value),
         setBy: user.email,
         setAt: nowSecs(),
+        kind: isConfig ? 'config' : 'secret',
       });
     } catch {
       throw unavailable('could not save the secret');

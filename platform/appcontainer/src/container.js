@@ -20,6 +20,7 @@
 
 import { Container } from '@cloudflare/containers';
 import { registerEgress as installEgress, applyEgressPolicy } from '@280/egress';
+import { parseConfig } from './config.js';
 
 // ContainerProxy must be re-exported from the Worker's main module: the outbound
 // interception machinery resolves it via ctx.exports.ContainerProxy.
@@ -31,6 +32,15 @@ export class App280Container extends Container {
   sleepAfter = '2m';
   enableInternet = false; // default-deny (NOT the library default, which is true)
   interceptHttps = true; // intercept HTTPS; the buildpack installs the runtime CA
+
+  constructor(ctx, env) {
+    super(ctx, env);
+    // Non-secret config the app reads (process.env.NAME), baked into the roll as the
+    // plaintext TWO80_CONFIG var (parallel to EGRESS_POLICY) and expanded into the
+    // container's process env at lazy start. Never a secret: a credential is attached
+    // Worker-side at egress and never reaches this env. {} on absent/malformed.
+    this.envVars = parseConfig(env && env.TWO80_CONFIG);
+  }
 }
 
 // registerEgress installs the package handler on App280Container. The package

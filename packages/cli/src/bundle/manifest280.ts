@@ -15,7 +15,9 @@ import {
   isAppAccess,
   normalizeEgressPolicy,
   resolveRouteGate,
+  validateConfig,
   validateEgressPolicy,
+  type ConfigEntry,
   type EgressCredential,
   type EgressPolicy,
   type RouteGate,
@@ -28,6 +30,7 @@ export interface Policy280 {
   roles: string[];
   routes: RouteGate[];
   secrets: string[];
+  config: ConfigEntry[];
 }
 
 const EMPTY: Policy280 = {
@@ -36,6 +39,7 @@ const EMPTY: Policy280 = {
   roles: [],
   routes: [],
   secrets: [],
+  config: [],
 };
 
 // read280 parses the whole 280.json into the enforced policy. Absent file =>
@@ -55,14 +59,78 @@ export function read280(root: string): Policy280 {
   }
   const o = parsed as Record<string, unknown>;
   const roles = parseRoles(o.roles);
-  const secrets = parseSecrets(o.secrets);
+  // A credentialed secret is declared by its egress credential, so the top-level
+  // "secrets" list is now optional (kept for back-compat and non-credential secrets).
+  // The effective declared set the manifest carries is the union of both.
+  const explicitSecrets = parseSecrets(o.secrets);
+  const egress = parseEgress(o.egress, explicitSecrets);
+  const secrets = unionSecrets(explicitSecrets, egress.credentials);
   return {
-    egress: parseEgress(o.egress, secrets),
+    egress,
     access: parseAccess(o.access),
     roles,
     routes: parseRoutes(o.routes, roles),
     secrets,
+    config: parseConfig(o.config, secrets),
   };
+}
+
+// unionSecrets folds every egress credential's secret name into the explicit
+// secrets list (order preserved, deduped), so a credentialed secret need not be
+// repeated in "secrets" yet still reaches delivery, the waiting gate, and the digest.
+function unionSecrets(explicit: string[], creds: EgressCredential[]): string[] {
+  const out = [...explicit];
+  const seen = new Set(explicit);
+  for (const c of creds) {
+    if (c.secret !== '' && !seen.has(c.secret)) {
+      seen.add(c.secret);
+      out.push(c.secret);
+    }
+  }
+  return out;
+}
+
+// parseConfig reads the non-secret config block: a map of env-var NAME to either a
+// committed-public string, or an object ({ value }, { sensitive: true }, or both).
+// Normalized to a name-sorted ConfigEntry list and validated against the declared
+// secrets (a name is config or secret, never both) before any upload.
+function parseConfig(v: unknown, secrets: string[]): ConfigEntry[] {
+  if (v === undefined || v === null) return [];
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    fail('280.json "config" must be an object mapping NAME to a value', 'e.g. "config": { "REGION": "us-east-1" }');
+  }
+  const entries = Object.entries(v as Record<string, unknown>).map(([name, raw]) => parseConfigEntry(name, raw));
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  try {
+    validateConfig(entries, secrets);
+  } catch (err) {
+    const d = asDeployError(err);
+    if (d) fail(d.message, d.fix, d.code);
+    throw err;
+  }
+  return entries;
+}
+
+function parseConfigEntry(name: string, raw: unknown): ConfigEntry {
+  if (typeof raw === 'string') return { name, value: raw, sensitive: false };
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    fail(
+      `280.json config "${name}" must be a string or an object`,
+      'e.g. "REGION": "us-east-1", or "SHEET_ID": { "sensitive": true }',
+    );
+  }
+  const o = raw as Record<string, unknown>;
+  let value = '';
+  if (o.value !== undefined && o.value !== null) {
+    if (typeof o.value !== 'string') fail(`280.json config "${name}" value must be a string`, 'quote the value');
+    value = o.value;
+  }
+  let sensitive = false;
+  if (o.sensitive !== undefined && o.sensitive !== null) {
+    if (typeof o.sensitive !== 'boolean') fail(`280.json config "${name}" sensitive must be true or false`, 'use a boolean');
+    sensitive = o.sensitive;
+  }
+  return { name, value, sensitive };
 }
 
 function parseAccess(v: unknown): string {

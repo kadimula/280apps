@@ -146,6 +146,11 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'Set in 280.json or the dashboard Share dialog (dashboard wins); public serves anonymous viewers with no sign-in',
     },
     {
+      name: 'Config env vars the app reads (280.json config)',
+      status: 'supported',
+      note: 'Non-secret values (ids, regions, flags) reach process.env; a value the app never reads is a secret, injected at egress',
+    },
+    {
       name: 'Per app Postgres and R2',
       status: 'unsupported',
       note: 'Direction, not shipped',

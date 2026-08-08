@@ -47,7 +47,7 @@ function activation(files: Record<string, string>): { act: Activation } {
 
 function rolloutOf(
   act: Activation,
-  over: { policy?: Record<string, unknown>; egress?: Record<string, unknown> } = {},
+  over: { policy?: Record<string, unknown>; egress?: Record<string, unknown>; config?: Record<string, string> } = {},
 ) {
   return {
     app: act.app,
@@ -56,6 +56,7 @@ function rolloutOf(
     files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
     policy: over.policy ?? { access: 'invited', roles: [], routes: [], secrets: [] },
     egress: over.egress ?? { allowedHosts: [], credentials: [] },
+    config: over.config ?? {},
   };
 }
 
@@ -277,6 +278,33 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual(policy);
     expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://console.280apps.com');
+    // A config-less roll omits TWO80_CONFIG entirely (byte-identical to pre-config).
+    expect((rollConfig.vars as Record<string, string>).TWO80_CONFIG).toBeUndefined();
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('bakes non-secret config into TWO80_CONFIG when the job carries any', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    const exec: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return { code: 0, output: '' };
+    };
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({
+      accountId: 'acct1', apiToken: 't', depotToken: 'd', projectId: 'p',
+      workerEntry: 'harness.js', workdir, exec, api, fetch: credsFetch(),
+    });
+    await deploy(
+      builder,
+      rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { config: { GOOGLE_SHEET_ID: '1AbC', REGION: 'us-east-1' } }),
+    );
+    expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_CONFIG)).toEqual({
+      GOOGLE_SHEET_ID: '1AbC',
+      REGION: 'us-east-1',
+    });
     await rm(workdir, { recursive: true, force: true });
   });
 

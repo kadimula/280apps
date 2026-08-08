@@ -11,6 +11,7 @@ import type { Logger } from './observe.js';
 import type { Config } from './config.js';
 import type { SecretCipher } from './secrets.js';
 import { ControlPlaneSecretDelivery } from './secret-delivery.js';
+import { ControlPlaneConfigDelivery } from './config-delivery.js';
 
 // selectRuntime picks where apps run and which build home compiles their images.
 // Misconfiguration is a request failure rather than a degraded mode: a platform
@@ -34,7 +35,11 @@ export function selectRuntime(
   }
   const builder = buildDepotBuilder(config, log);
   const secretDelivery = new ControlPlaneSecretDelivery(store, cipher, builder);
-  return { runtime: new container.ContainerRuntime(builder, secretDelivery), secretDelivery };
+  const configDelivery = new ControlPlaneConfigDelivery(store, cipher);
+  return {
+    runtime: new container.ContainerRuntime(builder, secretDelivery, configDelivery),
+    secretDelivery,
+  };
 }
 
 function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {

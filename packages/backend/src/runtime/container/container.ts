@@ -15,10 +15,18 @@ import {
   DeployErr,
   appPolicyFromManifest,
   normalizeEgressPolicy,
+  publicConfig,
   type BuildSpec,
   type EgressPolicy,
 } from '@280/contracts';
-import type { Activation, Runtime as RuntimeSeam, RuntimeApp, RuntimeResult, SecretDelivery } from '../../seams.js';
+import type {
+  Activation,
+  ConfigDelivery,
+  Runtime as RuntimeSeam,
+  RuntimeApp,
+  RuntimeResult,
+  SecretDelivery,
+} from '../../seams.js';
 
 // RolloutPolicy is the enforced slice of the app's manifest the roll bakes into the
 // per-app Worker (TWO80_ROUTE_POLICY): access mode + feature roles + route gates +
@@ -47,6 +55,10 @@ export interface RolloutJob {
   // normalized, baked into the per-app Worker (EGRESS_POLICY) so the container's
   // fail-closed egress boundary and in-flight credential injection match 280.json.
   egress: EgressPolicy;
+  // The non-secret config the app reads (TWO80_CONFIG → container process.env): the
+  // manifest's committed-public values, with dashboard-entered ('config' kind)
+  // values merged in by ConfigDelivery at rollout. Never carries a secret value.
+  config: Record<string, string>;
 }
 
 // RolloutResult is what a successful rollout reports back. imageRef is the pushed
@@ -91,6 +103,7 @@ export class ContainerRuntime implements RuntimeSeam {
   constructor(
     private readonly builder: ContainerBuilder,
     private readonly secrets?: SecretDelivery,
+    private readonly config?: ConfigDelivery,
   ) {}
 
   private job(act: Activation): RolloutJob {
@@ -101,6 +114,9 @@ export class ContainerRuntime implements RuntimeSeam {
       files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
       policy: appPolicyFromManifest(act.manifest),
       egress: normalizeEgressPolicy(act.manifest.egress ?? { allowedHosts: [], credentials: [] }),
+      // Committed-public values only; dashboard-entered values are merged in
+      // activate() via ConfigDelivery (which alone can reveal them).
+      config: publicConfig(act.manifest.config ?? []),
     };
   }
 
@@ -115,6 +131,7 @@ export class ContainerRuntime implements RuntimeSeam {
 
   async activate(act: Activation): Promise<RuntimeResult> {
     const job = this.job(act);
+    if (this.config) job.config = await this.config.resolve(act.app, act.manifest.config ?? []);
     const key = `${act.app.id}/${act.deployId}`;
     if (!this.prepared.has(key)) await this.prepare(act);
     try {

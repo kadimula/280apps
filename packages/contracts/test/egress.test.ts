@@ -257,8 +257,10 @@ describe('validateEgressPolicy', () => {
     );
   });
 
-  it('rejects a credential whose secret is undeclared', () => {
-    rejects({ credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }] }, []);
+  it('self-declares a credential secret absent from the top-level secrets list', () => {
+    // Leanness: binding a host to a secret is what declares it, so it need not be
+    // repeated in "secrets". The reserved-name check still applies (below).
+    ok({ credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }] }, []);
   });
 
   it('rejects a credential with no secret name', () => {
@@ -292,8 +294,9 @@ describe('validateWireEgressPolicy accepts the normalized form the CLI actually 
   it('still rejects security-relevant violations that survive normalization', () => {
     const badHost = wire({ allowedHosts: [], credentials: [google({ host: 'api.stripe.com' })] });
     expect(() => validateWireEgressPolicy(badHost, ['GSA'])).toThrow();
-    const undeclared = wire({ allowedHosts: [], credentials: [google()] });
-    expect(() => validateWireEgressPolicy(undeclared, [])).toThrow();
+    // A credential secret is self-declared, so an empty secrets list is fine.
+    const selfDeclared = wire({ allowedHosts: [], credentials: [google()] });
+    expect(() => validateWireEgressPolicy(selfDeclared, [])).not.toThrow();
   });
 });
 
@@ -309,10 +312,9 @@ describe('the fake preflight rejects the same typed policy errors as the backend
     await expect(sync({ credentials: [google()] }, ['GSA'])).resolves.toMatchObject({ resolution: 'created' });
   });
 
-  it('rejects an undeclared typed secret with PreflightRejected', async () => {
-    await expect(sync({ credentials: [google()] }, [])).rejects.toMatchObject({
-      code: DeployCode.PreflightRejected,
-    });
+  it('accepts a typed credential whose secret is not in the top-level secrets list', async () => {
+    // The credential self-declares its secret; leanness means no duplicate listing.
+    await expect(sync({ credentials: [google()] }, [])).resolves.toMatchObject({ resolution: 'created' });
   });
 
   it('rejects a typed credential on a non-provider host with PreflightRejected', async () => {

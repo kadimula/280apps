@@ -9,41 +9,41 @@ import type { SecretDelivery } from './seams.js';
 // ConfigVars is the raw environment the host reads: non-secret tunables and
 // secrets, all optional strings (absent ⇒ undefined).
 export interface ConfigVars {
-  TWO80_RUNTIME?: string;
-  TWO80_LOG_FORMAT?: string;
-  TWO80_DB_SCHEMA?: string;
-  TWO80_APP_DOMAIN?: string;
-  TWO80_APP_HOST_SUFFIX?: string;
-  TWO80_API_ORIGIN?: string;
-  TWO80_FRONTEND_ORIGIN?: string;
-  // TWO80_FRAME_ANCESTORS is the space-separated origin allowlist baked into each
+  APP_RUNTIME?: string;
+  LOG_FORMAT?: string;
+  DATABASE_SCHEMA?: string;
+  APP_BASE_DOMAIN?: string;
+  APP_HOST_SUFFIX?: string;
+  BACKEND_API_ORIGIN?: string;
+  FRONTEND_ORIGIN?: string;
+  // APP_FRAME_ANCESTORS is the space-separated origin allowlist baked into each
   // app Worker as the CSP frame-ancestors (who may embed an app host). Default is
   // the frontend origin, so the dashboard can always preview its own apps.
-  TWO80_FRAME_ANCESTORS?: string;
-  TWO80_VERIFICATION_URI?: string;
-  TWO80_COOKIE_DOMAIN?: string;
+  APP_FRAME_ANCESTORS?: string;
+  DEVICE_APPROVAL_URL?: string;
+  SESSION_COOKIE_DOMAIN?: string;
   // Per-environment cookie names so prod and dev sessions coexist in one browser
   // on the shared .280apps.com domain. Default 280_session / 280_oauth.
-  TWO80_SESSION_COOKIE?: string;
-  TWO80_OAUTH_COOKIE?: string;
-  TWO80_MIN_CLI_VERSION?: string;
-  TWO80_SESSION_TTL_DAYS?: string;
-  TWO80_MACHINE_TOKEN_TTL_DAYS?: string;
-  TWO80_LOGIN_RATE_WINDOW_SECS?: string;
-  TWO80_LOGIN_RATE_MAX?: string;
+  SESSION_COOKIE_NAME?: string;
+  OAUTH_COOKIE_NAME?: string;
+  MINIMUM_CLI_VERSION?: string;
+  SESSION_TTL_DAYS?: string;
+  MACHINE_TOKEN_TTL_DAYS?: string;
+  LOGIN_RATE_LIMIT_WINDOW_SECONDS?: string;
+  LOGIN_RATE_LIMIT_MAX_REQUESTS?: string;
   // DEPOT_PROJECT_ID pins every Depot build to one project (isolated layer cache).
   // Unset resolves a project per app via the Depot API.
   DEPOT_PROJECT_ID?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
-  // TWO80_WORKER_ENTRY is the App280Container harness Worker the generated roll
+  // APP_WORKER_ENTRYPOINT is the App280Container harness Worker the generated roll
   // config points `main` at; supplied by the runtime image, not the app source.
-  TWO80_WORKER_ENTRY?: string;
-  // TWO80_GATEWAY_SERVICE is the central identity gateway Worker the per-app roll
+  APP_WORKER_ENTRYPOINT?: string;
+  // IDENTITY_GATEWAY_SERVICE is the central identity gateway Worker the per-app roll
   // binds (GATEWAY service binding). Default 280-gateway<hostSuffix>.
-  TWO80_GATEWAY_SERVICE?: string;
-  // TWO80_ID_ISSUER is the identity-token issuer the per-app middleware verifies
-  // against; it must match what the gateway signs. Default https://auth<suffix>.<domain>.
-  TWO80_ID_ISSUER?: string;
+  IDENTITY_GATEWAY_SERVICE?: string;
+  // IDENTITY_TOKEN_ISSUER is the identity-token issuer the per-app middleware
+  // verifies against; it must match what the gateway signs.
+  IDENTITY_TOKEN_ISSUER?: string;
 
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
@@ -52,12 +52,12 @@ export interface ConfigVars {
   // authorizes the wrangler roll. Required for the depot builder.
   CLOUDFLARE_API_TOKEN?: string;
   DATABASE_URL?: string;
-  TWO80_SECRET_ENCRYPTION_KEY?: string;
-  TWO80_SECRET_ENCRYPTION_KEY_ID?: string;
+  APP_SECRETS_LOCAL_MASTER_KEY?: string;
+  APP_SECRETS_LOCAL_KEY_ID?: string;
   // The Cloud KMS contract for app secret envelopes (production design): the full
   // key resource name and the service-account credential JSON for the environment.
-  TWO80_SECRET_KMS_KEY_NAME?: string;
-  TWO80_SECRET_KMS_CREDENTIALS_JSON?: string;
+  APP_SECRETS_KMS_KEY_NAME?: string;
+  APP_SECRETS_KMS_CREDENTIALS_JSON?: string;
 }
 
 // Config is ConfigVars resolved: defaults applied, numbers parsed, secrets grouped.
@@ -102,42 +102,42 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     v !== undefined && v !== '' ? v : fallback;
   const num = (v: string | undefined, fallback: number): number => Number(str(v, String(fallback))) || fallback;
 
-  const appDomain = str(vars.TWO80_APP_DOMAIN, '280apps.run');
-  const hostSuffix = vars.TWO80_APP_HOST_SUFFIX ?? '';
-  const frontendOrigin = str(vars.TWO80_FRONTEND_ORIGIN, 'https://console.280apps.com');
+  const appDomain = str(vars.APP_BASE_DOMAIN, '280apps.run');
+  const hostSuffix = vars.APP_HOST_SUFFIX ?? '';
+  const frontendOrigin = str(vars.FRONTEND_ORIGIN, 'https://console.280apps.com');
 
   return {
-    runtime: str(vars.TWO80_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
-    logFormat: str(vars.TWO80_LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
-    dbSchema: str(vars.TWO80_DB_SCHEMA, 'platform'),
+    runtime: str(vars.APP_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
+    logFormat: str(vars.LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
+    dbSchema: str(vars.DATABASE_SCHEMA, 'platform'),
     dbConnectionString,
     appDomain,
     hostSuffix,
-    apiOrigin: str(vars.TWO80_API_ORIGIN, 'https://api.280apps.com'),
+    apiOrigin: str(vars.BACKEND_API_ORIGIN, 'https://api.280apps.com'),
     frontendOrigin,
-    frameAncestors: str(vars.TWO80_FRAME_ANCESTORS, frontendOrigin),
-    verificationUri: str(vars.TWO80_VERIFICATION_URI, 'https://280apps.com/activate'),
-    cookieDomain: vars.TWO80_COOKIE_DOMAIN ?? '',
-    sessionCookieName: str(vars.TWO80_SESSION_COOKIE, '280_session'),
-    oauthCookieName: str(vars.TWO80_OAUTH_COOKIE, '280_oauth'),
-    minCliVersion: vars.TWO80_MIN_CLI_VERSION ?? '',
-    sessionTtlDays: num(vars.TWO80_SESSION_TTL_DAYS, 30),
-    machineTokenTtlDays: num(vars.TWO80_MACHINE_TOKEN_TTL_DAYS, 90),
+    frameAncestors: str(vars.APP_FRAME_ANCESTORS, frontendOrigin),
+    verificationUri: str(vars.DEVICE_APPROVAL_URL, 'https://280apps.com/activate'),
+    cookieDomain: vars.SESSION_COOKIE_DOMAIN ?? '',
+    sessionCookieName: str(vars.SESSION_COOKIE_NAME, '280_session'),
+    oauthCookieName: str(vars.OAUTH_COOKIE_NAME, '280_oauth'),
+    minCliVersion: vars.MINIMUM_CLI_VERSION ?? '',
+    sessionTtlDays: num(vars.SESSION_TTL_DAYS, 30),
+    machineTokenTtlDays: num(vars.MACHINE_TOKEN_TTL_DAYS, 90),
     loginRate: {
-      windowSecs: num(vars.TWO80_LOGIN_RATE_WINDOW_SECS, 600),
-      max: num(vars.TWO80_LOGIN_RATE_MAX, 30),
+      windowSecs: num(vars.LOGIN_RATE_LIMIT_WINDOW_SECONDS, 600),
+      max: num(vars.LOGIN_RATE_LIMIT_MAX_REQUESTS, 30),
     },
     google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
     depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
     cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
-    workerEntry: str(vars.TWO80_WORKER_ENTRY, 'worker.js'),
-    gatewayService: str(vars.TWO80_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
-    idIssuer: str(vars.TWO80_ID_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
+    workerEntry: str(vars.APP_WORKER_ENTRYPOINT, 'worker.js'),
+    gatewayService: str(vars.IDENTITY_GATEWAY_SERVICE, `280-gateway${hostSuffix}`),
+    idIssuer: str(vars.IDENTITY_TOKEN_ISSUER, `https://auth${hostSuffix}.${appDomain}`),
     secretEncryption: {
-      localKey: vars.TWO80_SECRET_ENCRYPTION_KEY ?? '',
-      localKeyId: vars.TWO80_SECRET_ENCRYPTION_KEY_ID ?? '',
-      kmsKeyName: vars.TWO80_SECRET_KMS_KEY_NAME ?? '',
-      kmsCredentialsJson: vars.TWO80_SECRET_KMS_CREDENTIALS_JSON ?? '',
+      localKey: vars.APP_SECRETS_LOCAL_MASTER_KEY ?? '',
+      localKeyId: vars.APP_SECRETS_LOCAL_KEY_ID ?? '',
+      kmsKeyName: vars.APP_SECRETS_KMS_KEY_NAME ?? '',
+      kmsCredentialsJson: vars.APP_SECRETS_KMS_CREDENTIALS_JSON ?? '',
     },
   };
 }

@@ -17,7 +17,7 @@ function dsn(): string {
 
 // The platform's tables live in their own schema, defaulting to "platform".
 function schema(): string {
-  const s = process.env.TWO80_DB_SCHEMA;
+  const s = process.env.DATABASE_SCHEMA;
   return s === undefined || s === '' ? 'platform' : s;
 }
 

@@ -16,21 +16,21 @@ committed [`.env.example`](../.env.example) at the repo root.
 | Auth host (identity gateway) | `auth.280apps.run` | `auth-development.280apps.run` |
 | App URLs | `*.280apps.run` | `*-development.280apps.run` |
 | Control-plane API (`TWO80_API`) | `https://api.280apps.com` | `https://api-development.280apps.com` |
-| Frontend origin (dashboard, `TWO80_FRONTEND_ORIGIN`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
-| Frame-ancestors (`TWO80_FRAME_ANCESTORS`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
-| App host suffix (`TWO80_APP_HOST_SUFFIX`) | *(empty)* | `-development` |
+| Frontend origin (dashboard, `FRONTEND_ORIGIN`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
+| Frame-ancestors (`APP_FRAME_ANCESTORS`) | `https://console.280apps.com` | `https://dev-console.280apps.com` |
+| App host suffix (`APP_HOST_SUFFIX`) | *(empty)* | `-development` |
 
 Note: the dev dashboard host `dev-console.280apps.com` uses a `dev-` prefix, not the
 `*-development` suffix every other dev host follows. Keep it in sync with wherever the
-dashboard is actually deployed; `TWO80_FRAME_ANCESTORS` must equal that origin or the
+dashboard is actually deployed; `APP_FRAME_ANCESTORS` must equal that origin or the
 dashboard iframe preview is blocked by CSP.
 
 Container-only serving: each dev app deploys as its own Cloudflare Worker and
 serves at `*-development.280apps.run`; production apps serve at `*.280apps.run`.
 Each app Worker calls the identity gateway (`auth[-development].280apps.run`) to
 mint a signed identity, then forwards to its container. The `-development` host
-label comes from `TWO80_APP_HOST_SUFFIX`, which is inserted before
-`TWO80_APP_DOMAIN` (`280apps.run`).
+label comes from `APP_HOST_SUFFIX`, which is inserted before
+`APP_BASE_DOMAIN` (`280apps.run`).
 
 ## Targeting dev from the CLI
 
@@ -54,7 +54,7 @@ The control-plane backend (`packages/backend`, the Node host in
 - **Port:** `8080` (the image `EXPOSE`s 8080; Railway also injects `PORT`, which
   the host honors first).
 - **Blob storage:** a mounted Railway volume backs the filesystem blob store when
-  the `TWO80_S3_*` vars are unset. Point `TWO80_BLOBS` at the volume mount path.
+  the `BLOB_S3_*` vars are unset. Point `LOCAL_BLOB_DIRECTORY` at the volume mount path.
 
 It is deployed as a `development` environment inside the `280-prod` Railway
 project (a separate environment from `production`, with its own variables and its
@@ -70,16 +70,16 @@ the backend and gateway read, with comments.
 Non-secret (safe to set literally in the dev environment):
 
 ```sh
-TWO80_RUNTIME=container
-TWO80_API_ORIGIN=https://api-development.280apps.com
-TWO80_FRONTEND_ORIGIN=https://dev-console.280apps.com
-TWO80_FRAME_ANCESTORS=https://dev-console.280apps.com
-TWO80_APP_DOMAIN=280apps.run
-TWO80_APP_HOST_SUFFIX=-development
-TWO80_COOKIE_DOMAIN=.280apps.com
-TWO80_DB_SCHEMA=platform
-TWO80_VERIFICATION_URI=https://280apps.com/activate
-TWO80_LOG_FORMAT=json
+APP_RUNTIME=container
+BACKEND_API_ORIGIN=https://api-development.280apps.com
+FRONTEND_ORIGIN=https://dev-console.280apps.com
+APP_FRAME_ANCESTORS=https://dev-console.280apps.com
+APP_BASE_DOMAIN=280apps.run
+APP_HOST_SUFFIX=-development
+SESSION_COOKIE_DOMAIN=.280apps.com
+DATABASE_SCHEMA=platform
+DEVICE_APPROVAL_URL=https://280apps.com/activate
+LOG_FORMAT=json
 ```
 
 Secrets (set in Railway, never committed — real values live outside the repo):
@@ -90,5 +90,5 @@ Secrets (set in Railway, never committed — real values live outside the repo):
 - `DEPOT_TOKEN`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `TWO80_SECRET_KMS_KEY_NAME` (the environment's Cloud KMS key resource name)
-- `TWO80_SECRET_KMS_CREDENTIALS_JSON`
+- `APP_SECRETS_KMS_KEY_NAME` (the environment's Cloud KMS key resource name)
+- `APP_SECRETS_KMS_CREDENTIALS_JSON`

@@ -1,15 +1,18 @@
-// Platform internal seams as TS interfaces; behavior is normative in the Go
-// spec: platform/internal/{store/store.go, blobstore/blobstore.go, runtime/runtime.go}.
-// Go's (value, found, error) is modeled as a nullable return (value | null) with
-// failures rejecting; conditional transitions that report a winner return boolean.
-
-import type { BlobBody } from '@280/contracts';
-import type { Manifest, Digest, BlobInfo, DeployError, AppAccess, AppPolicy, PreviewGrant, ConfigEntry } from '@280/contracts';
+import type {
+  AppAccess,
+  AppPolicy,
+  BlobBody,
+  BlobInfo,
+  ConfigEntry,
+  DeployError,
+  Digest,
+  Manifest,
+  PreviewGrant,
+  State,
+} from '@280/contracts';
 
 export type { AppPolicy, PreviewGrant, ViewAsTarget } from '@280/contracts';
 
-// id is the OIDC-stable principal every resource keys on, so preserving ids across
-// the next-auth migration is what keeps existing users' apps attached to them.
 export interface User {
   id: string;
   email: string;
@@ -17,20 +20,17 @@ export interface User {
   image: string;
 }
 
-// (provider, providerAccountId) is the provider's stable handle for the user,
-// e.g. Google's `sub`.
 export interface OAuthAccount {
   provider: string;
   providerAccountId: string;
   userId: string;
 }
 
-// Only the token's hash is stored, so a leaked database does not hand over the
-// ability to impersonate every logged-in user.
+// Persists the token hash for the `SESSION_COOKIE_NAME` cookie, which defaults to `280_session`.
 export interface Session {
   tokenHash: string;
   userId: string;
-  expiresAt: number; // unix seconds
+  expiresAt: number;
 }
 
 export const DeviceStatus = {
@@ -40,40 +40,39 @@ export const DeviceStatus = {
 } as const;
 export type DeviceStatus = (typeof DeviceStatus)[keyof typeof DeviceStatus];
 
-// deviceHash is the hash of the CLI's secret; the secret itself is never stored.
+// Only the device secret hash is persisted.
 export interface DeviceCode {
   deviceHash: string;
   userCode: string;
-  userId: string; // set on approval
-  status: string;
-  expiresAt: number; // unix seconds
+  userId: string;
+  status: DeviceStatus;
+  expiresAt: number;
 }
 
-// Script and URL are assigned at creation and never change.
 export interface App {
   id: string;
   userId: string;
   slug: string;
   framework: string;
-  url: string; // https://<slug>-<token>.<domain>
-  script: string; // runtime script name; also the URL's host label
-  salt: string; // per-app asset-hash salt
+  url: string;
+  script: string;
+  salt: string;
 
-  fingerprint: string; // hash of git remote + slug, for autolink
-  clientRef: string; // create-dedup nonce when there is no git remote
+  fingerprint: string;
+  clientRef: string;
 
-  storeId: string; // the app's SQL store, assigned on first activation
-  activeDeploy: string; // the deploy the app is serving
+  storeId: string;
+  activeDeploy: string;
 
-  createdAt: number; // seconds since epoch, when the app was first created
-  lastDeployAt: number | null; // when the live deploy was created; null before first live deploy
+  createdAt: number;
+  lastDeployAt: number | null;
 }
 
 export interface Deploy {
   appId: string;
   id: string;
   manifest: Manifest;
-  state: string;
+  state: State;
   failure: DeployError | null;
 }
 
@@ -84,23 +83,14 @@ export const EventKind = {
   DeployFailed: 'deploy.failed',
   LoginApproved: 'login.approved',
   LoginClaimed: 'login.claimed',
-  // The permission audit (design §08): who was granted or revoked, whose live
-  // deploy re-registered its policy, and who reached (or was denied) an app.
   GrantAdded: 'grant.added',
   GrantRevoked: 'grant.revoked',
   PolicyRegistered: 'policy.registered',
-  // The owner dialed the app's general-access mode from the dashboard; detail
-  // records {from, to, by}. The override outlives redeploys (registerPolicy
-  // never touches it).
   PolicyAccessChanged: 'policy.access_changed',
   AppAccessed: 'app.accessed',
   AppAccessDenied: 'app.access_denied',
-  // A "view as user" preview mint: an owner/admin rendered the app as another
-  // principal. Detail names both the acting owner and the impersonated principal.
   AppPreviewedAs: 'app.previewed_as',
   SecretSet: 'secret.set',
-  // A stored value erased because the live manifest no longer declares its name;
-  // this event is the tombstone (the row itself is deleted).
   SecretRemoved: 'secret.removed',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
@@ -110,22 +100,19 @@ export interface Event {
   userId: string;
   appId: string;
   deployId: string;
-  kind: string;
-  detail: string; // small JSON object string, or empty
+  kind: EventKind;
+  detail: string;
   createdAt: number;
 }
 
-// A stored, encrypted app value. `kind` discriminates the two channels that share
-// this store: 'secret' (delivered to the Worker vault, injected at egress, never
-// read by the app) and 'config' (a non-secret value the app reads, revealed into
-// the container env at rollout). Absent means 'secret', the back-compatible default.
+// Secret values are injected at egress. Config values are readable by the app.
 export interface AppSecret {
   appId: string;
   name: string;
   envelope: string;
   setBy: string;
   setAt: number;
-  kind?: 'secret' | 'config';
+  kind: 'secret' | 'config';
 }
 
 export interface ExpiryCounts {
@@ -136,9 +123,6 @@ export interface ExpiryCounts {
   previewGrants: number;
 }
 
-// Tier 1 of the permission model: roles over the app as an object (open it, change
-// its code, manage its grants), identical for every 280 app so one share dialog
-// drives them all. Owner and Admin manage grants; Editor changes code; Viewer opens.
 export const AppRole = {
   Owner: 'owner',
   Admin: 'admin',
@@ -147,18 +131,14 @@ export const AppRole = {
 } as const;
 export type AppRole = (typeof AppRole)[keyof typeof AppRole];
 
-// One principal's access to one app. The model is flat (one row per (app,
-// principal), no relationship graph) until relationships turn graph-shaped. appRole
-// is tier 1; featureRole is tier 2, a builder-defined role from the app's 280.json
-// into which custom actions fold via can().
 export interface Grant {
   appId: string;
-  principal: string; // 'alice@firm.com' or 'domain:firm.com'
+  principal: string;
   appRole: AppRole;
-  featureRole: string; // '' when the principal holds no feature role
-  dataScope: Record<string, unknown> | null; // advisory JSON, null when unset
+  featureRole: string;
+  dataScope: Record<string, unknown> | null;
   grantedBy: string;
-  grantedAt: number; // unix seconds
+  grantedAt: number;
 }
 
 export interface Store {
@@ -166,14 +146,10 @@ export interface Store {
 
   recentEvents(limit: number): Promise<Event[]>;
 
-  // Resolves the token's user only if it is still valid: minCreatedAt is the
-  // caller's now - ttl, and a token created at or before it is expired (null),
-  // indistinguishable from an unknown token.
+  // Returns null when the token is unknown or not newer than minCreatedAt.
   userByToken(tokenHash: string, minCreatedAt: number): Promise<User | null>;
   addToken(userId: string, tokenHash: string): Promise<void>;
 
-  // The identity the backend owns once login moves off the frontend: users key on
-  // a stable id, oauth logins on the provider's handle, sessions on a hashed token.
   userById(id: string): Promise<User | null>;
   userByEmail(email: string): Promise<User | null>;
   createUser(u: User): Promise<void>;
@@ -183,13 +159,10 @@ export interface Store {
   sessionByHash(tokenHash: string): Promise<Session | null>;
   deleteSession(tokenHash: string): Promise<void>;
 
-  // Records one login attempt from key (a client IP) in a fixed window and reports
-  // whether still under limit. The window is stored, so replicas share one counter.
+  // Records the attempt in a shared fixed window and returns whether it is allowed.
   touchLoginRate(key: string, now: number, windowSecs: number, limit: number): Promise<boolean>;
 
-  // Removes rows no longer valid as of now (expired sessions and device codes,
-  // lapsed rate windows, machine tokens created before now - machineTokenTtlSecs).
-  // Idempotent; the counts returned are only for the log line.
+  // Removes expired authentication records and returns the number removed by kind.
   deleteExpired(now: number, machineTokenTtlSecs: number): Promise<ExpiryCounts>;
 
   createDeviceCode(d: DeviceCode): Promise<void>;
@@ -197,9 +170,7 @@ export interface Store {
   approveDeviceCode(userCode: string, userId: string, now: number): Promise<boolean>;
   claimDeviceCode(deviceHash: string): Promise<boolean>;
 
-  // Dashboard preview grants (the device-code discipline: only the hash is
-  // stored). The control plane writes them; the gateway reads and honors them over
-  // the same shared store, so revocation and expiry apply on the next mint.
+  // Preview tokens are persisted only by hash.
   createPreviewGrant(g: PreviewGrant): Promise<void>;
   previewGrantByHash(tokenHash: string): Promise<PreviewGrant | null>;
   revokePreviewGrant(tokenHash: string): Promise<boolean>;
@@ -214,8 +185,7 @@ export interface Store {
   appByScript(script: string): Promise<App | null>;
 
   deploy(appId: string, deployId: string): Promise<Deploy | null>;
-  // The app's newest deploy in any state, for surfaces that must see a pending
-  // manifest before it goes live (secret entry precedes the first go-live).
+  // Returns the newest deploy regardless of state.
   latestDeploy(appId: string): Promise<Deploy | null>;
   openDeploys(appId: string): Promise<Deploy[]>;
   openDeploy(d: Deploy): Promise<Deploy>;
@@ -227,24 +197,16 @@ export interface Store {
   finishLive(appId: string, deployId: string): Promise<void>;
   finishFailed(appId: string, deployId: string, failure: DeployError | null): Promise<void>;
 
-  // The two-tier sharing model, flat (one row per (app, principal)). putGrant
-  // upserts and revokeGrant deletes; both write a permission-audit event naming the
-  // actor (grantedBy / revokedBy), so every change to who-can-do-what is on record.
+  // Grant mutations also append an audit event naming the actor.
   putGrant(g: Grant): Promise<void>;
   grant(appId: string, principal: string): Promise<Grant | null>;
   grantsByApp(appId: string): Promise<Grant[]>;
   revokeGrant(appId: string, principal: string, revokedBy?: string): Promise<boolean>;
 
-  // The enforced policy of the app's live deploy — access mode, feature roles, route
-  // gates, secret names, owner tenant. Registered atomically when a deploy goes live
-  // (see finishLive), read by the gateway to gate each request. Null until the app
-  // has gone live at least once.
+  // Returns null until the app has a live policy.
   appPolicy(appId: string): Promise<AppPolicy | null>;
 
-  // The dashboard's general-access override (design: Share modal "General
-  // access"). Writes access_override — never the manifest's access column — and
-  // audits policy.access_changed naming the actor. False when the app has no
-  // policy row yet (never gone live), which callers reject rather than create.
+  // Updates the durable access override. Returns false when no live policy exists.
   setAppAccess(appId: string, access: AppAccess, setBy: string): Promise<boolean>;
 
   putAppSecret(secret: AppSecret): Promise<void>;
@@ -252,56 +214,48 @@ export interface Store {
   appSecrets(appId: string): Promise<AppSecret[]>;
   appSecretNames(appId: string): Promise<string[]>;
 
-  // Records one gateway access decision (allowed/denied) for the permission audit.
-  // kind overrides the event kind derived from `allowed` (e.g. app.previewed_as
-  // for an impersonating preview mint). Best-effort by contract: the caller
-  // swallows its error so an audit-write fault never blocks serving a request.
+  // Audit failures must not block requests.
   recordAppAccess(e: {
     appId: string;
     principal: string;
     allowed: boolean;
     detail?: string;
-    kind?: string;
+    kind?: EventKind;
   }): Promise<void>;
 }
 
-// Deploy content, addressed by digest and scoped to one app. get rejects
-// not-found for an unstored digest; put rejects digest_mismatch (storing nothing)
-// when bytes do not hash to the declared digest.
+// Blob reads reject missing content. Blob writes reject size or digest mismatches.
 export interface BlobStore {
   has(appId: string, digest: Digest): Promise<boolean>;
-  // size is the manifest's declared length (BlobInfo.size), not Content-Length; the
-  // backing hashes the body as it drains and rejects digest_mismatch on any mismatch.
+  // Size is the manifest declaration, not the transport content length.
   put(appId: string, digest: Digest, size: number, body: BlobBody): Promise<void>;
   get(appId: string, digest: Digest): Promise<Uint8Array>;
   deleteApp(appId: string): Promise<void>;
   missing(appId: string, want: BlobInfo[]): Promise<Digest[]>;
 }
 
-// A projection of store.App, so runtimes cannot reach into the control plane.
+// The app fields available to runtimes.
 export interface RuntimeApp {
   id: string;
   slug: string;
   framework: string;
   script: string;
   salt: string;
-  storeId: string; // empty until the runtime creates one
+  storeId: string;
 }
 
 export interface Activation {
   app: RuntimeApp;
   deployId: string;
   manifest: Manifest;
-  asset(digest: Digest): Promise<Uint8Array>; // reads one blob the manifest names, including the worker
+  asset(digest: Digest): Promise<Uint8Array>;
 }
 
-// Empty storeId means unchanged.
 export interface RuntimeResult {
   storeId: string;
 }
 
-// prepare builds without changing the serving version. activate rolls the prepared
-// artifact atomically and idempotently; delete is a hard, idempotent delete.
+// Preparation does not change the serving version. Activation is atomic and idempotent.
 export interface Runtime {
   prepare(act: Activation): Promise<void>;
   activate(act: Activation): Promise<RuntimeResult>;
@@ -314,11 +268,7 @@ export interface SecretDelivery {
   delete(app: RuntimeApp, name: string): Promise<void>;
 }
 
-// ConfigDelivery resolves the full container-env map for a rollout: the manifest's
-// committed-public values merged with the dashboard-entered ('config' kind) values
-// revealed from the store. Parallel to SecretDelivery, but it returns a value map
-// baked into the container env (TWO80_CONFIG), never the Worker vault — config is
-// non-secret by definition.
+// Resolves the complete app readable environment for a rollout.
 export interface ConfigDelivery {
   resolve(app: RuntimeApp, config: ConfigEntry[]): Promise<Record<string, string>>;
 }

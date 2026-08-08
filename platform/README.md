@@ -6,7 +6,7 @@
 in, with the platform security defaults locked on. `src/worker.js` is the per-app
 harness Worker that fronts it (verify-and-forward via `@280/gateway`, then the
 egress boundary). This is live production code: the backend image copies it in as
-`TWO80_WORKER_ENTRY` and the roll (`packages/backend/.../registry-builder.ts`)
+`APP_WORKER_ENTRYPOINT` and the roll (`packages/backend/.../registry-builder.ts`)
 deploys `App280Container` as the container class. Both files document their own
 defaults and wiring; read them.
 

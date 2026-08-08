@@ -24,14 +24,14 @@
 	// ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ID_SIGNING_JWK (ECDSA P-256 private
 	// JWK; generate with `node scripts/gen-signing-key.mjs`).
 	"vars": {
-		"TWO80_DB_SCHEMA": "platform",
-		"TWO80_APP_DOMAIN": "280apps.run",
-		"TWO80_AUTH_HOST": "auth.280apps.run",
-		"TWO80_COOKIE_DOMAIN": ".280apps.run",
-		"TWO80_ID_ISSUER": "https://auth.280apps.run",
-		"TWO80_ID_TTL_SECS": "30",
-		"TWO80_ID_SIGNING_KID": "k1",
-		"TWO80_ENTRA_TENANT": "organizations",
-		"TWO80_FALLBACK_REDIRECT": "https://280apps.com"
+		"DATABASE_SCHEMA": "platform",
+		"APP_BASE_DOMAIN": "280apps.run",
+		"AUTH_HOST": "auth.280apps.run",
+		"SESSION_COOKIE_DOMAIN": ".280apps.run",
+		"IDENTITY_TOKEN_ISSUER": "https://auth.280apps.run",
+		"IDENTITY_TOKEN_TTL_SECONDS": "30",
+		"IDENTITY_TOKEN_SIGNING_KID": "k1",
+		"ENTRA_TENANT": "organizations",
+		"FALLBACK_REDIRECT_URL": "https://280apps.com"
 	}
 }

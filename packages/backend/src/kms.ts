@@ -66,6 +66,6 @@ function parseCredentials(credentialsJson: string): Record<string, string> {
   try {
     return JSON.parse(credentialsJson) as Record<string, string>;
   } catch {
-    throw new Error('TWO80_SECRET_KMS_CREDENTIALS_JSON is not valid JSON');
+    throw new Error('APP_SECRETS_KMS_CREDENTIALS_JSON is not valid JSON');
   }
 }

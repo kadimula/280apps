@@ -6,7 +6,7 @@
 #   docker build -f packages/backend/Dockerfile -t 280-platform .
 #
 # This is the Railway cutover target: it runs the Node control plane
-# (src/main.ts) directly. Blobs live on R2 over its S3 API (TWO80_S3_*), Postgres
+# (src/main.ts) directly. Blobs live on R2 over its S3 API (BLOB_S3_*), Postgres
 # is dialed directly via DATABASE_URL, and activation runs in-process. See
 # .env.example for the full env set.
 
@@ -46,7 +46,7 @@ RUN pnpm --filter @280/backend deploy --prod --legacy /app
 #   - wrangler: rolls the app's container application onto the pre-built image
 #               (`wrangler deploy --containers-rollout immediate`).
 # Depot is the sole build home; it needs DEPOT_TOKEN and CLOUDFLARE_* set (or run
-# TWO80_RUNTIME=memory to record deploys without building).
+# APP_RUNTIME=memory to record deploys without building).
 FROM node:22-slim
 WORKDIR /app
 
@@ -74,7 +74,7 @@ COPY --from=build /app /app
 # wrangler's esbuild resolves `@280/gateway/appworker` -> `@280/contracts` at bundle
 # time. @280/gateway declares @280/backend as a dep, but the middleware never imports
 # it, so it is intentionally not vendored (and never enters the tenant bundle).
-# TWO80_WORKER_ENTRY points the generated roll config at the vendored entry (absolute,
+# APP_WORKER_ENTRYPOINT points the generated roll config at the vendored entry (absolute,
 # so it resolves from any build-context cwd). @280/egress (the outbound credential
 # handler container.js imports) is vendored the same way; it depends on @280/contracts,
 # already flat in this node_modules, so its import resolves at bundle time too.
@@ -86,7 +86,7 @@ COPY --from=build /repo/packages/contracts/package.json /app/appcontainer/node_m
 COPY --from=build /repo/packages/contracts/dist /app/appcontainer/node_modules/@280/contracts/dist
 COPY --from=build /repo/packages/egress/package.json /app/appcontainer/node_modules/@280/egress/package.json
 COPY --from=build /repo/packages/egress/dist /app/appcontainer/node_modules/@280/egress/dist
-ENV TWO80_WORKER_ENTRY=/app/appcontainer/src/worker.js
+ENV APP_WORKER_ENTRYPOINT=/app/appcontainer/src/worker.js
 
 EXPOSE 8080
 # node:22-slim has no default entrypoint (unlike distroless-nodejs), so name node.

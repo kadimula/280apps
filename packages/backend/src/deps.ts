@@ -49,7 +49,7 @@ function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {
     ['CLOUDFLARE_API_TOKEN', config.cloudflare.apiToken],
   ].filter(([, v]) => v === '').map(([k]) => k);
   if (missing.length > 0) {
-    throw new Error(`the depot builder requires ${missing.join(', ')} (or set TWO80_RUNTIME=memory)`);
+    throw new Error(`the depot builder requires ${missing.join(', ')} (or set APP_RUNTIME=memory)`);
   }
   if (config.depot.projectId === '') {
     log.warn('DEPOT_PROJECT_ID unset: a project is resolved per app via the Depot API');

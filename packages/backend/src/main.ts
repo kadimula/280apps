@@ -20,7 +20,7 @@ import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from './secr
 import { KmsKeyWrapper } from './kms.js';
 
 export async function main(): Promise<void> {
-  const log = newLogger(process.env.TWO80_LOG_FORMAT === 'json' ? 'json' : 'text');
+  const log = newLogger(process.env.LOG_FORMAT === 'json' ? 'json' : 'text');
   try {
     await run(log);
   } catch (err) {
@@ -112,10 +112,10 @@ function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefine
   const enc = config.secretEncryption;
   const kmsPartial = (enc.kmsKeyName === '') !== (enc.kmsCredentialsJson === '');
   if (kmsPartial) {
-    throw new Error('incomplete KMS config: set both TWO80_SECRET_KMS_KEY_NAME and TWO80_SECRET_KMS_CREDENTIALS_JSON');
+    throw new Error('incomplete KMS config: set both APP_SECRETS_KMS_KEY_NAME and APP_SECRETS_KMS_CREDENTIALS_JSON');
   }
   if (enc.kmsKeyName !== '' && enc.localKey !== '') {
-    throw new Error('set TWO80_SECRET_KMS_* or TWO80_SECRET_ENCRYPTION_KEY, not both');
+    throw new Error('set APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY, not both');
   }
   if (enc.kmsKeyName !== '') {
     log.info('secret encryption via Cloud KMS', { keyName: enc.kmsKeyName });
@@ -125,14 +125,14 @@ function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefine
     log.info('secret encryption via local master key');
     return new EnvelopeSecretCipher(new LocalKeyWrapper(enc.localKey, enc.localKeyId));
   }
-  log.warn('secret storage is read-only until TWO80_SECRET_KMS_* or TWO80_SECRET_ENCRYPTION_KEY is set');
+  log.warn('secret storage is read-only until APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY is set');
   return undefined;
 }
 
 // startSweep runs the cleanup sweep on an interval, the Node stand-in for the
 // Worker's cron trigger. Unref'd so it never keeps the process alive on its own.
 function startSweep(store: Store, config: Config, log: Logger): NodeJS.Timeout {
-  const secs = num(process.env.TWO80_SWEEP_INTERVAL_SECS, 60);
+  const secs = num(process.env.SWEEP_INTERVAL_SECONDS, 60);
   const machineTokenTtlSecs = config.machineTokenTtlDays * 24 * 60 * 60;
   const tick = () => {
     void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs, config.frontendOrigin).catch((err) => {
@@ -153,8 +153,8 @@ async function openBlobs(config: Config, log: Logger): Promise<BlobStore> {
     log.info('blobs=s3', { bucket: s3.bucket, endpoint: s3.endpoint });
     return openS3(s3);
   }
-  const dir = env('TWO80_BLOBS', 'data/blobs');
-  log.warn('blobs=filesystem: local-only and not durable across hosts; set TWO80_S3_* for R2', { dir });
+  const dir = env('LOCAL_BLOB_DIRECTORY', 'data/blobs');
+  log.warn('blobs=filesystem: local-only and not durable across hosts; set BLOB_S3_* for R2', { dir });
   return openFsBlobStore(dir);
 }
 
@@ -162,15 +162,15 @@ async function openBlobs(config: Config, log: Logger): Promise<BlobStore> {
 // present, null when none are (dev loop), and throws when only some are (misconfig
 // that would otherwise fail confusingly on the first push).
 function readS3Config(): S3Config | null {
-  const endpoint = process.env.TWO80_S3_ENDPOINT ?? '';
-  const bucket = process.env.TWO80_S3_BUCKET ?? '';
-  const accessKeyId = process.env.TWO80_S3_ACCESS_KEY_ID ?? '';
-  const secretAccessKey = process.env.TWO80_S3_SECRET_ACCESS_KEY ?? '';
+  const endpoint = process.env.BLOB_S3_ENDPOINT ?? '';
+  const bucket = process.env.BLOB_S3_BUCKET ?? '';
+  const accessKeyId = process.env.BLOB_S3_ACCESS_KEY_ID ?? '';
+  const secretAccessKey = process.env.BLOB_S3_SECRET_ACCESS_KEY ?? '';
   const present = [endpoint, bucket, accessKeyId, secretAccessKey].filter((v) => v !== '');
   if (present.length === 0) return null;
   if (present.length < 4) {
     throw new Error(
-      'incomplete S3 blob config: set all of TWO80_S3_ENDPOINT, TWO80_S3_BUCKET, TWO80_S3_ACCESS_KEY_ID, TWO80_S3_SECRET_ACCESS_KEY (or none for the local filesystem store)',
+      'incomplete S3 blob config: set all of BLOB_S3_ENDPOINT, BLOB_S3_BUCKET, BLOB_S3_ACCESS_KEY_ID, BLOB_S3_SECRET_ACCESS_KEY (or none for the local filesystem store)',
     );
   }
   return {
@@ -178,8 +178,8 @@ function readS3Config(): S3Config | null {
     bucket,
     accessKeyId,
     secretAccessKey,
-    region: env('TWO80_S3_REGION', 'auto'),
-    forcePathStyle: (process.env.TWO80_S3_FORCE_PATH_STYLE ?? 'true') !== 'false',
+    region: env('BLOB_S3_REGION', 'auto'),
+    forcePathStyle: (process.env.BLOB_S3_FORCE_PATH_STYLE ?? 'true') !== 'false',
   };
 }
 
@@ -189,12 +189,12 @@ interface Addr {
 }
 
 // listenAddr honors PORT, which is how every container host (Railway included) says
-// where to listen. TWO80_ADDR stays for the local loop, where binding an interface
+// where to listen. LISTEN_ADDRESS stays for the local loop, where binding an interface
 // matters more than a port.
 function listenAddr(): Addr {
   const p = process.env.PORT;
   if (p) return { host: '0.0.0.0', port: Number(p) };
-  return parseAddr(env('TWO80_ADDR', ':8080'));
+  return parseAddr(env('LISTEN_ADDRESS', ':8080'));
 }
 
 function parseAddr(s: string): Addr {

@@ -1,49 +1,36 @@
-// InProcessActivator turns a content-complete deploy into the app's serving
-// version and runs the destructive tail of a delete, serializing a single app's
-// activation and delete against each other inline and synchronously.
-
 import {
   DeployCode,
   DeployErr,
   State,
+  normalizeEgressPolicy,
+  publicConfig,
   requiredConfigNames,
   stateTerminal,
-  type Digest,
   type DeployError,
 } from '@280/contracts';
-import type { App, BlobStore, Deploy, Runtime, RuntimeApp, Store } from './seams.js';
+import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, SecretDelivery, Store } from './seams.js';
+import type { ContainerBuilder, ContainerDeployment } from './runtime/container/container.js';
 import { asDeployErr, deployShaped, errText, internal } from './deploysvc.js';
 
-export interface Activator {
-  // Must return before the activation completes, so the request that landed the
-  // last blob is not held open for the runtime round trip.
-  activate(app: App, deployId: string): Promise<void>;
-
-  // Runtime, then blobs, then the row, in that order; serialized against any
-  // activation of the same app. Reports whether a row was removed.
-  delete(app: App): Promise<boolean>;
-}
-
-export interface ActivatorDeps {
+export interface ContainerDeploymentDeps {
   store: Store;
   blobs: BlobStore;
-  runtime: Runtime;
+  builder: ContainerBuilder;
+  secrets?: SecretDelivery;
+  config?: ConfigDelivery;
   now?: () => number;
 }
 
-export function runtimeApp(a: App | RuntimeApp): RuntimeApp {
+export function containerApp(app: App | ContainerApp): ContainerApp {
   return {
-    id: a.id,
-    slug: a.slug,
-    framework: a.framework,
-    script: a.script,
-    salt: a.salt,
-    storeId: a.storeId,
+    id: app.id,
+    slug: app.slug,
+    framework: app.framework,
+    script: app.script,
+    salt: app.salt,
   };
 }
 
-// Activation failures are attempt-scoped: re-running push reopens the deploy, so
-// the fix is always literally that.
 export function activationFailure(err: unknown): DeployError {
   const shaped = deployShaped(err);
   if (shaped !== null) return shaped;
@@ -56,11 +43,9 @@ export function activationFailure(err: unknown): DeployError {
   };
 }
 
-// Nothing is half deleted that re-running would not finish, so it is retryable
-// rather than an error with a fix of its own.
 export function deleteFailed(what: string, err: unknown): DeployErr {
-  const de = asDeployErr(err);
-  if (de !== null) return de;
+  const deployError = asDeployErr(err);
+  if (deployError !== null) return deployError;
   return new DeployErr({
     code: DeployCode.Unavailable,
     message: `could not ${what}: ${errText(err)}`,
@@ -68,90 +53,49 @@ export function deleteFailed(what: string, err: unknown): DeployErr {
   });
 }
 
-// Persisting the store id before the outcome matters: a store the runtime
-// created but the control plane forgot would be re-created on the next push and
-// the app's data would vanish. Throws the runtime's error on failure, leaving the
-// deploy in activating for the caller to fail (one shot) or retry (under alarm).
-export async function runAttempt(deps: ActivatorDeps, app: App, dep: Deploy): Promise<void> {
-  if (stateTerminal(dep.state)) return;
-  let state = dep.state;
-  if (state === State.Uploading) {
-    if (!(await deps.store.claimActivation(app.id, dep.id))) return;
-    state = State.Activating;
-  }
+function deploymentFailed(err: unknown): DeployErr {
+  if (err instanceof DeployErr) return err;
+  return new DeployErr({
+    code: DeployCode.Unavailable,
+    message: 'container deployment failed on the platform: ' + errText(err),
+    retryable: true,
+  });
+}
 
-  const act = {
-    app: runtimeApp(app),
+function containerDeployment(deps: ContainerDeploymentDeps, app: App, dep: Deploy): ContainerDeployment {
+  return {
+    app: containerApp(app),
     deployId: dep.id,
-    manifest: dep.manifest,
-    asset: (d: Digest) => deps.blobs.get(app.id, d),
+    build: dep.manifest.build,
+    files: dep.manifest.files.map((file) => ({
+      path: file.path,
+      read: () => deps.blobs.get(app.id, file.digest),
+    })),
+    runtime: {
+      routes: dep.manifest.routes ?? [],
+      secrets: dep.manifest.secrets ?? [],
+      egress: normalizeEgressPolicy(dep.manifest.egress ?? { allowedHosts: [], credentials: [] }),
+      config: dep.manifest.config ?? [],
+    },
   };
-
-  if (state === State.Activating) await deps.runtime.prepare(act);
-
-  // The deploy parks until every value a human must enter is present: declared
-  // secrets and required config (sensitive config with no committed value). Both
-  // share app_secrets, so one presence check by name covers them.
-  const required = [...(dep.manifest.secrets ?? []), ...requiredConfigNames(dep.manifest.config ?? [])];
-  if (required.length > 0 && (await secretsUnconfigured(deps, app.id, required))) {
-    await deps.store.parkActivation(app.id, dep.id, (deps.now ?? nowSecs)());
-    // A value saved between the check above and the park found nothing to resume;
-    // re-checking after the park closes that window.
-    if (await secretsUnconfigured(deps, app.id, required)) return;
-    state = State.WaitingSecrets;
-  }
-
-  if (state === State.WaitingSecrets && !(await deps.store.resumeActivation(app.id, dep.id))) return;
-
-  const res = await deps.runtime.activate(act);
-  if (res.storeId !== '' && res.storeId !== app.storeId) await deps.store.setStoreId(app.id, res.storeId);
-  await deps.store.finishLive(app.id, dep.id);
 }
 
-async function secretsUnconfigured(deps: ActivatorDeps, appId: string, names: string[]): Promise<boolean> {
-  try {
-    const present = new Set(await deps.store.appSecretNames(appId));
-    return names.some((name) => !present.has(name));
-  } catch {
-    return true;
-  }
-}
-
-// The destructive half of a delete: runtime, then content, then the row that
-// names them. Every step is idempotent and only makes sense while the row still
-// exists, so an interruption anywhere leaves an app that re-running finishes off.
-export async function runTail(deps: ActivatorDeps, app: RuntimeApp, userId: string): Promise<boolean> {
-  try {
-    await deps.runtime.delete(app);
-  } catch (err) {
-    throw deleteFailed('remove the app from the runtime', err);
-  }
-  try {
-    await deps.blobs.deleteApp(app.id);
-    return await deps.store.deleteApp(userId, app.id);
-  } catch (err) {
-    throw internal('delete app content', err);
-  }
-}
-
-// Runs activation and delete synchronously in the calling isolate, serialized per
-// app by a promise chain. Tests and conformance depend on a deploy being live the
-// moment its last blob lands, which only this synchronous form provides.
 function nowSecs(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-export class InProcessActivator implements Activator {
+export class ContainerDeploymentCoordinator {
   private readonly locks = new Map<string, Promise<unknown>>();
+  private readonly prepared = new Set<string>();
 
-  constructor(private readonly deps: ActivatorDeps) {}
+  constructor(private readonly deps: ContainerDeploymentDeps) {}
 
   activate(app: App, deployId: string): Promise<void> {
     return this.withLock(app.id, async () => {
       const dep = await this.deps.store.deploy(app.id, deployId);
       if (dep === null || stateTerminal(dep.state)) return;
       try {
-        await runAttempt(this.deps, app, dep);
+        await this.runAttempt(app, dep);
       } catch (err) {
         await this.deps.store.finishFailed(app.id, deployId, activationFailure(err));
       }
@@ -159,12 +103,95 @@ export class InProcessActivator implements Activator {
   }
 
   delete(app: App): Promise<boolean> {
-    return this.withLock(app.id, () => runTail(this.deps, runtimeApp(app), app.userId));
+    return this.withLock(app.id, () => this.runDelete(containerApp(app), app.userId));
   }
 
-  private withLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.locks.get(appId) ?? Promise.resolve();
-    const result = prev.then(() => fn());
+  private async runAttempt(app: App, dep: Deploy): Promise<void> {
+    let state = dep.state;
+    if (state === State.Uploading) {
+      if (!(await this.deps.store.claimActivation(app.id, dep.id))) return;
+      state = State.Activating;
+    }
+
+    const deployment = containerDeployment(this.deps, app, dep);
+    if (state === State.Activating) await this.prepare(deployment);
+
+    const required = [...deployment.runtime.secrets, ...requiredConfigNames(deployment.runtime.config)];
+    if (required.length > 0 && (await this.secretsUnconfigured(app.id, required))) {
+      await this.deps.store.parkActivation(app.id, dep.id, (this.deps.now ?? nowSecs)());
+      if (await this.secretsUnconfigured(app.id, required)) return;
+      state = State.WaitingSecrets;
+    }
+
+    if (state === State.WaitingSecrets && !(await this.deps.store.resumeActivation(app.id, dep.id))) return;
+
+    await this.rollout(deployment);
+    await this.deps.store.finishLive(app.id, dep.id);
+  }
+
+  private async prepare(deployment: ContainerDeployment): Promise<void> {
+    try {
+      await this.deps.builder.build(deployment);
+      this.prepared.add(this.key(deployment));
+    } catch (err) {
+      throw deploymentFailed(err);
+    }
+  }
+
+  private async rollout(deployment: ContainerDeployment): Promise<void> {
+    const key = this.key(deployment);
+    if (!this.prepared.has(key)) await this.prepare(deployment);
+    const env = this.deps.config
+      ? await this.deps.config.resolve(deployment.app, deployment.runtime.config)
+      : publicConfig(deployment.runtime.config);
+    try {
+      await this.deps.builder.rollout(
+        deployment,
+        this.deps.builder.imageRef(deployment.app, deployment.deployId),
+        env,
+      );
+      await this.deps.secrets?.rollout(deployment.app, deployment.runtime.secrets);
+    } catch (err) {
+      throw deploymentFailed(err);
+    } finally {
+      this.prepared.delete(key);
+    }
+  }
+
+  private async secretsUnconfigured(appId: string, names: string[]): Promise<boolean> {
+    try {
+      const present = new Set(await this.deps.store.appSecretNames(appId));
+      return names.some((name) => !present.has(name));
+    } catch {
+      return true;
+    }
+  }
+
+  private async runDelete(app: ContainerApp, userId: string): Promise<boolean> {
+    try {
+      await this.deps.builder.teardown(app);
+    } catch (err) {
+      throw deleteFailed('delete container', err);
+    }
+    try {
+      await this.deps.blobs.deleteApp(app.id);
+    } catch (err) {
+      throw deleteFailed('delete app content', err);
+    }
+    try {
+      return await this.deps.store.deleteApp(userId, app.id);
+    } catch (err) {
+      throw internal('delete app row', err);
+    }
+  }
+
+  private key(deployment: ContainerDeployment): string {
+    return `${deployment.app.id}/${deployment.deployId}`;
+  }
+
+  private withLock<T>(appId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(appId) ?? Promise.resolve();
+    const result = previous.then(operation);
     const tail = result.then(
       () => undefined,
       () => undefined,

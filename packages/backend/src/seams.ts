@@ -234,41 +234,20 @@ export interface BlobStore {
   missing(appId: string, want: BlobInfo[]): Promise<Digest[]>;
 }
 
-// The app fields available to runtimes.
-export interface RuntimeApp {
+export interface ContainerApp {
   id: string;
   slug: string;
   framework: string;
   script: string;
   salt: string;
-  storeId: string;
-}
-
-export interface Activation {
-  app: RuntimeApp;
-  deployId: string;
-  manifest: Manifest;
-  asset(digest: Digest): Promise<Uint8Array>;
-}
-
-export interface RuntimeResult {
-  storeId: string;
-}
-
-// Preparation does not change the serving version. Activation is atomic and idempotent.
-export interface Runtime {
-  prepare(act: Activation): Promise<void>;
-  activate(act: Activation): Promise<RuntimeResult>;
-  delete(app: RuntimeApp): Promise<void>;
 }
 
 export interface SecretDelivery {
-  rollout(app: RuntimeApp, declared: string[]): Promise<void>;
-  set(app: RuntimeApp, name: string): Promise<void>;
-  delete(app: RuntimeApp, name: string): Promise<void>;
+  rollout(app: ContainerApp, declared: string[]): Promise<void>;
+  set(app: ContainerApp, name: string): Promise<void>;
+  delete(app: ContainerApp, name: string): Promise<void>;
 }
 
-// Resolves the complete app readable environment for a rollout.
 export interface ConfigDelivery {
-  resolve(app: RuntimeApp, config: ConfigEntry[]): Promise<Record<string, string>>;
+  resolve(app: ContainerApp, config: ConfigEntry[]): Promise<Record<string, string>>;
 }

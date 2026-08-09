@@ -4,7 +4,6 @@ import type { SecretCipher } from './secrets.js';
 import type { SecretDelivery } from './seams.js';
 
 export interface ConfigVars {
-  APP_RUNTIME?: string;
   LOG_FORMAT?: string;
   DATABASE_SCHEMA?: string;
   APP_BASE_DOMAIN?: string;
@@ -39,7 +38,6 @@ export interface ConfigVars {
 }
 
 export interface Config {
-  runtime: 'container' | 'memory';
   logFormat: 'json' | 'text';
   dbSchema: string;
   dbConnectionString: string;
@@ -75,7 +73,6 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
   const frontendOrigin = str(vars.FRONTEND_ORIGIN, 'https://console.280apps.com');
 
   return {
-    runtime: str(vars.APP_RUNTIME, 'container') === 'memory' ? 'memory' : 'container',
     logFormat: str(vars.LOG_FORMAT, 'text') === 'json' ? 'json' : 'text',
     dbSchema: str(vars.DATABASE_SCHEMA, 'platform'),
     dbConnectionString,

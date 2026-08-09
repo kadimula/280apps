@@ -36,7 +36,7 @@ import {
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
 import type { App, BlobStore, Deploy, Store } from './seams.js';
-import type { Activator } from './activator.js';
+import type { ContainerDeploymentCoordinator } from './activator.js';
 
 // deployShaped duck-types a caught value into the seam's plain error fields: the
 // blob store (W4) throws its own DeployErr subclass with the same shape but a
@@ -65,12 +65,10 @@ export function asDeployErr(err: unknown): DeployErr | null {
   return s === null ? null : new DeployErr(s);
 }
 
-// Platform is the user-independent half: storage, config, and the activator.
 export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
-  // activator serializes and executes one app's activation and delete.
-  activator: Activator;
+  activator: ContainerDeploymentCoordinator;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
   // hostSuffix is appended to an app's URL host label (not its script name), so
@@ -83,7 +81,7 @@ export interface PlatformDeps {
 export class Platform {
   readonly store: Store;
   readonly blobs: BlobStore;
-  readonly activator: Activator;
+  readonly activator: ContainerDeploymentCoordinator;
   readonly appDomain: string;
   readonly hostSuffix: string;
   readonly frontendOrigin: string;
@@ -345,7 +343,7 @@ export class Service implements Port {
     return got ?? dep;
   }
 
-  // The destructive tail runs through the activator (runtime, then content, then the
+  // The destructive tail runs through the coordinator (container, then content, then the
   // row, each idempotent and meaningful only while the row exists). Routing it
   // through the same per-app serialization keeps a push past its last blob from
   // re-uploading the worker after this removes it. Dry-run and confirmation stay here.

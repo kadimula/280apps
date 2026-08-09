@@ -1,9 +1,9 @@
 import { DeployCode, DeployErr } from '@280/contracts';
-import type { RuntimeApp, SecretDelivery, Store } from './seams.js';
+import type { ContainerApp, SecretDelivery, Store } from './seams.js';
 import type { SecretCipher } from './secrets.js';
 
 export interface WorkerSecretStore {
-  bulk(app: RuntimeApp, values: Record<string, string | null>): Promise<void>;
+  bulk(app: ContainerApp, values: Record<string, string | null>): Promise<void>;
 }
 
 export class ControlPlaneSecretDelivery implements SecretDelivery {
@@ -15,7 +15,7 @@ export class ControlPlaneSecretDelivery implements SecretDelivery {
     private readonly workers: WorkerSecretStore,
   ) {}
 
-  rollout(app: RuntimeApp, declared: string[]): Promise<void> {
+  rollout(app: ContainerApp, declared: string[]): Promise<void> {
     return this.withLock(app.id, async () => {
       const [policy, stored] = await Promise.all([this.store.appPolicy(app.id), this.store.appSecrets(app.id)]);
       const names = new Set([...(policy?.secrets ?? []), ...declared]);
@@ -32,7 +32,7 @@ export class ControlPlaneSecretDelivery implements SecretDelivery {
     });
   }
 
-  set(app: RuntimeApp, name: string): Promise<void> {
+  set(app: ContainerApp, name: string): Promise<void> {
     return this.withLock(app.id, async () => {
       const policy = await this.store.appPolicy(app.id);
       if (!policy?.secrets.includes(name)) return;
@@ -42,7 +42,7 @@ export class ControlPlaneSecretDelivery implements SecretDelivery {
     });
   }
 
-  delete(app: RuntimeApp, name: string): Promise<void> {
+  delete(app: ContainerApp, name: string): Promise<void> {
     return this.withLock(app.id, async () => {
       const policy = await this.store.appPolicy(app.id);
       if (!policy?.secrets.includes(name)) return;

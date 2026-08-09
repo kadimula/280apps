@@ -19,9 +19,9 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DeployCode, DeployErr } from '@280/contracts';
-import type { RuntimeApp } from '../../seams.js';
+import type { ContainerApp } from '../../seams.js';
 import type { Logger } from '../../observe.js';
-import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
+import type { ContainerBuilder, ContainerDeployment, RolloutResult } from './container.js';
 import { deliveryFailed, type WorkerSecretStore } from '../../secret-delivery.js';
 
 export interface ExecResult {
@@ -143,26 +143,26 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     return mintRegistryCredentials(this.accountId, this.apiToken, this.registry, this.fetchImpl);
   }
 
-  imageRef(app: RuntimeApp, deployId: string): string {
+  imageRef(app: ContainerApp, deployId: string): string {
     return `${this.registry}/${this.accountId}/${app.script}:${deployId}`;
   }
 
-  async build(job: RolloutJob): Promise<RolloutResult> {
+  async build(deployment: ContainerDeployment): Promise<RolloutResult> {
     const ctx = await mkdtemp(join(this.workdir, '280-ctx-'));
     try {
-      await materialize(ctx, job.files);
-      const image = this.imageRef(job.app, job.deployId);
-      await this.buildAndPush(ctx, image, job.build.dockerfile || 'Dockerfile', job);
+      await materialize(ctx, deployment.files);
+      const image = this.imageRef(deployment.app, deployment.deployId);
+      await this.buildAndPush(ctx, image, deployment.build.dockerfile || 'Dockerfile', deployment);
       return { imageRef: image };
     } finally {
       await rm(ctx, { recursive: true, force: true });
     }
   }
 
-  async rollout(job: RolloutJob, image: string): Promise<void> {
+  async rollout(deployment: ContainerDeployment, image: string, env: Record<string, string>): Promise<void> {
     const ctx = await mkdtemp(join(this.workdir, '280-roll-'));
     try {
-      await this.roll(ctx, image, job);
+      await this.roll(ctx, image, deployment, env);
     } finally {
       await rm(ctx, { recursive: true, force: true });
     }
@@ -174,7 +174,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     ctx: string,
     image: string,
     dockerfile: string,
-    job: RolloutJob,
+    deployment: ContainerDeployment,
   ): Promise<void>;
 
   // roll makes the app's container application serve the pre-built image, with no
@@ -183,9 +183,14 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
   // reference; `--containers-rollout immediate` rolls every instance in one step.
   // (The old `wrangler containers apply` never existed in wrangler 4.116 — it
   // no-oped while the deploy reported success. See report §7.)
-  protected async roll(ctx: string, image: string, job: RolloutJob): Promise<void> {
+  protected async roll(
+    ctx: string,
+    image: string,
+    deployment: ContainerDeployment,
+    env: Record<string, string>,
+  ): Promise<void> {
     const configPath = join(ctx, ROLL_CONFIG_FILE);
-    await writeFile(configPath, JSON.stringify(this.rollConfig(job, image), null, 2));
+    await writeFile(configPath, JSON.stringify(this.rollConfig(deployment, image, env), null, 2));
     await this.run(
       ctx,
       'wrangler',
@@ -206,8 +211,12 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
   //   - vars:     the baked route policy, the egress policy the container boundary
   //               enforces, plus the identity vars the middleware reads (app
   //               id/script, host suffix/domain, issuer, edge skew).
-  protected rollConfig(job: RolloutJob, image: string): Record<string, unknown> {
-    const script = job.app.script;
+  protected rollConfig(
+    deployment: ContainerDeployment,
+    image: string,
+    env: Record<string, string>,
+  ): Record<string, unknown> {
+    const script = deployment.app.script;
     const host = `${script}${this.hostSuffix}.${this.appDomain}`;
     return {
       name: script,
@@ -229,9 +238,9 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
       vars: {
-        TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
-        EGRESS_POLICY: JSON.stringify(job.runtime.egress),
-        TWO80_APP_ID: job.app.id,
+        TWO80_ROUTE_POLICY: JSON.stringify({ routes: deployment.runtime.routes }),
+        EGRESS_POLICY: JSON.stringify(deployment.runtime.egress),
+        TWO80_APP_ID: deployment.app.id,
         TWO80_SCRIPT: script,
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,
         TWO80_APP_DOMAIN: this.appDomain,
@@ -241,14 +250,14 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
         // Non-secret config the container reads via process.env. A plaintext var
         // like EGRESS_POLICY (never a Worker secret): it carries only non-secret
         // values. Omitted when empty so a config-less roll is byte-identical.
-        ...(Object.keys(job.runtime.env).length > 0
-          ? { TWO80_CONFIG: JSON.stringify(job.runtime.env) }
+        ...(Object.keys(env).length > 0
+          ? { TWO80_CONFIG: JSON.stringify(env) }
           : {}),
       },
     };
   }
 
-  async bulk(app: RuntimeApp, values: Record<string, string | null>): Promise<void> {
+  async bulk(app: ContainerApp, values: Record<string, string | null>): Promise<void> {
     const entries = Object.entries(values);
     for (let offset = 0; offset < entries.length; offset += SECRET_BULK_LIMIT) {
       const batch = Object.fromEntries(entries.slice(offset, offset + SECRET_BULK_LIMIT));
@@ -262,7 +271,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     }
   }
 
-  async teardown(app: RuntimeApp): Promise<void> {
+  async teardown(app: ContainerApp): Promise<void> {
     // Teardown is the exact inverse of the roll: roll() runs `wrangler deploy` for a
     // Worker named app.script (rollConfig.name), so teardown deletes that Worker with
     // `wrangler delete <script>`. Removing the Worker takes its route down (the app
@@ -300,7 +309,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
 
   // deleteImages removes every registry tag under the app's repository (<script>). It
   // never throws, so image cleanup can never block the rest of teardown.
-  private async deleteImages(app: RuntimeApp): Promise<void> {
+  private async deleteImages(app: ContainerApp): Promise<void> {
     const env = { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId };
     const listed = await this.exec(
       'wrangler',
@@ -361,7 +370,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
 // refusing any path that escapes the context root (defence in depth: preflight
 // already rejected these, but the builder never trusts the manifest with a raw
 // filesystem write).
-export async function materialize(dir: string, files: RolloutJob['files']): Promise<void> {
+export async function materialize(dir: string, files: ContainerDeployment['files']): Promise<void> {
   const root = resolve(dir);
   for (const f of files) {
     const abs = resolve(root, f.path);

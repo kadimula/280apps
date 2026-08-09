@@ -14,7 +14,7 @@ import {
 } from '@280/contracts';
 import { DeployErr, bodyOf, bytesOf, newPlatform, portFor, type Harness } from './helpers/harness.js';
 import { sanitizeSlug, type Service } from '../src/deploysvc.js';
-import { ContainerRuntime, FakeBuilder } from '../src/runtime/container/index.js';
+import { FakeBuilder } from '../src/runtime/container/index.js';
 
 describe('sanitizeSlug', () => {
   it('never returns a name starting with a digit (Cloudflare rejects it at the roll)', () => {
@@ -113,7 +113,7 @@ describe('sync + activation', () => {
 
   it('builds, then parks before rollout until every declared secret is configured', async () => {
     const builder = new FakeBuilder();
-    const { h, port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { h, port } = await fresh({ builder });
     const { manifest, content } = mkBundle('worker');
     manifest.secrets = ['STRIPE_KEY'];
     const res = await port.sync({ identity: ident({ clientRef: 'parked' }), manifest });
@@ -135,7 +135,7 @@ describe('sync + activation', () => {
 
   it('parks before rollout until required config (sensitive, no committed value) is entered', async () => {
     const builder = new FakeBuilder();
-    const { h, port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { h, port } = await fresh({ builder });
     const { manifest, content } = mkBundle('worker');
     manifest.config = [{ name: 'GOOGLE_SHEET_ID', value: '', sensitive: true }];
     const res = await port.sync({ identity: ident({ clientRef: 'cfg-parked' }), manifest });
@@ -157,7 +157,7 @@ describe('sync + activation', () => {
 
   it('does not park when config carries a committed value', async () => {
     const builder = new FakeBuilder();
-    const { port } = await fresh({ runtime: new ContainerRuntime(builder) });
+    const { port } = await fresh({ builder });
     const { manifest, content } = mkBundle('worker');
     manifest.config = [{ name: 'REGION', value: 'us-east-1', sensitive: false }];
     const res = await port.sync({ identity: ident({ clientRef: 'cfg-live' }), manifest });

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { AppPolicy } from '@280/contracts';
-import type { AppSecret, RuntimeApp, Store } from '../src/seams.js';
+import type { AppSecret, ContainerApp, Store } from '../src/seams.js';
 import type { SecretCipher } from '../src/secrets.js';
 import { ControlPlaneSecretDelivery, type WorkerSecretStore } from '../src/secret-delivery.js';
 
-const app: RuntimeApp = {
+const app: ContainerApp = {
   id: 'app_1',
   slug: 'demo',
   framework: 'next',
   script: 'demo-abc',
   salt: 'salt',
-  storeId: '',
 };
 
 function policy(secrets: string[]): AppPolicy {

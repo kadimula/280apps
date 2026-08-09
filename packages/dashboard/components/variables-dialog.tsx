@@ -17,6 +17,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [editReveal, setEditReveal] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,6 +52,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
     setEditing(null);
     setMenu(null);
     setRevealed({});
+    setEditReveal(false);
     setValue("");
     setError(null);
   }
@@ -58,6 +60,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
   function edit(name: string) {
     setMenu(null);
     setEditing(name);
+    setEditReveal(false);
     setValue("");
     setError(null);
   }
@@ -73,6 +76,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
       if (menu) setMenu(null);
       else if (editing) {
         setEditing(null);
+        setEditReveal(false);
         setValue("");
         setError(null);
       } else close();
@@ -97,6 +101,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
     if (failure) setError(failure.error);
     else {
       setEditing(null);
+      setEditReveal(false);
       setValue("");
       await refresh();
     }
@@ -209,10 +214,15 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
                       <label className="sr-only" htmlFor={`${headingId}-${variable.name}`}>Value for {variable.name}</label>
                       {/* Textarea, not a single-line input: some credentials are multi-line
                           (a PEM private_key), which a password input makes unreadable to enter.
-                          Rows grow with the pasted content and cap with an inner scroll. */}
-                      <textarea ref={field} id={`${headingId}-${variable.name}`} value={value} onChange={(event) => { setValue(event.target.value); setError(null); }} placeholder="Enter value" autoComplete="off" spellCheck={false} rows={Math.min(Math.max(value.split("\n").length, 3), 14)} disabled={busy === variable.name} className="w-full resize-y rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 font-mono text-[14px] leading-snug text-[var(--color-ink)] outline-none transition-colors placeholder:font-sans placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] disabled:opacity-60" />
+                          Masked by default via text-security; the eye toggle reveals it. */}
+                      <div className="relative">
+                        <textarea ref={field} id={`${headingId}-${variable.name}`} value={value} onChange={(event) => { setValue(event.target.value); setError(null); }} placeholder="Enter value" autoComplete="off" spellCheck={false} rows={Math.min(Math.max(value.split("\n").length, 3), 14)} disabled={busy === variable.name} className={`w-full resize-y rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] py-3 pl-4 pr-12 font-mono text-[14px] leading-snug text-[var(--color-ink)] outline-none transition-colors placeholder:font-sans placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] disabled:opacity-60${editReveal ? "" : " [-webkit-text-security:disc]"}`} />
+                        <button type="button" onClick={() => setEditReveal((current) => !current)} aria-label={editReveal ? `Hide ${variable.name}` : `Show ${variable.name}`} aria-pressed={editReveal} className="absolute right-2 top-2 flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]">
+                          {editReveal ? <EyeOffIcon /> : <EyeIcon />}
+                        </button>
+                      </div>
                       <div className="mt-3 flex justify-end gap-2">
-                        <button type="button" onClick={() => { setEditing(null); setValue(""); setError(null); }} className="cursor-pointer rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]">Cancel</button>
+                        <button type="button" onClick={() => { setEditing(null); setEditReveal(false); setValue(""); setError(null); }} className="cursor-pointer rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]">Cancel</button>
                         <button type="submit" disabled={!value || busy === variable.name} className="cursor-pointer rounded-lg bg-[var(--color-ink)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-45">{busy === variable.name ? "Saving…" : "Save"}</button>
                       </div>
                     </form>

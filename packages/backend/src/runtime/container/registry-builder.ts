@@ -19,7 +19,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DeployCode, DeployErr } from '@280/contracts';
-import type { RuntimeApp } from '../../seams.js';
+import type { ContainerApp } from '../../seams.js';
 import type { Logger } from '../../observe.js';
 import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
 import { deliveryFailed, type WorkerSecretStore } from '../../secret-delivery.js';
@@ -143,7 +143,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     return mintRegistryCredentials(this.accountId, this.apiToken, this.registry, this.fetchImpl);
   }
 
-  imageRef(app: RuntimeApp, deployId: string): string {
+  imageRef(app: ContainerApp, deployId: string): string {
     return `${this.registry}/${this.accountId}/${app.script}:${deployId}`;
   }
 
@@ -248,7 +248,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     };
   }
 
-  async bulk(app: RuntimeApp, values: Record<string, string | null>): Promise<void> {
+  async bulk(app: ContainerApp, values: Record<string, string | null>): Promise<void> {
     const entries = Object.entries(values);
     for (let offset = 0; offset < entries.length; offset += SECRET_BULK_LIMIT) {
       const batch = Object.fromEntries(entries.slice(offset, offset + SECRET_BULK_LIMIT));
@@ -262,7 +262,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     }
   }
 
-  async teardown(app: RuntimeApp): Promise<void> {
+  async teardown(app: ContainerApp): Promise<void> {
     // Teardown is the exact inverse of the roll: roll() runs `wrangler deploy` for a
     // Worker named app.script (rollConfig.name), so teardown deletes that Worker with
     // `wrangler delete <script>`. Removing the Worker takes its route down (the app
@@ -300,7 +300,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
 
   // deleteImages removes every registry tag under the app's repository (<script>). It
   // never throws, so image cleanup can never block the rest of teardown.
-  private async deleteImages(app: RuntimeApp): Promise<void> {
+  private async deleteImages(app: ContainerApp): Promise<void> {
     const env = { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId };
     const listed = await this.exec(
       'wrangler',

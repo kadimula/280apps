@@ -70,7 +70,6 @@ the backend and gateway read, with comments.
 Non-secret (safe to set literally in the dev environment):
 
 ```sh
-APP_RUNTIME=container
 BACKEND_API_ORIGIN=https://api-development.280apps.com
 FRONTEND_ORIGIN=https://dev-console.280apps.com
 APP_FRAME_ANCESTORS=https://dev-console.280apps.com

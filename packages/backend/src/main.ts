@@ -1,15 +1,9 @@
-// The Node entrypoint for the 280 control plane: serves HTTP API v1, activates
-// deploys inline, and sweeps expired rows on an interval. This is the host the
-// package ships as on Railway (packages/backend/Dockerfile), and the only one.
-// Everything I/O is a process-lifetime singleton here — one pg pool, one blob
-// store, one runtime, one in-process activator — assembled once at boot.
-
 import type { Server as NodeHttpServer } from 'node:http';
 import { serve } from '@hono/node-server';
 import { Server } from './api.js';
 import { Platform } from './deploysvc.js';
-import { InProcessActivator } from './activator.js';
-import { selectRuntime, buildAuth, sweepExpired } from './deps.js';
+import { ContainerDeploymentCoordinator } from './activator.js';
+import { buildContainerServices, buildAuth, sweepExpired } from './deps.js';
 import { resolveConfig, type Config, type RequestDeps } from './config.js';
 import { open as openStore } from './store/index.js';
 import { open as openFsBlobStore, openS3, type S3Config } from './blobstore/index.js';
@@ -37,13 +31,14 @@ async function run(log: Logger): Promise<void> {
   // do not depend on the CI migrate runner having gone first.
   const store = await openStore(config.dbConnectionString, config.dbSchema);
   const blobs = await openBlobs(config, log);
-  const { runtime, secretDelivery } = selectRuntime(config, log, store, secretCipher);
-
-  // One in-process activator serializes an app's activation and delete by a
-  // promise chain: the single-instance replacement for the per-app Durable Object.
-  // Activation runs inline in the request that lands the last blob, which is why
-  // the request timeout below is sized to a full runtime deploy.
-  const activator = new InProcessActivator({ store, blobs, runtime });
+  const { builder, secretDelivery, configDelivery } = buildContainerServices(config, log, store, secretCipher);
+  const activator = new ContainerDeploymentCoordinator({
+    store,
+    blobs,
+    builder,
+    secrets: secretDelivery,
+    config: configDelivery,
+  });
 
   const platform = new Platform({
     store,

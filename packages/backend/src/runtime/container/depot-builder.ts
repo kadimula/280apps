@@ -15,7 +15,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DeployCode, DeployErr } from '@280/contracts';
-import type { RuntimeApp } from '../../seams.js';
+import type { ContainerApp } from '../../seams.js';
 import type { RolloutJob } from './container.js';
 import {
   RegistryContainerBuilder,
@@ -107,7 +107,7 @@ export class DepotBuilder extends RegistryContainerBuilder {
     return dir;
   }
 
-  private async ensureProject(app: RuntimeApp): Promise<string> {
+  private async ensureProject(app: ContainerApp): Promise<string> {
     if (this.configuredProjectId !== '') return this.configuredProjectId;
     const cached = this.projectByApp.get(app.id);
     if (cached) return cached;

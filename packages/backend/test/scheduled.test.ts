@@ -89,7 +89,6 @@ describe('scheduled cleanup', () => {
       salt: 'salt',
       fingerprint: '',
       clientRef: '',
-      storeId: '',
       activeDeploy: '',
       createdAt: 0,
       lastDeployAt: null,

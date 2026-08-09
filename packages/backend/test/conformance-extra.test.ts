@@ -74,7 +74,7 @@ describe('ActivationFailureReopens', () => {
       manifest,
     };
 
-    h.runtime.failNext(
+    h.builder.failNext(
       new DeployErr({
         code: DeployCode.Unavailable,
         message: 'activation failed on the platform',
@@ -88,13 +88,13 @@ describe('ActivationFailureReopens', () => {
     const st = await port.status(res.app.id, res.deployId);
     expect(st.state).toBe(State.Failed);
     expect(st.failure).toBeDefined();
-    expect(h.runtime.activeDeploy(res.app.id)).toBe('');
+    expect(h.builder.activeDeploy(res.app.id)).toBe('');
 
     // push again: same call, same manifest, no client-side recovery
     const again = await port.sync(req);
     expect(again.deployId).toBe(res.deployId);
     expect(again.state).toBe(State.Live);
-    expect(h.runtime.activeDeploy(res.app.id)).toBe(res.deployId);
+    expect(h.builder.activeDeploy(res.app.id)).toBe(res.deployId);
   });
 });
 
@@ -119,11 +119,11 @@ describe('RevertRepushReactivates', () => {
     const v1 = await push('worker v1');
     const v2 = await push('worker v2');
     expect(v2.deployId).not.toBe(v1.deployId);
-    expect(h.runtime.activeDeploy(v1.app.id)).toBe(v2.deployId);
+    expect(h.builder.activeDeploy(v1.app.id)).toBe(v2.deployId);
 
     const back = await push('worker v1');
     expect(back.deployId).toBe(v1.deployId);
-    expect(h.runtime.activeDeploy(v1.app.id)).toBe(v1.deployId);
+    expect(h.builder.activeDeploy(v1.app.id)).toBe(v1.deployId);
   });
 });
 

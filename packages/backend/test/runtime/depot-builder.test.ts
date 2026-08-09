@@ -8,57 +8,34 @@ import { readFile, rm } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DeployErr, digestBytes, type Digest, type Manifest } from '@280/contracts';
-import type { Activation, RuntimeApp } from '../../src/seams.js';
+import { DeployErr } from '@280/contracts';
+import type { ContainerApp } from '../../src/seams.js';
 import type { Logger } from '../../src/observe.js';
 import { DepotBuilder, type DepotApi } from '../../src/runtime/container/depot-builder.js';
 import type { RolloutJob } from '../../src/runtime/container/container.js';
 import type { ExecFn } from '../../src/runtime/container/registry-builder.js';
 
-function app(over: Partial<RuntimeApp> = {}): RuntimeApp {
-  return { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 's', storeId: '', ...over };
+function app(over: Partial<ContainerApp> = {}): ContainerApp {
+  return { id: 'app_1', script: 'demo-abc', ...over };
 }
 
-function activation(files: Record<string, string>): { act: Activation } {
-  const blobs = new Map<Digest, Uint8Array>();
-  const infos = Object.entries(files).map(([path, body]) => {
-    const b = new TextEncoder().encode(body);
-    const d = digestBytes(b);
-    blobs.set(d, b);
-    return { path, digest: d, size: b.length };
-  });
-  const manifest: Manifest = {
-    kind: 'container',
-    build: { builder: 'next', dockerfile: 'Dockerfile', port: 8080 },
-    files: infos,
-  };
+function activation(files: Record<string, string>): { act: RolloutJob } {
   return {
     act: {
       app: app(),
       deployId: 'dep_1',
-      manifest,
-      asset: async (d: Digest) => {
-        const b = blobs.get(d);
-        if (!b) throw new Error('no blob ' + d);
-        return b;
-      },
+      build: { builder: 'next', dockerfile: 'Dockerfile', port: 8080 },
+      files: Object.entries(files).map(([path, body]) => ({
+        path,
+        read: async () => new TextEncoder().encode(body),
+      })),
+      runtime: { routes: [], secrets: [], egress: { allowedHosts: [], credentials: [] }, env: {} },
     },
   };
 }
 
-function rolloutOf(act: Activation, over: Partial<RolloutJob['runtime']> = {}): RolloutJob {
-  return {
-    app: act.app,
-    deployId: act.deployId,
-    build: act.manifest.build,
-    files: act.manifest.files.map((f) => ({ path: f.path, read: () => act.asset(f.digest) })),
-    runtime: {
-      routes: over.routes ?? [],
-      secrets: [],
-      egress: over.egress ?? { allowedHosts: [], credentials: [] },
-      env: over.env ?? {},
-    },
-  };
+function rolloutOf(job: RolloutJob, runtime: Partial<RolloutJob['runtime']> = {}): RolloutJob {
+  return { ...job, runtime: { ...job.runtime, ...runtime } };
 }
 
 async function deploy(builder: DepotBuilder, job: ReturnType<typeof rolloutOf>) {

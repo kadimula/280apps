@@ -1,9 +1,3 @@
-// Test harness: builds a Platform on the real MemoryRuntime and filesystem blob
-// store, with the real Postgres store when TEST_DATABASE_URL is set and an
-// in-memory store double otherwise. In-process tests use the Service (Port)
-// directly; transport tests go through the router via app.request. Mirrors
-// platform/conformance_test.go's newPlatform.
-
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,14 +15,14 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
-import { InProcessActivator } from '../../src/activator.js';
+import { ContainerDeploymentCoordinator } from '../../src/activator.js';
 import { Server } from '../../src/api.js';
 import type { Auth } from '../../src/authsvc.js';
 import type { RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
-import { MemoryRuntime } from '../../src/runtime/index.js';
-import type { Runtime, SecretDelivery, Store } from '../../src/seams.js';
+import { FakeBuilder } from '../../src/runtime/container/index.js';
+import type { ConfigDelivery, SecretDelivery, Store } from '../../src/seams.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from '../../src/secrets.js';
 import { MemoryStore } from './memory-store.js';
 import { hasDatabase, newStore } from '../pg.js';
@@ -36,14 +30,20 @@ import { hasDatabase, newStore } from '../pg.js';
 export interface Harness {
   platform: Platform;
   store: Store;
-  runtime: MemoryRuntime;
+  builder: FakeBuilder;
   cleanup: () => Promise<void>;
 }
 
-// builds an empty platform: a fresh Postgres schema (or store double), a fresh
-// blob directory, and a fresh in-memory runtime per call.
 export async function newPlatform(
-  opts: { appDomain?: string; hostSuffix?: string; frontendOrigin?: string; store?: Store; runtime?: Runtime } = {},
+  opts: {
+    appDomain?: string;
+    hostSuffix?: string;
+    frontendOrigin?: string;
+    store?: Store;
+    builder?: FakeBuilder;
+    secrets?: SecretDelivery;
+    config?: ConfigDelivery;
+  } = {},
 ): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -62,11 +62,14 @@ export async function newPlatform(
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const blobs = await openBlobStore(dir);
 
-  const runtime = new MemoryRuntime();
-  // tests expect a deploy live the moment its last blob lands, so the in-process
-  // activator runs activation inline (the single-isolate equivalent of
-  // production's AppActivator Durable Object).
-  const activator = new InProcessActivator({ store, blobs, runtime: opts.runtime ?? runtime });
+  const builder = opts.builder ?? new FakeBuilder();
+  const activator = new ContainerDeploymentCoordinator({
+    store,
+    blobs,
+    builder,
+    secrets: opts.secrets,
+    config: opts.config,
+  });
   const platform = new Platform({
     store,
     blobs,
@@ -79,7 +82,7 @@ export async function newPlatform(
   return {
     platform,
     store,
-    runtime,
+    builder,
     cleanup: async () => {
       for (const c of cleanups.reverse()) await c();
     },

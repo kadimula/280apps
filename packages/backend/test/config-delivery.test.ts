@@ -5,11 +5,11 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ConfigEntry } from '@280/contracts';
-import type { AppSecret, RuntimeApp, Store } from '../src/seams.js';
+import type { AppSecret, ContainerApp, Store } from '../src/seams.js';
 import type { SecretCipher } from '../src/secrets.js';
 import { ControlPlaneConfigDelivery } from '../src/config-delivery.js';
 
-const app: RuntimeApp = { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 's', storeId: '' };
+const app: ContainerApp = { id: 'app_1', script: 'demo-abc' };
 
 // A cipher whose reveal returns the plaintext verbatim (the envelope IS the value),
 // so a leak of a secret value into the config map would be visible in the assertion.

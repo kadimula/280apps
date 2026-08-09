@@ -1,44 +1,32 @@
-// Dependency construction shared by the host entrypoints: runtime selection,
-// auth wiring, and the scheduled-sweep core.
-
 import { DeployCode, type DeployError } from '@280/contracts';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
-import { MemoryRuntime, container } from './runtime/index.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
-import type { ExpiryCounts, Runtime, SecretDelivery, Store } from './seams.js';
+import type { ContainerBuilder } from './runtime/container/container.js';
+import type { ConfigDelivery, ExpiryCounts, SecretDelivery, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import type { Config } from './config.js';
 import type { SecretCipher } from './secrets.js';
 import { ControlPlaneSecretDelivery } from './secret-delivery.js';
 import { ControlPlaneConfigDelivery } from './config-delivery.js';
 
-// selectRuntime picks where apps run and which build home compiles their images.
-// Misconfiguration is a request failure rather than a degraded mode: a platform
-// that accepts pushes and hosts nothing is the one outcome with no honest error
-// message for the agent. Depot is the sole build home; nothing above this seam
-// changes if another is ever added.
-export interface RuntimeSelection {
-  runtime: Runtime;
-  secretDelivery?: SecretDelivery;
+export interface ContainerServices {
+  builder: ContainerBuilder;
+  secretDelivery: SecretDelivery;
+  configDelivery: ConfigDelivery;
 }
 
-export function selectRuntime(
+export function buildContainerServices(
   config: Config,
   log: Logger,
   store: Store,
   cipher?: SecretCipher,
-): RuntimeSelection {
-  if (config.runtime === 'memory') {
-    log.warn('runtime=memory: deploys will be recorded but nothing will be hosted');
-    return { runtime: new MemoryRuntime() };
-  }
+): ContainerServices {
   const builder = buildDepotBuilder(config, log);
-  const secretDelivery = new ControlPlaneSecretDelivery(store, cipher, builder);
-  const configDelivery = new ControlPlaneConfigDelivery(store, cipher);
   return {
-    runtime: new container.ContainerRuntime(builder, secretDelivery, configDelivery),
-    secretDelivery,
+    builder,
+    secretDelivery: new ControlPlaneSecretDelivery(store, cipher, builder),
+    configDelivery: new ControlPlaneConfigDelivery(store, cipher),
   };
 }
 
@@ -49,7 +37,7 @@ function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {
     ['CLOUDFLARE_API_TOKEN', config.cloudflare.apiToken],
   ].filter(([, v]) => v === '').map(([k]) => k);
   if (missing.length > 0) {
-    throw new Error(`the depot builder requires ${missing.join(', ')} (or set APP_RUNTIME=memory)`);
+    throw new Error(`the depot builder requires ${missing.join(', ')}`);
   }
   if (config.depot.projectId === '') {
     log.warn('DEPOT_PROJECT_ID unset: a project is resolved per app via the Depot API');

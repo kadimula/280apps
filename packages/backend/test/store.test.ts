@@ -38,7 +38,6 @@ function appFixture(over: Partial<App> = {}): App {
     salt: over.salt ?? 'salt',
     fingerprint: over.fingerprint ?? '',
     clientRef: over.clientRef ?? '',
-    storeId: over.storeId ?? '',
     activeDeploy: over.activeDeploy ?? '',
     createdAt: over.createdAt ?? 0,
     lastDeployAt: over.lastDeployAt ?? null,
@@ -326,13 +325,6 @@ describe.skipIf(!hasDatabase())('store', () => {
     await store.createApp(a);
     expect((await store.appByScript('demo-host'))?.id).toBe(a.id);
     expect(await store.appByScript('unknown-host')).toBeNull();
-  });
-
-  it('setStoreId records the runtime store', async () => {
-    const a = appFixture();
-    await store.createApp(a);
-    await store.setStoreId(a.id, 'store-xyz');
-    expect((await store.app('usr_test', a.id))?.storeId).toBe('store-xyz');
   });
 
   it('deleteApp removes the app and its deploys, keeps events, is idempotent', async () => {

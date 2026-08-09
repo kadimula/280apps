@@ -1,5 +1,5 @@
 import { publicConfig, type ConfigEntry } from '@280/contracts';
-import type { ConfigDelivery, RuntimeApp, Store } from './seams.js';
+import type { ConfigDelivery, ContainerApp, Store } from './seams.js';
 import type { SecretCipher } from './secrets.js';
 
 // ControlPlaneConfigDelivery resolves the container-env map for a rollout: the
@@ -18,7 +18,7 @@ export class ControlPlaneConfigDelivery implements ConfigDelivery {
     private readonly cipher: SecretCipher | undefined,
   ) {}
 
-  async resolve(app: RuntimeApp, config: ConfigEntry[]): Promise<Record<string, string>> {
+  async resolve(app: ContainerApp, config: ConfigEntry[]): Promise<Record<string, string>> {
     const merged = publicConfig(config);
     const wanted = new Set(config.filter((c) => c.value === '').map((c) => c.name));
     if (wanted.size === 0 || this.cipher === undefined) return merged;

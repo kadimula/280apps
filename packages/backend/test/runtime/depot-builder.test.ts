@@ -8,64 +8,39 @@ import { readFile, rm } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DeployErr, digestBytes, type Digest } from '@280/contracts';
+import { DeployErr } from '@280/contracts';
 import type { ContainerApp } from '../../src/seams.js';
 import type { Logger } from '../../src/observe.js';
 import { DepotBuilder, type DepotApi } from '../../src/runtime/container/depot-builder.js';
-import type { ContainerDeployment } from '../../src/runtime/container/container.js';
+import type { RolloutJob } from '../../src/runtime/container/container.js';
 import type { ExecFn } from '../../src/runtime/container/registry-builder.js';
 
 function app(over: Partial<ContainerApp> = {}): ContainerApp {
-  return { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 's', ...over };
+  return { id: 'app_1', script: 'demo-abc', ...over };
 }
 
-interface TestDeployment extends ContainerDeployment {
-  env: Record<string, string>;
-}
-
-function activation(files: Record<string, string>): ContainerDeployment {
-  const blobs = new Map<Digest, Uint8Array>();
-  const context = Object.entries(files).map(([path, body]) => {
-    const bytes = new TextEncoder().encode(body);
-    const digest = digestBytes(bytes);
-    blobs.set(digest, bytes);
-    return {
-      path,
-      read: async () => {
-        const stored = blobs.get(digest);
-        if (!stored) throw new Error('no blob ' + digest);
-        return stored;
-      },
-    };
-  });
+function activation(files: Record<string, string>): { act: RolloutJob } {
   return {
-    app: app(),
-    deployId: 'dep_1',
-    build: { builder: 'next', dockerfile: 'Dockerfile', port: 8080 },
-    files: context,
-    runtime: { routes: [], secrets: [], egress: { allowedHosts: [], credentials: [] }, config: [] },
-  };
-}
-
-function rolloutOf(
-  deployment: ContainerDeployment,
-  over: Partial<ContainerDeployment['runtime']> & { env?: Record<string, string> } = {},
-): TestDeployment {
-  return {
-    ...deployment,
-    env: over.env ?? {},
-    runtime: {
-      routes: over.routes ?? [],
-      secrets: over.secrets ?? [],
-      egress: over.egress ?? { allowedHosts: [], credentials: [] },
-      config: over.config ?? [],
+    act: {
+      app: app(),
+      deployId: 'dep_1',
+      build: { builder: 'next', dockerfile: 'Dockerfile', port: 8080 },
+      files: Object.entries(files).map(([path, body]) => ({
+        path,
+        read: async () => new TextEncoder().encode(body),
+      })),
+      runtime: { routes: [], secrets: [], egress: { allowedHosts: [], credentials: [] }, env: {} },
     },
   };
 }
 
-async function deploy(builder: DepotBuilder, deployment: TestDeployment) {
-  const built = await builder.build(deployment);
-  await builder.rollout(deployment, built.imageRef, deployment.env);
+function rolloutOf(job: RolloutJob, runtime: Partial<RolloutJob['runtime']> = {}): RolloutJob {
+  return { ...job, runtime: { ...job.runtime, ...runtime } };
+}
+
+async function deploy(builder: DepotBuilder, job: ReturnType<typeof rolloutOf>) {
+  const built = await builder.build(job);
+  await builder.rollout(job, built.imageRef);
   return built;
 }
 
@@ -128,7 +103,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       fetch: credsFetch(),
     });
 
-    const res = await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' })));
+    const res = await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
 
     expect(res.imageRef).toBe('registry.cloudflare.com/acct1/demo-abc:dep_1');
     // Exactly one build command (no docker build/push), then the wrangler roll.
@@ -180,7 +155,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: fetchImpl,
     });
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' })));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
 
     // The token is exchanged for scoped registry creds; the raw token is never the password.
     expect(credUrl).toContain('/accounts/acct1/containers/registries/registry.cloudflare.com/credentials');
@@ -203,7 +178,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       api,
       fetch: credsFetch(),
     });
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' })));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     // A project was ensured for this app, and the build ran against it.
     expect(projects).toEqual(['280-app_1']);
     expect(builds).toEqual(['proj_for_280-app_1']);
@@ -217,8 +192,8 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const { exec } = recordingExec();
     const { api, projects } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', workdir, exec, api, fetch: credsFetch() });
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' })));
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:22' })));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:22' }).act));
     expect(projects).toEqual(['280-app_1']);
     await rm(workdir, { recursive: true, force: true });
   });
@@ -229,7 +204,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
-      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }))),
+      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: false, fix: expect.stringContaining('two80 push') });
     await rm(workdir, { recursive: true, force: true });
   });
@@ -244,7 +219,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     });
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await expect(
-      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }))),
+      deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act)),
     ).rejects.toMatchObject({ retryable: true });
     expect(calls.find((c) => c.cmd === 'depot')).toBeUndefined();
     await rm(workdir, { recursive: true, force: true });
@@ -272,7 +247,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       fetch: credsFetch(),
     });
     const routes = [{ path: '/reports/*', appRole: '', role: 'analyst' }];
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }), { routes }));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { routes }));
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },
     ]);
@@ -302,7 +277,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     });
     await deploy(
       builder,
-      rolloutOf(activation({ Dockerfile: 'FROM node:20' }), { env: { GOOGLE_SHEET_ID: '1AbC', REGION: 'us-east-1' } }),
+      rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { env: { GOOGLE_SHEET_ID: '1AbC', REGION: 'us-east-1' } }),
     );
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_CONFIG)).toEqual({
       GOOGLE_SHEET_ID: '1AbC',
@@ -340,7 +315,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
     };
     const vars = () => (rollConfig.vars as Record<string, string>);
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }), { egress }));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { egress }));
 
     expect(vars().EGRESS_POLICY).toBe(JSON.stringify(egress));
     // The egress Worker reads env.TWO80_APP_ID for its audit app id; the roll must
@@ -360,7 +335,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     };
     const { api } = fakeApi();
     const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' })));
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
     expect((rollConfig.vars as Record<string, string>).EGRESS_POLICY).toBe('{"allowedHosts":[],"credentials":[]}');
     await rm(workdir, { recursive: true, force: true });
   });

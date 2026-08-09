@@ -9,7 +9,7 @@ import {
   type DeployError,
 } from '@280/contracts';
 import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, SecretDelivery, Store } from './seams.js';
-import type { ContainerBuilder, ContainerDeployment } from './runtime/container/container.js';
+import type { ContainerBuilder, RolloutJob } from './runtime/container/container.js';
 import { asDeployErr, deployShaped, errText, internal } from './deploysvc.js';
 
 export interface ContainerDeploymentDeps {
@@ -22,13 +22,7 @@ export interface ContainerDeploymentDeps {
 }
 
 export function containerApp(app: App | ContainerApp): ContainerApp {
-  return {
-    id: app.id,
-    slug: app.slug,
-    framework: app.framework,
-    script: app.script,
-    salt: app.salt,
-  };
+  return { id: app.id, script: app.script };
 }
 
 export function activationFailure(err: unknown): DeployError {
@@ -62,7 +56,7 @@ function deploymentFailed(err: unknown): DeployErr {
   });
 }
 
-function containerDeployment(deps: ContainerDeploymentDeps, app: App, dep: Deploy): ContainerDeployment {
+function rolloutJob(deps: ContainerDeploymentDeps, app: App, dep: Deploy): RolloutJob {
   return {
     app: containerApp(app),
     deployId: dep.id,
@@ -75,7 +69,7 @@ function containerDeployment(deps: ContainerDeploymentDeps, app: App, dep: Deplo
       routes: dep.manifest.routes ?? [],
       secrets: dep.manifest.secrets ?? [],
       egress: normalizeEgressPolicy(dep.manifest.egress ?? { allowedHosts: [], credentials: [] }),
-      config: dep.manifest.config ?? [],
+      env: publicConfig(dep.manifest.config ?? []),
     },
   };
 }
@@ -86,7 +80,6 @@ function nowSecs(): number {
 
 export class ContainerDeploymentCoordinator {
   private readonly locks = new Map<string, Promise<unknown>>();
-  private readonly prepared = new Set<string>();
 
   constructor(private readonly deps: ContainerDeploymentDeps) {}
 
@@ -113,10 +106,11 @@ export class ContainerDeploymentCoordinator {
       state = State.Activating;
     }
 
-    const deployment = containerDeployment(this.deps, app, dep);
-    if (state === State.Activating) await this.prepare(deployment);
+    const job = rolloutJob(this.deps, app, dep);
+    if (state === State.Activating) await this.prepare(job);
 
-    const required = [...deployment.runtime.secrets, ...requiredConfigNames(deployment.runtime.config)];
+    const config = dep.manifest.config ?? [];
+    const required = [...job.runtime.secrets, ...requiredConfigNames(config)];
     if (required.length > 0 && (await this.secretsUnconfigured(app.id, required))) {
       await this.deps.store.parkActivation(app.id, dep.id, (this.deps.now ?? nowSecs)());
       if (await this.secretsUnconfigured(app.id, required)) return;
@@ -125,36 +119,25 @@ export class ContainerDeploymentCoordinator {
 
     if (state === State.WaitingSecrets && !(await this.deps.store.resumeActivation(app.id, dep.id))) return;
 
-    await this.rollout(deployment);
+    if (this.deps.config) job.runtime.env = await this.deps.config.resolve(job.app, config);
+    await this.rollout(job);
     await this.deps.store.finishLive(app.id, dep.id);
   }
 
-  private async prepare(deployment: ContainerDeployment): Promise<void> {
+  private async prepare(job: RolloutJob): Promise<void> {
     try {
-      await this.deps.builder.build(deployment);
-      this.prepared.add(this.key(deployment));
+      await this.deps.builder.build(job);
     } catch (err) {
       throw deploymentFailed(err);
     }
   }
 
-  private async rollout(deployment: ContainerDeployment): Promise<void> {
-    const key = this.key(deployment);
-    if (!this.prepared.has(key)) await this.prepare(deployment);
-    const env = this.deps.config
-      ? await this.deps.config.resolve(deployment.app, deployment.runtime.config)
-      : publicConfig(deployment.runtime.config);
+  private async rollout(job: RolloutJob): Promise<void> {
     try {
-      await this.deps.builder.rollout(
-        deployment,
-        this.deps.builder.imageRef(deployment.app, deployment.deployId),
-        env,
-      );
-      await this.deps.secrets?.rollout(deployment.app, deployment.runtime.secrets);
+      await this.deps.builder.rollout(job, this.deps.builder.imageRef(job.app, job.deployId));
+      await this.deps.secrets?.rollout(job.app, job.runtime.secrets);
     } catch (err) {
       throw deploymentFailed(err);
-    } finally {
-      this.prepared.delete(key);
     }
   }
 
@@ -175,18 +158,10 @@ export class ContainerDeploymentCoordinator {
     }
     try {
       await this.deps.blobs.deleteApp(app.id);
-    } catch (err) {
-      throw deleteFailed('delete app content', err);
-    }
-    try {
       return await this.deps.store.deleteApp(userId, app.id);
     } catch (err) {
-      throw internal('delete app row', err);
+      throw internal('delete app content', err);
     }
-  }
-
-  private key(deployment: ContainerDeployment): string {
-    return `${deployment.app.id}/${deployment.deployId}`;
   }
 
   private withLock<T>(appId: string, operation: () => Promise<T>): Promise<T> {

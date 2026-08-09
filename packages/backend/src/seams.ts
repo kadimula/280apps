@@ -61,7 +61,6 @@ export interface App {
   fingerprint: string;
   clientRef: string;
 
-  storeId: string;
   activeDeploy: string;
 
   createdAt: number;
@@ -181,7 +180,6 @@ export interface Store {
   appByClientRef(userId: string, ref: string): Promise<App | null>;
   createApp(a: App): Promise<void>;
   deleteApp(userId: string, appId: string): Promise<boolean>;
-  setStoreId(appId: string, storeId: string): Promise<void>;
   appByScript(script: string): Promise<App | null>;
 
   deploy(appId: string, deployId: string): Promise<Deploy | null>;
@@ -236,10 +234,7 @@ export interface BlobStore {
 
 export interface ContainerApp {
   id: string;
-  slug: string;
-  framework: string;
   script: string;
-  salt: string;
 }
 
 export interface SecretDelivery {

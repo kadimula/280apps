@@ -9,7 +9,7 @@ import type { AppSecret, ContainerApp, Store } from '../src/seams.js';
 import type { SecretCipher } from '../src/secrets.js';
 import { ControlPlaneConfigDelivery } from '../src/config-delivery.js';
 
-const app: ContainerApp = { id: 'app_1', slug: 'demo', framework: 'next', script: 'demo-abc', salt: 's' };
+const app: ContainerApp = { id: 'app_1', script: 'demo-abc' };
 
 // A cipher whose reveal returns the plaintext verbatim (the envelope IS the value),
 // so a leak of a secret value into the config map would be visible in the assertion.

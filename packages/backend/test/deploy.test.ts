@@ -163,7 +163,7 @@ describe('sync + activation', () => {
     const res = await port.sync({ identity: ident({ clientRef: 'cfg-live' }), manifest });
     await uploadAll(port, res.app.id, res.missing, content);
     expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
-    expect(builder.rollouts).toHaveLength(1);
+    expect(builder.rollouts[0]?.runtime.env).toEqual({ REGION: 'us-east-1' });
   });
 
   it('rejects a manifest whose config collides with a secret at preflight', async () => {
@@ -233,13 +233,15 @@ describe('sync + activation', () => {
   });
 
   it('goes live when every blob has landed', async () => {
-    const { port } = await fresh();
+    const { h, port } = await fresh();
     const { manifest, content } = mkBundle('worker', { 'app/a.txt': 'A' });
     const res = await port.sync({ identity: ident(), manifest });
     await uploadAll(port, res.app.id, res.missing, content);
     const st = await port.status(res.app.id, res.deployId);
     expect(st.state).toBe(State.Live);
     expect(st.url).toContain('280apps.run');
+    expect(h.builder.rollouts[0]?.files.map((file) => file.path)).toEqual(['Dockerfile', 'app/a.txt']);
+    expect(h.builder.rollouts[0]?.runtime.egress).toEqual({ allowedHosts: [], credentials: [] });
   });
 
   it('missing shrinks as blobs land', async () => {
@@ -431,11 +433,12 @@ describe('delete', () => {
   });
 
   it('destroys the app when confirmed by slug', async () => {
-    const { port } = await fresh();
+    const { h, port } = await fresh();
     const { manifest } = mkBundle('worker');
     const res = await port.sync({ identity: ident(), manifest });
     const done = await port.delete({ appId: res.app.id, confirm: res.app.slug });
     expect(done.deleted).toBe(true);
+    expect(h.builder.torndown).toEqual([res.app.id]);
     await expectCode(() => port.status(res.app.id, res.deployId), DeployCode.NotFound);
   });
 });

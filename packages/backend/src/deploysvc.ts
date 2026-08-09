@@ -243,7 +243,6 @@ export class Service implements Port {
       // --new must always create, so it must not claim the nonce that would make the
       // next push dedupe onto this app.
       clientRef: id.forceNew ? '' : id.clientRef,
-      storeId: '',
       activeDeploy: '',
       // The store authors created_at on insert; this draft value is never read back.
       createdAt: 0,

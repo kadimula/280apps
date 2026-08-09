@@ -1,5 +1,1 @@
-export {
-  FakeBuilder,
-  type ContainerBuilder,
-  type ContainerDeployment,
-} from './container.js';
+export { FakeBuilder, type ContainerBuilder, type RolloutJob } from './container.js';

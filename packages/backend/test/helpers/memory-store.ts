@@ -287,11 +287,6 @@ export class MemoryStore implements Store {
     return true;
   }
 
-  async setStoreId(appId: string, storeId: string): Promise<void> {
-    const a = this.apps.get(appId);
-    if (a) a.storeId = storeId;
-  }
-
   async appByScript(script: string): Promise<App | null> {
     for (const a of this.apps.values()) {
       if (a.script === script) return this.view(a);

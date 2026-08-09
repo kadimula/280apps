@@ -22,7 +22,6 @@ function appFixture(over: Partial<App> = {}): App {
     salt: over.salt ?? 'salt',
     fingerprint: over.fingerprint ?? '',
     clientRef: over.clientRef ?? '',
-    storeId: over.storeId ?? '',
     activeDeploy: over.activeDeploy ?? '',
     createdAt: over.createdAt ?? 0,
     lastDeployAt: over.lastDeployAt ?? null,

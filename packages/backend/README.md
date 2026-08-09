@@ -6,9 +6,26 @@ The production entrypoint is a Node process deployed on Railway. It assembles on
 
 ## Backend architecture diagram
 
-![Backend architecture](docs/backend-flow.svg)
-
-The editable Graphviz source is in [`docs/backend-flow.dot`](docs/backend-flow.dot).
+```mermaid
+flowchart LR
+  CLI[280 CLI] --> API[Hono HTTP API]
+  Dashboard[Dashboard and browser] --> API
+  Agents[Agents] --> API
+  API --> Deploy[Deploy service]
+  API --> Auth[Auth and app management]
+  Deploy --> Coordinator[Container deployment coordinator]
+  Coordinator --> Builder[Container builder]
+  Deploy --> Postgres[(Postgres store)]
+  Deploy --> R2[(R2 blob store)]
+  Auth --> Postgres
+  Auth --> KMS[Secret encryption]
+  Auth --> OIDC[Google OIDC]
+  Builder --> R2
+  Builder --> KMS
+  Builder --> Depot[Depot remote BuildKit]
+  Builder --> App[Per app Worker and Container]
+  Postgres --> Gateway[Identity gateway]
+```
 
 ### Sample flow: application deployment
 
@@ -63,7 +80,7 @@ Production uses Postgres, R2 through its S3 API, Depot, Cloudflare registry imag
 | HTTP API | Authenticates requests, validates wire bodies, maps typed errors to HTTP responses, and exposes deploy, auth, dashboard, secret, sharing, preview, docs, and health routes. | `src/api.ts` |
 | Deploy service | Implements the user scoped deploy contract, application resolution, preflight, content synchronization, status, and confirmed deletion. | `src/deploysvc.ts` |
 | Container deployment coordinator | Serializes deployment and deletion per application, prepares builds, waits for secrets, rolls live, and records terminal state. | `src/activator.ts` |
-| Container build seam | Defines the `ContainerBuilder` boundary and the `ContainerDeployment` job that carries build context, access, and egress policy. | `src/runtime/container/container.ts` |
+| Container build seam | Defines the `ContainerBuilder` boundary and the `RolloutJob` value that carries build context, access, and egress policy. | `src/runtime/container/container.ts` |
 | Depot builder | Opens remote Depot builds and pushes images directly to the Cloudflare registry without a local Docker daemon. | `src/runtime/container/depot-builder.ts` |
 | Registry rollout | Materializes contexts, runs external commands safely, generates Worker configuration, rolls images, and tears applications down. | `src/runtime/container/registry-builder.ts` |
 | Postgres store | Persists users, sessions, tokens, apps, deploys, policies, grants, secrets, previews, and audit events behind one store seam. | `src/store/store.ts` |

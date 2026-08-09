@@ -110,7 +110,6 @@ export function migrations(schema: string): string[] {
        salt          TEXT NOT NULL,
        fingerprint   TEXT NOT NULL DEFAULT '',
        client_ref    TEXT NOT NULL DEFAULT '',
-       store_id      TEXT NOT NULL DEFAULT '',
        active_deploy TEXT NOT NULL DEFAULT '',
        created_at    BIGINT NOT NULL DEFAULT (${epochDefault})
      )`,

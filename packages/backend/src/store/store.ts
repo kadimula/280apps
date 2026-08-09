@@ -214,7 +214,7 @@ function toNum(v: unknown): number {
 }
 
 const appCols =
-  'id, user_id, slug, framework, url, script, salt, fingerprint, client_ref, store_id, active_deploy';
+  'id, user_id, slug, framework, url, script, salt, fingerprint, client_ref, active_deploy';
 // created_at is DB-defaulted, so it is read but never part of the INSERT column list.
 const appReadCols = `${appCols}, created_at`;
 
@@ -331,7 +331,6 @@ function rowToApp(r: Row): App {
     salt: r.salt,
     fingerprint: r.fingerprint,
     clientRef: r.client_ref,
-    storeId: r.store_id,
     activeDeploy: r.active_deploy,
     createdAt: toNum(r.created_at),
     lastDeployAt: r.last_deploy_at == null ? null : toNum(r.last_deploy_at),
@@ -740,7 +739,7 @@ class PgStore implements Store {
       // No ON CONFLICT: the create-dedup guard is the unique index on (user,
       // clientRef), and losing that race must stay an error the caller resolves.
       await tx.query(
-        `INSERT INTO ${this.t('apps')} (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO ${this.t('apps')} (${appCols}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           a.id,
           a.userId,
@@ -751,7 +750,6 @@ class PgStore implements Store {
           a.salt,
           a.fingerprint,
           a.clientRef,
-          a.storeId,
           a.activeDeploy,
         ],
       );
@@ -793,10 +791,6 @@ class PgStore implements Store {
       });
       return true;
     });
-  }
-
-  async setStoreId(appId: string, storeId: string): Promise<void> {
-    await this.db.query(`UPDATE ${this.t('apps')} SET store_id = $1 WHERE id = $2`, [storeId, appId]);
   }
 
   async appByScript(script: string): Promise<App | null> {

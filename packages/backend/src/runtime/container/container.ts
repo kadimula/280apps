@@ -1,9 +1,4 @@
-import type {
-  BuildSpec,
-  ConfigEntry,
-  EgressPolicy,
-  RouteGate,
-} from '@280/contracts';
+import type { BuildSpec, EgressPolicy, RouteGate } from '@280/contracts';
 import type { ContainerApp } from '../../seams.js';
 
 export interface ContextFile {
@@ -11,7 +6,7 @@ export interface ContextFile {
   read(): Promise<Uint8Array>;
 }
 
-export interface ContainerDeployment {
+export interface RolloutJob {
   app: ContainerApp;
   deployId: string;
   build: BuildSpec;
@@ -20,7 +15,7 @@ export interface ContainerDeployment {
     routes: RouteGate[];
     secrets: string[];
     egress: EgressPolicy;
-    config: ConfigEntry[];
+    env: Record<string, string>;
   };
 }
 
@@ -30,14 +25,14 @@ export interface RolloutResult {
 
 export interface ContainerBuilder {
   imageRef(app: ContainerApp, deployId: string): string;
-  build(deployment: ContainerDeployment): Promise<RolloutResult>;
-  rollout(deployment: ContainerDeployment, imageRef: string, env: Record<string, string>): Promise<void>;
+  build(job: RolloutJob): Promise<RolloutResult>;
+  rollout(job: RolloutJob, imageRef: string): Promise<void>;
   teardown(app: ContainerApp): Promise<void>;
 }
 
 export class FakeBuilder implements ContainerBuilder {
-  readonly builds: ContainerDeployment[] = [];
-  readonly rollouts: Array<{ deployment: ContainerDeployment; env: Record<string, string> }> = [];
+  readonly builds: RolloutJob[] = [];
+  readonly rollouts: RolloutJob[] = [];
   readonly torndown: string[] = [];
   private readonly active = new Map<string, string>();
   private failWith: Error | null = null;
@@ -54,24 +49,20 @@ export class FakeBuilder implements ContainerBuilder {
     return `registry.cloudflare.com/fake/${app.script}:${deployId}`;
   }
 
-  async build(deployment: ContainerDeployment): Promise<RolloutResult> {
+  async build(job: RolloutJob): Promise<RolloutResult> {
     if (this.failWith) {
       const err = this.failWith;
       this.failWith = null;
       throw err;
     }
-    for (const file of deployment.files) await file.read();
-    this.builds.push(deployment);
-    return { imageRef: this.imageRef(deployment.app, deployment.deployId) };
+    for (const file of job.files) await file.read();
+    this.builds.push(job);
+    return { imageRef: this.imageRef(job.app, job.deployId) };
   }
 
-  async rollout(
-    deployment: ContainerDeployment,
-    _imageRef: string,
-    env: Record<string, string>,
-  ): Promise<void> {
-    this.rollouts.push({ deployment, env });
-    this.active.set(deployment.app.id, deployment.deployId);
+  async rollout(job: RolloutJob, _imageRef: string): Promise<void> {
+    this.rollouts.push(job);
+    this.active.set(job.app.id, job.deployId);
   }
 
   async teardown(app: ContainerApp): Promise<void> {

@@ -72,12 +72,12 @@ digraph BackendArchitecture {
     color="#B56BAA"
   ]
   activator [
-    label=<<B>Per app activator</B><BR/><FONT POINT-SIZE="10">Serialize prepare, rollout, and delete</FONT>>
+    label=<<B>Container deployment coordinator</B><BR/><FONT POINT-SIZE="10">Serialize build, rollout, and delete</FONT>>
     fillcolor="#28172A"
     color="#B56BAA"
   ]
   runtime [
-    label=<<B>Container runtime</B><BR/><FONT POINT-SIZE="10">Build context, policy, and secret delivery</FONT>>
+    label=<<B>Container builder</B><BR/><FONT POINT-SIZE="10">Build context, policy, and secret delivery</FONT>>
     fillcolor="#28172A"
     color="#B56BAA"
   ]
@@ -164,7 +164,7 @@ digraph BackendArchitecture {
   api -> deploy [label="User scoped Port", color="#B56BAA", fontcolor="#B56BAA"]
   api -> auth [label="Browser and management calls", color="#B56BAA", fontcolor="#B56BAA"]
   deploy -> activator [label="Content complete deploy", color="#B56BAA", fontcolor="#B56BAA"]
-  activator -> runtime [label="Prepare, activate, or delete", color="#B56BAA", fontcolor="#B56BAA", constraint=false]
+  activator -> runtime [label="Build, rollout, or delete", color="#B56BAA", fontcolor="#B56BAA", constraint=false]
 
   deploy -> postgres [label="Apps and deploy state"]
   deploy -> blobs [label="Missing and uploaded content"]

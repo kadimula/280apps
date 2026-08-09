@@ -50,7 +50,8 @@ export interface EgressContainerClass {
 export interface EgressCallParams {
   appId: string;
   host: string;
-  secret: string; // secret NAME, '' when the host is allowlisted without a credential
+  secret: string; // single-secret NAME; '' when allowlisted without a credential, or multi-field
+  secrets?: Record<string, string>; // multi-field form: field role -> secret NAME (still names only)
   type: string; // credential type; '' or 'header' is the static path
   header: string;
   scheme: string;

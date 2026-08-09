@@ -70,14 +70,34 @@ The binding above is **static header injection**: 280 attaches the vault-held va
 
 Some providers do not accept their durable credential as a header. A Google service account holds a JSON key that must be exchanged for a short-lived, scoped access token that expires; the app cannot mint or refresh that token without holding the JSON key, which zero-trust forbids. For these, declare a **typed credential**: 280 keeps the durable credential in the vault, mints a scoped provider token in-flight, caches and refreshes it, and attaches it. The app still makes plain unauthenticated calls.
 
-Google service accounts use `type: "google-service-account"`. Bind the service account JSON secret to the exact Google API host and list the OAuth scopes the minted token must carry:
+**Preserve the app's existing secret names and shapes.** When you refactor an authenticated-SDK app to direct calls, do not consolidate or rename the credential the user already possessed. Bind each value the app previously held into the typed credential under the same name the user knows it by, so they re-enter the exact secrets they already have, never a new consolidated blob they think they must go obtain. Mirror whatever the app already had. If the durable credential genuinely was one value (an API key, or a single JSON key file the user downloads as one artifact), bind it as one secret. If the app read several discrete values (a client email and a private key), bind each as its own secret. Do not split a credential that was genuinely one artifact, and do not merge values the user held separately. The platform assembles them correctly at the egress boundary.
+
+Google service accounts use `type: "google-service-account"`. When the app already read the two service-account values (its `client_email` and `private_key`), preserve them: bind each under its own secret name with a `secrets` field map, and list the OAuth scopes the minted token must carry:
 
     {
       "egress": {
         "credentials": [
           {
             "host": "sheets.googleapis.com",
-            "secret": "SHEETS_SERVICE_ACCOUNT",
+            "type": "google-service-account",
+            "secrets": {
+              "client_email": "GOOGLE_CLIENT_EMAIL",
+              "private_key":  "GOOGLE_PRIVATE_KEY"
+            },
+            "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+          }
+        ]
+      }
+    }
+
+The `secrets` keys are the fixed field roles (`client_email`, `private_key`); the values are the app's own secret names, ideally the exact names it used before. If instead the user genuinely holds the service account as one downloaded JSON key file, bind it as a single `secret` (the whole JSON), and 280 reads the two fields from it:
+
+    {
+      "egress": {
+        "credentials": [
+          {
+            "host": "sheets.googleapis.com",
+            "secret": "GOOGLE_SA_JSON",
             "type": "google-service-account",
             "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
           }
@@ -85,9 +105,9 @@ Google service accounts use `type: "google-service-account"`. Bind the service a
       }
     }
 
-The same lean rule holds: the binding declares both the secret and the host, so `SHEETS_SERVICE_ACCOUNT` goes in no top-level `secrets` list and `sheets.googleapis.com` goes in no `allow` list. Do not set `header` or `scheme`; the platform mints and attaches the token. The host must be an exact Google API host (`*.googleapis.com`), and `scopes` is required.
+Either way the binding declares both the secret(s) and the host, so nothing goes in a top-level `secrets` list and `sheets.googleapis.com` goes in no `allow` list. Declare exactly one of `secret` or `secrets`, not both. Do not set `header` or `scheme`; the platform mints and attaches the token. The host must be an exact Google API host (`*.googleapis.com`), and `scopes` is required.
 
-The dashboard value the user enters (step 7) is the **durable service account JSON key**, never a short-lived Google access token. 280 does the token exchange in-flight; the app never reads the JSON or the minted token and makes unauthenticated HTTP calls to `sheets.googleapis.com`.
+The dashboard values the user enters (step 7) are the **durable service account credentials** (the two fields, or the JSON key), never a short-lived Google access token. 280 does the token exchange in-flight; the app never reads the credentials or the minted token and makes unauthenticated HTTP calls to `sheets.googleapis.com`.
 
 ## 4. Declare config the app reads
 
@@ -96,9 +116,11 @@ Config is the mirror of secrets: values the app **reads** with `process.env` to 
     {
       "config": {
         "REGION": "us-east-1",
-        "SHEET_ID": { "sensitive": true }
+        "GOOGLE_SHEET_ID": { "sensitive": true }
       }
     }
+
+Keep the name the app already used (`GOOGLE_SHEET_ID`, not a shortened `SHEET_ID`): the app reads config via `process.env.NAME`, so renaming it is a code change on top of the refactor and renames the value the user pastes. Both break continuity for no benefit, and a provider-prefixed name reads unambiguously in a dashboard listing several apps' variables.
 
 Two forms:
 
@@ -107,7 +129,7 @@ Two forms:
 
 Each declared name arrives as an environment variable in the container, so the app reads it directly:
 
-    const sheetId = process.env.SHEET_ID;
+    const sheetId = process.env.GOOGLE_SHEET_ID;
 
 Names must be valid env identifiers; `PORT`, `HOSTNAME`, `NODE_ENV`, `NODE_EXTRA_CA_CERTS`, and the `TWO80_` prefix are reserved.
 

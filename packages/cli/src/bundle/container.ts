@@ -20,7 +20,7 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
-import { credentialType, EGRESS_CREDENTIAL_TYPE, type ConfigEntry, type EgressPolicy } from '@280/contracts';
+import { credentialSecretNames, credentialType, EGRESS_CREDENTIAL_TYPE, type ConfigEntry, type EgressPolicy } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { fail, fileExists, walkContext } from './walk.js';
@@ -277,7 +277,13 @@ export function egressDisclosure(egress: EgressPolicy): string[] {
       type === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount && c.scopes?.length
         ? `, scopes: ${c.scopes.join(' ')}`
         : '';
-    lines.push(`  ${c.host}  →  ${type} via secret ${c.secret}${scopes}`);
+    // A multi-field credential lists its constituent secret names; the blob form
+    // keeps the singular "via secret NAME" phrasing. Only NAMEs ever appear here.
+    const via =
+      c.secrets && Object.keys(c.secrets).length > 0
+        ? `via ${credentialSecretNames(c).join(', ')}`
+        : `via secret ${c.secret}`;
+    lines.push(`  ${c.host}  →  ${type} ${via}${scopes}`);
   }
   return lines;
 }

@@ -6,7 +6,7 @@
 // original static injection, `google-service-account` mints a scoped token. An unknown
 // type fails closed (520) and never falls through to static injection.
 
-import { credentialType, EGRESS_CREDENTIAL_TYPE } from '@280/contracts';
+import { credentialType, CREDENTIAL_FIELDS, EGRESS_CREDENTIAL_TYPE } from '@280/contracts';
 import type { CallLog, MintLog } from './calllog.js';
 import { consoleCallLog, consoleMintLog } from './calllog.js';
 import type { Minter, MintInput } from './minters.js';
@@ -40,10 +40,15 @@ export interface EgressHandlerOptions {
 
 function asParams(raw: unknown): EgressCallParams {
   const p = (raw ?? {}) as Partial<EgressCallParams>;
+  const secrets =
+    p.secrets && typeof p.secrets === 'object' && !Array.isArray(p.secrets)
+      ? (p.secrets as Record<string, string>)
+      : undefined;
   return {
     appId: p.appId ?? '',
     host: p.host ?? '',
     secret: p.secret ?? '',
+    secrets,
     type: p.type ?? '',
     header: p.header || 'authorization',
     scheme: p.scheme ?? '',
@@ -51,16 +56,47 @@ function asParams(raw: unknown): EgressCallParams {
   };
 }
 
-function mintInput(params: EgressCallParams, value: string): MintInput {
-  return {
+// The credential a request binds, resolved to NAMEs the vault is asked for. `label`
+// is the audit identity: the single NAME, or the field NAMEs joined in fixed order
+// (never a value). `fields` pairs each field role with its NAME for the multi-field form.
+interface CredentialBinding {
+  names: string[];
+  label: string;
+  fields?: { role: string; name: string }[];
+}
+
+function bindingFor(params: EgressCallParams, type: string): CredentialBinding {
+  const map = params.secrets ?? {};
+  if (Object.keys(map).length > 0) {
+    const order = CREDENTIAL_FIELDS[type] ?? Object.keys(map).sort();
+    const fields = order
+      .map((role) => ({ role, name: map[role] }))
+      .filter((p): p is { role: string; name: string } => typeof p.name === 'string' && p.name !== '');
+    const names = fields.map((p) => p.name);
+    return { names, label: names.join('+'), fields };
+  }
+  return { names: params.secret ? [params.secret] : [], label: params.secret };
+}
+
+function mintInput(
+  params: EgressCallParams,
+  label: string,
+  resolved: Record<string, string>,
+  binding: CredentialBinding,
+): MintInput {
+  const base = {
     appId: params.appId,
-    secret: params.secret,
+    secret: label,
     host: params.host,
     scopes: params.scopes,
     header: params.header,
     scheme: params.scheme,
-    value,
   };
+  if (binding.fields) {
+    const fields = Object.fromEntries(binding.fields.map((p) => [p.role, resolved[p.name]!]));
+    return { ...base, value: '', fields };
+  }
+  return { ...base, value: resolved[binding.names[0]!]! };
 }
 
 // makeEgressHandler builds the single named handler registered on the container
@@ -89,17 +125,29 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
     const now = clock();
     const type = credentialType(params);
     const minted = type !== EGRESS_CREDENTIAL_TYPE.Header;
+    const binding = bindingFor(params, type);
+    const secretLabel = binding.label;
 
     let outReq = req;
     let credentialAttached = false;
     let activeMinter: Minter | undefined;
     let activeCacheKey: string | undefined;
 
-    if (params.secret) {
-      const value = vaultFrom(env).get(params.secret);
-      if (!value) {
-        // Fail closed: the app declared a credentialed host but the vault has no
-        // value. Do not forward an un-credentialed request to an authed API.
+    if (binding.names.length > 0) {
+      const vault = vaultFrom(env);
+      const resolved: Record<string, string> = {};
+      let missing = false;
+      for (const name of binding.names) {
+        const value = vault.get(name);
+        if (!value) {
+          missing = true;
+          break;
+        }
+        resolved[name] = value;
+      }
+      if (missing) {
+        // Fail closed: the app declared a credentialed host but the vault has no value
+        // for at least one field. Do not forward an un-credentialed request.
         callLog({
           kind: 'request',
           appId: params.appId,
@@ -108,7 +156,7 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
           path,
           status: 0,
           credentialAttached: false,
-          secret: params.secret,
+          secret: secretLabel,
           outcome: 'denied',
           reason: 'missing-secret',
           at: now,
@@ -117,9 +165,9 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
       }
 
       const minter = minters[type];
-      const input = mintInput(params, value);
+      const input = mintInput(params, secretLabel, resolved, binding);
       if (!minter) {
-        return failMint(params, host, method, path, now, 'mint-failed', callLog, mintLog);
+        return failMint(params, secretLabel, host, method, path, now, 'mint-failed', callLog, mintLog);
       }
 
       let result;
@@ -127,14 +175,14 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
         result = await minter.mint(input);
       } catch (err) {
         const reason = err instanceof MintError ? err.category : 'mint-failed';
-        return failMint(params, host, method, path, now, reason, callLog, mintLog, minted);
+        return failMint(params, secretLabel, host, method, path, now, reason, callLog, mintLog, minted);
       }
 
       if (minted) {
         mintLog({
           kind: 'mint',
           appId: params.appId,
-          secret: params.secret,
+          secret: secretLabel,
           type,
           scopes: params.scopes,
           expiresAtMs: result.expiresAtMs,
@@ -168,7 +216,7 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
         path,
         status: res.status,
         credentialAttached,
-        secret: params.secret,
+        secret: secretLabel,
         outcome: 'forwarded',
         reason: '',
         at: now,
@@ -183,7 +231,7 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
         path,
         status: 0,
         credentialAttached,
-        secret: params.secret,
+        secret: secretLabel,
         outcome: 'error',
         reason: err instanceof Error ? err.message : String(err),
         at: now,
@@ -197,6 +245,7 @@ export function makeEgressHandler(opts: EgressHandlerOptions = {}): OutboundHand
 // value-free category; no assertion, key, token, or provider response is ever in it.
 function failMint(
   params: EgressCallParams,
+  secretLabel: string,
   host: string,
   method: string,
   path: string,
@@ -210,7 +259,7 @@ function failMint(
     mintLog({
       kind: 'mint',
       appId: params.appId,
-      secret: params.secret,
+      secret: secretLabel,
       type: params.type,
       scopes: params.scopes,
       expiresAtMs: 0,
@@ -227,7 +276,7 @@ function failMint(
     path,
     status: 0,
     credentialAttached: false,
-    secret: params.secret,
+    secret: secretLabel,
     outcome: 'denied',
     reason,
     at: now,

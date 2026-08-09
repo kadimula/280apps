@@ -21,7 +21,7 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const headingId = useId();
-  const field = useRef<HTMLInputElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
 
   const refresh = useCallback(async () => {
     const result = await listVariables(app.id);
@@ -207,7 +207,10 @@ export function VariablesDialog({ app, autoOpen = false }: { app: { id: string; 
                   {editing === variable.name && (
                     <form onSubmit={save} className="mt-3 pl-8">
                       <label className="sr-only" htmlFor={`${headingId}-${variable.name}`}>Value for {variable.name}</label>
-                      <input ref={field} id={`${headingId}-${variable.name}`} type="password" value={value} onChange={(event) => { setValue(event.target.value); setError(null); }} placeholder="Enter value" autoComplete="new-password" disabled={busy === variable.name} className="w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 font-mono text-[14px] text-[var(--color-ink)] outline-none transition-colors placeholder:font-sans placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] disabled:opacity-60" />
+                      {/* Textarea, not a single-line input: some credentials are multi-line
+                          (a PEM private_key), which a password input makes unreadable to enter.
+                          Rows grow with the pasted content and cap with an inner scroll. */}
+                      <textarea ref={field} id={`${headingId}-${variable.name}`} value={value} onChange={(event) => { setValue(event.target.value); setError(null); }} placeholder="Enter value" autoComplete="off" spellCheck={false} rows={Math.min(Math.max(value.split("\n").length, 3), 14)} disabled={busy === variable.name} className="w-full resize-y rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 font-mono text-[14px] leading-snug text-[var(--color-ink)] outline-none transition-colors placeholder:font-sans placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] disabled:opacity-60" />
                       <div className="mt-3 flex justify-end gap-2">
                         <button type="button" onClick={() => { setEditing(null); setValue(""); setError(null); }} className="cursor-pointer rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]">Cancel</button>
                         <button type="submit" disabled={!value || busy === variable.name} className="cursor-pointer rounded-lg bg-[var(--color-ink)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-45">{busy === variable.name ? "Saving…" : "Save"}</button>

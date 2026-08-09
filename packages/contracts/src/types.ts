@@ -89,6 +89,27 @@ export function isEgressCredentialType(t: string): t is EgressCredentialType {
   return t === EGRESS_CREDENTIAL_TYPE.Header || t === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount;
 }
 
+// The constituent fields a typed credential may bind under the app's own secret
+// names, instead of one consolidated blob. Keys mirror the provider's own field
+// names so the mapping is self-evident. A type absent here (header) admits no field
+// map. Ordered, so the digest, cache material, and mint identity are deterministic.
+export const CREDENTIAL_FIELDS: Record<string, readonly string[]> = {
+  [EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount]: ['client_email', 'private_key'],
+};
+
+// credentialSecretNames lists every secret NAME a credential binds: the field-map
+// names in fixed order for the multi-field form, else the single secret. The one
+// place delivery, the waiting gate, the digest, and the dashboard learn a
+// credential's names, so all agree whether it is a blob or a field map.
+export function credentialSecretNames(c: EgressCredential): string[] {
+  if (c.secrets && Object.keys(c.secrets).length > 0) {
+    const fields = CREDENTIAL_FIELDS[credentialType(c)];
+    const names = fields ? fields.map((f) => c.secrets![f]) : Object.values(c.secrets);
+    return names.filter((n): n is string => typeof n === 'string' && n !== '');
+  }
+  return c.secret ? [c.secret] : [];
+}
+
 // credentialType folds an absent/blank type to the default `header`. Callers still
 // pass the result through isEgressCredentialType to reject an unknown recognized type.
 export function credentialType(c: { type?: string }): string {
@@ -180,6 +201,13 @@ const optStrArr = () =>
     .array(z.string())
     .nullish()
     .transform((v) => v ?? undefined);
+// Presence-preserving optional string map (field role -> secret NAME): absent/null
+// fold to undefined so validation can enforce "exactly one of secret/secrets".
+const optStrMap = () =>
+  z
+    .record(z.string(), z.string())
+    .nullish()
+    .transform((v) => v ?? undefined);
 
 // EgressCredential binds one allowed host to a platform-held secret the outbound
 // handler attaches in-flight. Only the secret NAME travels on the wire; its value
@@ -190,7 +218,8 @@ const optStrArr = () =>
 export const egressCredentialSchema = z
   .object({
     host: str(),
-    secret: str(), // the secret's name; the value is resolved from the vault at call time
+    secret: str(), // single-secret form: the secret's name (blob or static header value)
+    secrets: optStrMap(), // multi-field form (typed only): field role -> secret NAME
     type: optStr(),
     header: optStr(),
     scheme: optStr(),
@@ -295,7 +324,17 @@ function normalizeCredential(c: EgressCredential): EgressCredential {
   const host = c.host.trim().toLowerCase();
   const type = credentialType(c);
   if (type === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount) {
-    return { ...c, host, type, header: '', scheme: '', scopes: normalizeScopes(c.scopes ?? []) };
+    const secrets = c.secrets && Object.keys(c.secrets).length > 0 ? sortedByKey(c.secrets) : undefined;
+    return {
+      ...c,
+      host,
+      type,
+      header: '',
+      scheme: '',
+      scopes: normalizeScopes(c.scopes ?? []),
+      secret: secrets ? '' : c.secret, // the field map is the credential; no blob secret
+      secrets,
+    };
   }
   return {
     ...c,
@@ -304,7 +343,16 @@ function normalizeCredential(c: EgressCredential): EgressCredential {
     header: c.header ?? 'authorization',
     scheme: c.scheme ?? 'Bearer',
     scopes: [],
+    secrets: undefined, // static header injection has no field map
   };
+}
+
+// sortedByKey rebuilds a map in byte-sorted key order, so a field map hashes the
+// same regardless of the order the author wrote the JSON keys in.
+function sortedByKey(m: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(m).sort(byteCompare)) out[k] = m[k]!;
+  return out;
 }
 
 // normalizeEgressPolicy is the one place the allowlist is derived, so the CLI that
@@ -338,7 +386,7 @@ export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: read
   // secrets). The reserved-name check below still rejects a colliding secret name.
   const declared = new Set<string>(declaredSecrets);
   for (const c of policy.credentials ?? []) {
-    if (c.secret !== '') declared.add(c.secret);
+    for (const name of credentialSecretNames(c)) declared.add(name);
   }
   const seenHosts = new Set<string>();
   for (const c of policy.credentials ?? []) {
@@ -351,20 +399,41 @@ export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: read
         `set "type" to one of: ${EGRESS_CREDENTIAL_TYPE.Header}, ${EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount}`,
       );
     }
-    if (c.secret === '') {
-      rejectEgress(`egress credential for ${host} must name a secret`, 'add a "secret" naming a declared secret');
-    }
-    if (isReservedBindingName(c.secret)) {
+    const hasSecret = c.secret !== '';
+    const hasFields = c.secrets !== undefined && Object.keys(c.secrets).length > 0;
+    if (type === EGRESS_CREDENTIAL_TYPE.Header && hasFields) {
       rejectEgress(
-        `egress credential secret ${JSON.stringify(c.secret)} is a reserved platform binding name`,
-        'rename the secret so it does not collide with a platform Worker binding',
+        `egress credential for ${host} is type header and must not set "secrets"`,
+        'static header injection takes a single "secret"; the field map is only for minted typed credentials',
       );
     }
-    if (!declared.has(c.secret)) {
+    if (hasSecret && hasFields) {
       rejectEgress(
-        `egress credential for ${host} references secret ${JSON.stringify(c.secret)} which is not declared in secrets`,
-        'declare the secret in 280.json "secrets"',
+        `egress credential for ${host} sets both "secret" and "secrets"`,
+        'declare either a single "secret" (the service-account JSON) or a "secrets" map of its fields, not both',
       );
+    }
+    if (!hasSecret && !hasFields) {
+      rejectEgress(
+        `egress credential for ${host} must name a secret`,
+        'add a "secret" naming a declared secret, or a "secrets" map of its fields',
+      );
+    }
+    if (hasFields) {
+      validateCredentialFields(c, host, type);
+    } else {
+      if (isReservedBindingName(c.secret)) {
+        rejectEgress(
+          `egress credential secret ${JSON.stringify(c.secret)} is a reserved platform binding name`,
+          'rename the secret so it does not collide with a platform Worker binding',
+        );
+      }
+      if (!declared.has(c.secret)) {
+        rejectEgress(
+          `egress credential for ${host} references secret ${JSON.stringify(c.secret)} which is not declared in secrets`,
+          'declare the secret in 280.json "secrets"',
+        );
+      }
     }
     if (seenHosts.has(host)) {
       rejectEgress(`duplicate egress credential for host ${host}`, 'declare at most one credential per host');
@@ -390,6 +459,48 @@ export function validateEgressPolicy(policy: EgressPolicy, declaredSecrets: read
       }
       validateScopesOrThrow(c.scopes, host, type);
     }
+  }
+}
+
+// validateCredentialFields is the strict gate for the multi-field form: the map's
+// keys must equal the type's field vocabulary exactly (no missing, no unknown), and
+// each field NAME must be non-empty, non-reserved, and distinct from the others.
+function validateCredentialFields(c: EgressCredential, host: string, type: string): void {
+  const required = CREDENTIAL_FIELDS[type];
+  if (!required) {
+    rejectEgress(
+      `egress credential for ${host} of type ${type} does not support a "secrets" field map`,
+      'use a single "secret" for this credential type',
+    );
+  }
+  const keys = Object.keys(c.secrets ?? {});
+  const missing = required.filter((f) => !keys.includes(f));
+  const unknown = keys.filter((k) => !required.includes(k));
+  if (missing.length > 0 || unknown.length > 0) {
+    rejectEgress(
+      `egress credential for ${host} "secrets" must map exactly ${required.join(', ')}`,
+      `map exactly ${required.join(' and ')} to your secret names`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const f of required) {
+    const name = c.secrets![f];
+    if (typeof name !== 'string' || name === '') {
+      rejectEgress(`egress credential for ${host} field "${f}" has no secret name`, `give "${f}" a secret name`);
+    }
+    if (isReservedBindingName(name)) {
+      rejectEgress(
+        `egress credential secret ${JSON.stringify(name)} is a reserved platform binding name`,
+        'rename the secret so it does not collide with a platform Worker binding',
+      );
+    }
+    if (seen.has(name)) {
+      rejectEgress(
+        `egress credential for ${host} maps more than one field to secret ${JSON.stringify(name)}`,
+        'give each field its own distinct secret name',
+      );
+    }
+    seen.add(name);
   }
 }
 
@@ -822,6 +933,11 @@ export function canonicalDigest(m: Manifest): Digest {
     h.update(`egress-cred:${c.host}:${c.header}:${c.scheme}:${c.secret}\n`);
     if (type !== EGRESS_CREDENTIAL_TYPE.Header) h.update(`egress-cred-type:${c.host}:${type}\n`);
     for (const scope of c.scopes ?? []) h.update(`egress-cred-scope:${c.host}:${scope}\n`);
+    // Field bindings (multi-field form only): one sorted line per field, so a change
+    // to any field NAME re-derives the deploy id. Absent for blob/header creds, so
+    // every pre-existing manifest hashes byte-identically.
+    for (const [field, name] of Object.entries(c.secrets ?? {}).sort((a, b) => byteCompare(a[0], b[0])))
+      h.update(`egress-cred-secret:${c.host}:${field}:${name}\n`);
   }
   // Access mode, feature roles, route gates, and secret names are the app's trust
   // boundary, so a change to any must produce a new deploy id (and re-register the

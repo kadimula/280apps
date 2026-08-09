@@ -17,7 +17,7 @@ import { mapVault } from '../src/vault.js';
 import type { CallLogEvent, MintEvent } from '../src/calllog.js';
 import type { EgressContainerClass, OutboundHandlerCtx } from '../src/types.js';
 import { FakeContainer } from './fake-container.js';
-import { makeServiceAccount, fakeUpstream, googleParams } from './google-fixtures.js';
+import { makeServiceAccount, fakeUpstream, googleParams, googleFieldParams } from './google-fixtures.js';
 
 const SECRET_VALUE = 'sk_live_must_never_reach_the_container';
 
@@ -201,6 +201,38 @@ describe('exfiltration / minted Google credentials', () => {
 
     // The token is attached to the outbound Google request only (intended), and the
     // container's original request object was never mutated to carry it.
+    expect(upstream.downstreamCalls[0]!.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
+    expect(containerReq.headers.get('authorization')).toBeNull();
+  });
+
+  it('the multi-field form never leaks a field value into the app request, error, or any log', async () => {
+    const sa = await makeServiceAccount();
+    const ACCESS_TOKEN = 'ya29.super-secret-access-token';
+    const upstream = fakeUpstream({ defaultToken: { access_token: ACCESS_TOKEN, expires_in: 3600 } });
+    const events: CallLogEvent[] = [];
+    const mints: MintEvent[] = [];
+    const handler = makeEgressHandler({
+      vaultFrom: () => mapVault({ GOOGLE_CLIENT_EMAIL: sa.clientEmail, GOOGLE_PRIVATE_KEY: sa.privateKeyPem }),
+      callLog: (e) => events.push(e),
+      mintLog: (e) => mints.push(e),
+      fetchImpl: upstream.fetchImpl,
+      clock: () => 1_000_000,
+    });
+    const ctx: OutboundHandlerCtx = { containerId: 'c', className: 'App280Container', params: googleFieldParams() };
+
+    const containerReq = new Request('https://sheets.googleapis.com/v4/spreadsheets/x/values/A1');
+    expect(containerReq.headers.get('authorization')).toBeNull();
+    const res = await handler(containerReq, {}, ctx);
+    expect(res.status).toBe(200);
+
+    // Neither field VALUE (the private key PEM, the minted token) is in any audit event.
+    const logs = JSON.stringify([...events, ...mints]);
+    expect(logs).not.toContain(sa.privateKeyPem);
+    expect(logs).not.toContain('PRIVATE KEY');
+    expect(logs).not.toContain(ACCESS_TOKEN);
+    // The audit records only the field NAMEs (joined), never the values.
+    expect(mints[0]).toMatchObject({ kind: 'mint', secret: 'GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY' });
+    // The token reaches only the upstream Google request; the container's is untouched.
     expect(upstream.downstreamCalls[0]!.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
     expect(containerReq.headers.get('authorization')).toBeNull();
   });

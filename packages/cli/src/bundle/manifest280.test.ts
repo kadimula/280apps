@@ -263,6 +263,62 @@ describe('read280', () => {
     expect(() => read280(root)).toThrow(/"scopes" must be a list of strings/);
   });
 
+  it('parses the multi-field typed credential and folds each field NAME into secrets', () => {
+    const root = projectWith({
+      egress: {
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            type: 'google-service-account',
+            secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'GOOGLE_PRIVATE_KEY' },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+      config: { GOOGLE_SHEET_ID: { sensitive: true } },
+    });
+    const p = read280(root);
+    expect(p.egress.credentials[0]).toMatchObject({
+      host: 'sheets.googleapis.com',
+      type: 'google-service-account',
+      secret: '',
+      secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'GOOGLE_PRIVATE_KEY' },
+    });
+    // Both field NAMEs self-declare into the manifest's secrets union.
+    expect(p.secrets).toEqual(['GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY']);
+  });
+
+  it('rejects a credential that sets both secret and secrets', () => {
+    const root = projectWith({
+      egress: {
+        credentials: [
+          {
+            host: 'sheets.googleapis.com',
+            type: 'google-service-account',
+            secret: 'GSA',
+            secrets: { client_email: 'CE', private_key: 'PK' },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+          },
+        ],
+      },
+    });
+    expect(() => read280(root)).toThrow(/both/);
+  });
+
+  it('rejects a credential that names neither secret nor secrets', () => {
+    const root = projectWith({
+      egress: { credentials: [{ host: 'api.stripe.com' }] },
+    });
+    expect(() => read280(root)).toThrow(/must name a secret/);
+  });
+
+  it('rejects a "secrets" field map that is not an object', () => {
+    const root = projectWith({
+      egress: { credentials: [{ host: 'sheets.googleapis.com', secrets: ['CE', 'PK'] }] },
+    });
+    expect(() => read280(root)).toThrow(/"secrets" must be an object/);
+  });
+
   it('reads the leanest sheets shape: a credential plus config, no allow, no secrets list', () => {
     const root = projectWith({
       egress: {

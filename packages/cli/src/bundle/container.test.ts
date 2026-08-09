@@ -252,6 +252,26 @@ describe('egressDisclosure', () => {
     expect(egressDisclosure({ allowedHosts: ['data.example.com'], credentials: [] })).toEqual([]);
   });
 
+  it('lists the constituent field NAMEs for a multi-field typed credential', () => {
+    const lines = egressDisclosure({
+      allowedHosts: ['sheets.googleapis.com'],
+      credentials: [
+        {
+          host: 'sheets.googleapis.com',
+          secret: '',
+          secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'GOOGLE_PRIVATE_KEY' },
+          type: 'google-service-account',
+          header: '',
+          scheme: '',
+          scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        },
+      ],
+    });
+    expect(lines[1]).toBe(
+      '  sheets.googleapis.com  →  google-service-account via GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, scopes: https://www.googleapis.com/auth/spreadsheets',
+    );
+  });
+
   it('omits scopes for a header credential and reports its type', () => {
     const lines = egressDisclosure({
       allowedHosts: ['api.stripe.com'],

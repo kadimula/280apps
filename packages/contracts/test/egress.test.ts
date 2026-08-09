@@ -16,6 +16,8 @@ import {
   isEgressCredentialType,
   googleServiceAccountHostAllowed,
   isReservedBindingName,
+  credentialSecretNames,
+  CREDENTIAL_FIELDS,
   EGRESS_CREDENTIAL_TYPE,
   MAX_EGRESS_SCOPES,
   manifestSchema,
@@ -47,6 +49,16 @@ const google = (over: Record<string, unknown> = {}) => ({
   host: 'sheets.googleapis.com',
   secret: 'GSA',
   type: EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  ...over,
+});
+
+// The multi-field form of the same google credential: the two service-account
+// values bound under the app's own secret names instead of one blob.
+const googleFields = (over: Record<string, unknown> = {}) => ({
+  host: 'sheets.googleapis.com',
+  type: EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount,
+  secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'GOOGLE_PRIVATE_KEY' },
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   ...over,
 });
@@ -192,6 +204,79 @@ describe('canonicalDigest back-compat and typed records', () => {
     const twoScopes = canonicalDigest(manifest({ egress: { credentials: [google({ scopes: ['a', 'b'] })] } }));
     expect(oneCommaScope).not.toBe(twoScopes);
   });
+
+  it('a multi-field credential departs from the blob-form digest', () => {
+    const blob = canonicalDigest(manifest({ egress: { credentials: [google()] } }));
+    const fields = canonicalDigest(manifest({ egress: { credentials: [googleFields()] } }));
+    expect(fields).not.toBe(blob);
+  });
+
+  it('a field map hashes the same regardless of JSON key order', () => {
+    const a = canonicalDigest(
+      manifest({ egress: { credentials: [googleFields({ secrets: { client_email: 'CE', private_key: 'PK' } })] } }),
+    );
+    const b = canonicalDigest(
+      manifest({ egress: { credentials: [googleFields({ secrets: { private_key: 'PK', client_email: 'CE' } })] } }),
+    );
+    expect(a).toBe(b);
+  });
+
+  it('changing any field NAME changes the digest', () => {
+    const base = canonicalDigest(manifest({ egress: { credentials: [googleFields()] } }));
+    const renamed = canonicalDigest(
+      manifest({
+        egress: { credentials: [googleFields({ secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'PK2' } })] },
+      }),
+    );
+    expect(renamed).not.toBe(base);
+  });
+
+  it('leaves the pre-existing blob/header digest byte-identical (no field records)', () => {
+    // The already-deployed blob app must hash exactly as before the field form existed.
+    const m = manifest({ egress: { credentials: [google()] } });
+    const h = createHash('sha256');
+    h.update('kind:container\n');
+    h.update('build:next:Dockerfile:8080\n');
+    h.update(`file:Dockerfile:${'a'.repeat(64)}:10\n`);
+    h.update('egress-host:sheets.googleapis.com\n');
+    h.update('egress-cred:sheets.googleapis.com:::GSA\n');
+    h.update('egress-cred-type:sheets.googleapis.com:google-service-account\n');
+    h.update('egress-cred-scope:sheets.googleapis.com:https://www.googleapis.com/auth/spreadsheets\n');
+    expect(canonicalDigest(m)).toBe(h.digest('hex'));
+  });
+});
+
+describe('normalizeCredential handles the multi-field form', () => {
+  it('keeps secret empty, sorts the field map, and strips transport fields', () => {
+    const n = normalizeEgressPolicy(
+      egressPolicySchema.parse({
+        allowedHosts: [],
+        credentials: [googleFields({ secrets: { private_key: 'PK', client_email: 'CE' } })],
+      }),
+    );
+    expect(n.credentials[0]).toMatchObject({
+      host: 'sheets.googleapis.com',
+      type: 'google-service-account',
+      secret: '',
+      header: '',
+      scheme: '',
+    });
+    // Sorted by key so the digest is order-independent.
+    expect(Object.entries(n.credentials[0]!.secrets!)).toEqual([
+      ['client_email', 'CE'],
+      ['private_key', 'PK'],
+    ]);
+  });
+
+  it('drops any field map from a header credential', () => {
+    const n = normalizeEgressPolicy(
+      egressPolicySchema.parse({
+        allowedHosts: [],
+        credentials: [{ host: 'api.stripe.com', secret: 'K' }],
+      }),
+    );
+    expect(n.credentials[0]!.secrets).toBeUndefined();
+  });
 });
 
 describe('validateEgressPolicy', () => {
@@ -270,6 +355,80 @@ describe('validateEgressPolicy', () => {
   it('rejects a secret that collides with a reserved binding name', () => {
     rejects({ credentials: [{ host: 'api.stripe.com', secret: 'EGRESS_POLICY' }] }, ['EGRESS_POLICY']);
   });
+
+  it('accepts a multi-field typed credential, self-declaring both field names', () => {
+    ok({ credentials: [googleFields()] }, []);
+  });
+
+  it('rejects a typed credential that sets both secret and secrets', () => {
+    rejects({ credentials: [googleFields({ secret: 'GSA' })] }, ['GSA']);
+  });
+
+  it('rejects a typed credential that sets neither secret nor secrets', () => {
+    rejects({ credentials: [google({ secret: '' })] }, []);
+  });
+
+  it('rejects a field map missing a required key', () => {
+    rejects({ credentials: [googleFields({ secrets: { client_email: 'GOOGLE_CLIENT_EMAIL' } })] }, []);
+  });
+
+  it('rejects a field map with an unknown key', () => {
+    rejects(
+      {
+        credentials: [
+          googleFields({
+            secrets: { client_email: 'A', private_key: 'B', project_id: 'C' },
+          }),
+        ],
+      },
+      [],
+    );
+  });
+
+  it('rejects a field NAME that collides with a reserved binding name', () => {
+    rejects({ credentials: [googleFields({ secrets: { client_email: 'A', private_key: 'EGRESS_POLICY' } })] }, []);
+  });
+
+  it('rejects two fields pointing at the same secret NAME', () => {
+    rejects({ credentials: [googleFields({ secrets: { client_email: 'DUP', private_key: 'DUP' } })] }, []);
+  });
+
+  it('rejects a field NAME that is empty', () => {
+    rejects({ credentials: [googleFields({ secrets: { client_email: 'A', private_key: '' } })] }, []);
+  });
+
+  it('rejects a "secrets" field map on a header credential', () => {
+    rejects(
+      { credentials: [{ host: 'api.stripe.com', secrets: { client_email: 'A', private_key: 'B' } }] },
+      [],
+    );
+  });
+});
+
+describe('credentialSecretNames', () => {
+  it('lists the single secret for a blob credential', () => {
+    expect(credentialSecretNames(egressCredentialSchema.parse({ host: 'x', secret: 'K' }))).toEqual(['K']);
+  });
+
+  it('lists the field NAMEs in fixed vocabulary order for a multi-field credential', () => {
+    const c = egressCredentialSchema.parse(googleFields());
+    expect(credentialSecretNames(c)).toEqual(['GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY']);
+  });
+
+  it('is independent of the JSON key order the author wrote', () => {
+    const c = egressCredentialSchema.parse(
+      googleFields({ secrets: { private_key: 'PK', client_email: 'CE' } }),
+    );
+    expect(credentialSecretNames(c)).toEqual(['CE', 'PK']); // client_email before private_key
+  });
+
+  it('returns [] for an allowlisted host with no credential', () => {
+    expect(credentialSecretNames(egressCredentialSchema.parse({ host: 'x', secret: '' }))).toEqual([]);
+  });
+
+  it('pins the google field vocabulary', () => {
+    expect(CREDENTIAL_FIELDS[EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount]).toEqual(['client_email', 'private_key']);
+  });
 });
 
 describe('validateWireEgressPolicy accepts the normalized form the CLI actually sends', () => {
@@ -297,6 +456,11 @@ describe('validateWireEgressPolicy accepts the normalized form the CLI actually 
     // A credential secret is self-declared, so an empty secrets list is fine.
     const selfDeclared = wire({ allowedHosts: [], credentials: [google()] });
     expect(() => validateWireEgressPolicy(selfDeclared, [])).not.toThrow();
+  });
+
+  it('accepts a normalized multi-field credential (the field map survives normalization)', () => {
+    const w = wire({ allowedHosts: [], credentials: [googleFields()] });
+    expect(() => validateWireEgressPolicy(w, [])).not.toThrow();
   });
 });
 

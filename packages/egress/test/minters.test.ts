@@ -13,6 +13,7 @@ import {
   verifyAssertion,
   fakeUpstream,
   googleParams,
+  googleFieldParams,
   GOOGLE_TOKEN_ENDPOINT,
   type FakeUpstreamOptions,
 } from './google-fixtures.js';
@@ -350,6 +351,82 @@ describe('google-service-account minter: safe failure categories', () => {
       expect(await res.text()).toBe('invalid-token-response');
     });
   }
+});
+
+describe('google-service-account minter: multi-field form', () => {
+  // A handler backed by a per-NAME vault, so field NAMEs resolve independently.
+  function fieldRig(secrets: Record<string, string | undefined>, upstream = fakeUpstream()) {
+    const events: CallLogEvent[] = [];
+    const mints: MintEvent[] = [];
+    const handler = makeEgressHandler({
+      vaultFrom: () => ({ get: (name) => secrets[name] }),
+      callLog: (e) => events.push(e),
+      mintLog: (e) => mints.push(e),
+      fetchImpl: upstream.fetchImpl,
+      clock: () => 1_000_000,
+    });
+    const ctx = (params: Record<string, unknown>): OutboundHandlerCtx => ({
+      containerId: 'c',
+      className: 'App280Container',
+      params,
+    });
+    return {
+      handler,
+      events,
+      mints,
+      upstream,
+      call: (params: Record<string, unknown>, url = SHEETS_URL) => handler(new Request(url), {}, ctx(params)),
+    };
+  }
+
+  it('mints a byte-identical assertion to the blob form (same key, same claims)', async () => {
+    const sa = await makeServiceAccount();
+
+    const blobUp = fakeUpstream();
+    const blob = rig({ fetchImpl: blobUp.fetchImpl }, sa.json);
+    const blobRes = await blob.call(googleParams());
+
+    const fieldUp = fakeUpstream();
+    const fields = fieldRig(
+      { GOOGLE_CLIENT_EMAIL: sa.clientEmail, GOOGLE_PRIVATE_KEY: sa.privateKeyPem },
+      fieldUp,
+    );
+    const fieldRes = await fields.call(googleFieldParams());
+
+    expect(blobRes.status).toBe(200);
+    expect(fieldRes.status).toBe(200);
+    // The blob was only ever client_email + private_key, so the discrete fields sign
+    // the exact same JWT (RS256/PKCS1-v1.5 is deterministic; the clock is fixed).
+    expect(fieldUp.tokenCalls[0]!.assertion).toBe(blobUp.tokenCalls[0]!.assertion);
+    const decoded = await verifyAssertion(sa.publicKey, fieldUp.tokenCalls[0]!.assertion);
+    expect(decoded.valid).toBe(true);
+    expect(decoded.claims.iss).toBe(sa.clientEmail);
+
+    // The mint audit identity is the joined field NAMEs, never a value.
+    expect(fields.mints[0]).toMatchObject({ outcome: 'minted', secret: 'GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY' });
+  });
+
+  it('fails closed when any one field is unprovisioned, forwarding nothing', async () => {
+    const sa = await makeServiceAccount();
+    const up = fakeUpstream();
+    const r = fieldRig({ GOOGLE_CLIENT_EMAIL: sa.clientEmail /* GOOGLE_PRIVATE_KEY missing */ }, up);
+
+    const res = await r.call(googleFieldParams());
+    expect(res.status).toBe(520);
+    expect(await res.text()).toBe('Origin is disallowed');
+    expect(up.tokenCalls).toHaveLength(0);
+    expect(up.downstreamCalls).toHaveLength(0);
+    expect(r.events.at(-1)).toMatchObject({ outcome: 'denied', reason: 'missing-secret', credentialAttached: false });
+  });
+
+  it('reports malformed field values with the same safe category as the blob path', async () => {
+    const up = fakeUpstream();
+    const r = fieldRig({ GOOGLE_CLIENT_EMAIL: 'x@y.iam.gserviceaccount.com', GOOGLE_PRIVATE_KEY: 'not-a-pem' }, up);
+    const res = await r.call(googleFieldParams());
+    expect(res.status).toBe(520);
+    expect(await res.text()).toBe('malformed-secret');
+    expect(up.downstreamCalls).toHaveLength(0);
+  });
 });
 
 describe('google-service-account minter: header path preserved', () => {

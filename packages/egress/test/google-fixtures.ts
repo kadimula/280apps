@@ -139,3 +139,18 @@ export function googleParams(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+// The ctx.params for the multi-field form: the two service-account values bound
+// under the app's own secret names instead of one blob. Only NAMEs travel here.
+export function googleFieldParams(overrides: Record<string, unknown> = {}) {
+  return {
+    appId: 'app_1',
+    host: 'sheets.googleapis.com',
+    type: 'google-service-account',
+    secrets: { client_email: 'GOOGLE_CLIENT_EMAIL', private_key: 'GOOGLE_PRIVATE_KEY' },
+    header: 'authorization',
+    scheme: 'Bearer',
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    ...overrides,
+  };
+}

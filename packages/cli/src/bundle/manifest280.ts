@@ -11,6 +11,7 @@ import {
   APP_ACCESS,
   APP_ROLE_ORDER,
   asDeployError,
+  credentialSecretNames,
   describeGate,
   isAppAccess,
   normalizeEgressPolicy,
@@ -75,16 +76,19 @@ export function read280(root: string): Policy280 {
   };
 }
 
-// unionSecrets folds every egress credential's secret name into the explicit
-// secrets list (order preserved, deduped), so a credentialed secret need not be
-// repeated in "secrets" yet still reaches delivery, the waiting gate, and the digest.
+// unionSecrets folds every egress credential's constituent secret name(s) into the
+// explicit secrets list (order preserved, deduped), so a credentialed secret need not
+// be repeated in "secrets" yet still reaches delivery, the waiting gate, and the
+// digest. A multi-field credential contributes each field NAME (via credentialSecretNames).
 function unionSecrets(explicit: string[], creds: EgressCredential[]): string[] {
   const out = [...explicit];
   const seen = new Set(explicit);
   for (const c of creds) {
-    if (c.secret !== '' && !seen.has(c.secret)) {
-      seen.add(c.secret);
-      out.push(c.secret);
+    for (const name of credentialSecretNames(c)) {
+      if (name !== '' && !seen.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
     }
   }
   return out;
@@ -245,16 +249,35 @@ function parseCredential(c: unknown, i: number): EgressCredential {
   if (typeof raw.host !== 'string' || raw.host === '') {
     fail(`280.json egress.credentials[${i}] needs a "host"`, 'e.g. { "host": "api.stripe.com", "secret": "STRIPE_KEY" }');
   }
-  if (typeof raw.secret !== 'string' || raw.secret === '') {
-    fail(`280.json egress.credentials[${i}] needs a "secret" name`, 'name a secret you declared in 280.json "secrets"');
+  // secret is structurally optional now (a typed credential may instead bind a
+  // "secrets" field map); the "exactly one of secret/secrets" rule is the semantic
+  // gate's, so the author sees that message rather than a shape error.
+  if (raw.secret !== undefined && raw.secret !== null && typeof raw.secret !== 'string') {
+    fail(`280.json egress.credentials[${i}] "secret" must be a string`, 'name a secret you declared in 280.json "secrets"');
   }
-  const cred: EgressCredential = { host: raw.host, secret: raw.secret };
+  const cred: EgressCredential = { host: raw.host, secret: typeof raw.secret === 'string' ? raw.secret : '' };
   for (const field of ['type', 'header', 'scheme'] as const) {
     if (raw[field] === undefined || raw[field] === null) continue;
     if (typeof raw[field] !== 'string') {
       fail(`280.json egress.credentials[${i}] "${field}" must be a string`, `remove or fix "${field}" on the ${raw.host} credential`);
     }
     cred[field] = raw[field] as string;
+  }
+  if (raw.secrets !== undefined && raw.secrets !== null) {
+    if (typeof raw.secrets !== 'object' || Array.isArray(raw.secrets)) {
+      fail(
+        `280.json egress.credentials[${i}] "secrets" must be an object mapping field to secret name`,
+        'e.g. "secrets": { "client_email": "GOOGLE_CLIENT_EMAIL", "private_key": "GOOGLE_PRIVATE_KEY" }',
+      );
+    }
+    const map: Record<string, string> = {};
+    for (const [k, val] of Object.entries(raw.secrets as Record<string, unknown>)) {
+      if (typeof val !== 'string') {
+        fail(`280.json egress.credentials[${i}] "secrets.${k}" must be a string`, 'map each field to a secret name string');
+      }
+      map[k] = val;
+    }
+    cred.secrets = map;
   }
   if (raw.scopes !== undefined && raw.scopes !== null) {
     if (!Array.isArray(raw.scopes) || raw.scopes.some((s) => typeof s !== 'string')) {

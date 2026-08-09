@@ -54,9 +54,8 @@ export interface AppWorkerEnv {
   TWO80_ID_ISSUER?: string;
   // The tight edge-verify skew in seconds; defaults to 5.
   TWO80_ID_SKEW_SECS?: string;
-  // The baked JSON of appPolicyFromManifest(manifest): { access, roles, routes, secrets }.
-  // Unset means no declared routes (the flat model, open to any admitted viewer). Set
-  // but malformed fails closed.
+  // The baked route gates. Unset means no declared routes, while malformed JSON
+  // fails closed.
   TWO80_ROUTE_POLICY?: string;
   // The space-separated origins allowed to frame this app host (CSP frame-ancestors),
   // baked from backend config. Unset falls back to DEFAULT_FRAME_ANCESTORS.

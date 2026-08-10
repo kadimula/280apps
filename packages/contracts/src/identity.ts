@@ -1,6 +1,6 @@
-// The signed identity header scheme, shared by the gateway (which mints it) and
-// @280/sdk (which verifies it inside the app). One source of truth for the claim
-// set and the ES256 verification so the two sides can never drift. See the gateway
+// The signed identity header scheme, shared by the gateway (which mints and verifies
+// it) and @two80/sdk (which decodes it inside the app). One source of truth for the
+// claim set and ES256 verification keeps both sides aligned. See the gateway
 // README "Signed identity header" for custody, TTL, and rationale (report OQ8).
 
 export const ID_HEADER = 'X-280-Identity';

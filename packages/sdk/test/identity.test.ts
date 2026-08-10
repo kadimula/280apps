@@ -1,5 +1,5 @@
 // The app-side of the identity header: build a token exactly as the gateway signs it,
-// then prove @280/sdk decodes it and exposes { user, can, scope }. The gateway verifies
+// then prove @two80/sdk decodes it and exposes { user, can, scope }. The gateway verifies
 // the signature, audience, and expiry upstream and owns the container's sole ingress,
 // so the SDK trusts the stamped header and only reads its claims.
 
@@ -77,7 +77,8 @@ describe('identity()', () => {
 
   it('works from a Next-style headers() object', async () => {
     const headers = new Headers({ [ID_HEADER]: await sign(baseClaims()) });
-    const id = await identity(headers);
+    const nextHeaders = { get: headers.get.bind(headers), headers: {} };
+    const id = await identity(nextHeaders);
     expect(id.user.email).toBe('alice@evergreen.com');
   });
 });

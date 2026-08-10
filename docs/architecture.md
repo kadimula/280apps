@@ -82,8 +82,8 @@ host it was minted for, so app B rejects a token minted for app A.
 - **SSO session:** the `280_session` cookie on `.280apps.run` — one central login
   shared across all app hosts. App hosts receive the session, never another app's id
   token.
-- **App Worker ⇄ container:** the `X-280-Identity` header, which `@280/sdk` verifies
-  offline inside the container.
+- **App Worker ⇄ container:** the gateway verified `X-280-Identity` header, which
+  `@two80/sdk` decodes inside the container.
 
 ## Why A2, and not A1 (the key decision)
 

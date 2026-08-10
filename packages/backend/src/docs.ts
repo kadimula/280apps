@@ -95,7 +95,7 @@ export const RUNTIME_LIMITS: CapabilityGroup = {
     {
       name: 'Raw TCP outbound (e.g. Postgres on :5432)',
       status: 'unsupported',
-      note: 'Use an available @280/sdk capability instead',
+      note: 'Use an available @two80/sdk capability instead',
     },
     {
       name: 'Background work while idle (setInterval, polling loops)',
@@ -131,9 +131,9 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'See, rename, delete apps',
     },
     {
-      name: 'Injected identity SDK (@280/sdk: user, can, scope)',
+      name: 'Injected identity SDK (@two80/sdk: user, can, scope)',
       status: 'supported',
-      note: 'Gateway signs a verified identity header; the app reads it via @280/sdk',
+      note: 'Gateway signs a verified identity header; the app reads it via @two80/sdk',
     },
     {
       name: 'Fixed SDK API network boundary',

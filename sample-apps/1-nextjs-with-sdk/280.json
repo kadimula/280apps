@@ -1,0 +1,9 @@
+{
+  "name": "nextjs-sdk-sample",
+  "access": "invited",
+  "roles": ["manager", "viewer"],
+  "routes": [
+    { "path": "/api/manage/*", "require": { "role": "manager" } },
+    { "path": "/*", "require": { "app_role": "viewer" } }
+  ]
+}

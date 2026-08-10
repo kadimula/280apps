@@ -385,7 +385,7 @@ function preflight(m: Manifest): void {
   }
   const egress = m.egress ?? { allowedHosts: [], credentials: [] };
   if (egress.allowedHosts.length > 0 || egress.credentials.length > 0) {
-    reject('app egress policy is no longer supported; remove it and use @280/sdk');
+    reject('app egress policy is no longer supported; remove it and use @two80/sdk');
   }
 }
 

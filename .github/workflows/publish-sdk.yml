@@ -1,0 +1,74 @@
+name: Publish SDK
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+
+permissions:
+  contents: write # cut the GitHub Release
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # npm OIDC trusted publishing needs >=22.14
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Assert tag matches packages/sdk version
+        run: |
+          tag_version="${GITHUB_REF_NAME#sdk-v}"
+          pkg_version="$(node -p "require('./packages/sdk/package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "Tag ${GITHUB_REF_NAME} implies ${tag_version} but packages/sdk/package.json is ${pkg_version}" >&2
+            exit 1
+          fi
+          echo "Publishing @two80/sdk@${pkg_version}"
+
+      - name: Assert version is not already published
+        run: |
+          pkg_version="$(node -p "require('./packages/sdk/package.json').version")"
+          if npm view "@two80/sdk@${pkg_version}" version >/dev/null 2>&1; then
+            echo "@two80/sdk@${pkg_version} is already on npm; bump the version before tagging" >&2
+            exit 1
+          fi
+
+      - name: Build (contracts, then sdk)
+        run: |
+          pnpm --filter @280/contracts build
+          pnpm --filter @two80/sdk build
+
+      - run: pnpm --filter @two80/sdk test
+
+      # OIDC trusted publishing is performed by the npm CLI (>=11.5.1); pnpm's
+      # own publish does not do the OIDC token exchange and fails with a 404.
+      # So we pack with pnpm (which rewrites the workspace: devDependency to a
+      # concrete version) and publish that tarball with npm. Auth needs no
+      # NPM_TOKEN: it comes from the Trusted Publisher (repo kadimula/280apps,
+      # workflow publish-sdk.yml) configured on the @two80/sdk package at npmjs.com.
+      - name: Ensure an OIDC-capable npm
+        run: npm install -g npm@latest
+
+      - name: Pack (pnpm rewrites the workspace dependency)
+        run: pnpm --filter @two80/sdk pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Publish to npm
+        run: npm publish "$RUNNER_TEMP"/two80-sdk-*.tgz --provenance --access public
+
+      - name: Cut GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "SDK ${GITHUB_REF_NAME#sdk-v}" \
+            --generate-notes

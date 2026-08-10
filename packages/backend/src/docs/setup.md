@@ -28,9 +28,9 @@ Any other stack ships a repo root Dockerfile that listens on port 8080. Next.js 
 
 | Not supported | Do this instead |
 | --- | --- |
-| Direct calls to external APIs | Use `@280/sdk`; the container can only reach the 280 API |
-| Authenticated provider SDKs | Use the corresponding `@280/sdk` capability when available |
-| Raw TCP outbound | Use the corresponding `@280/sdk` capability when available |
+| Direct calls to external APIs | Use `@two80/sdk`; the container can only reach the 280 API |
+| Authenticated provider SDKs | Use the corresponding `@two80/sdk` capability when available |
+| Raw TCP outbound | Use the corresponding `@two80/sdk` capability when available |
 | App managed credentials | Remove them from application code and configuration |
 | Background work while idle | An instance sleeps after about 2 minutes idle; use request handlers |
 | Websockets | Poll instead |
@@ -41,7 +41,7 @@ The container has a fixed network boundary. It can reach the 280 API and no othe
 
 Install the SDK:
 
-    npm install @280/sdk
+    npm install @two80/sdk
 
 Use SDK capabilities for database, file, and integration access as they become available. The SDK reads the platform supplied `TWO80_API` origin. Never override that environment variable.
 
@@ -51,7 +51,7 @@ The SDK is an application API, not the security boundary. Cloudflare enforces th
 
 Remove API keys, access tokens, service account files, connection strings, provider SDK authentication, and code that builds authorization headers. Do not put credentials in `280.json`, source files, environment files, Docker build arguments, or application logs.
 
-If a required provider capability does not exist in `@280/sdk`, report it as unsupported rather than weakening the network boundary.
+If a required provider capability does not exist in `@two80/sdk`, report it as unsupported rather than weakening the network boundary.
 
 ## 4. Declare config the app reads
 

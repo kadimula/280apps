@@ -22,10 +22,12 @@ The editable Graphviz source is in [`docs/egress-flow.dot`](docs/egress-flow.dot
 
 ### Sample flow: Google service account credential
 
+The service account credential binds either as one `secret` naming the whole JSON key, or as a `secrets` field map that binds each constituent field (`client_email`, `private_key`) under its own secret name, so an app keeps the exact secret names it already used. Only the field NAMEs travel on the wire; the values stay in the vault.
+
 1. The application container sends a plain request to an allowed Google API host.
-2. The handler reads the service account JSON from the Worker side vault and passes it to the closed minter registry.
+2. The handler reads the service account credential from the Worker side vault (the JSON blob, or each declared field, failing closed if any field name is unprovisioned) and passes it to the closed minter registry.
 3. The Google service account minter signs an assertion and exchanges it at Google's token endpoint.
-4. The minter caches the access token by application, secret name, normalized scopes, and secret value digest. Concurrent requests share one mint operation.
+4. The minter caches the access token by application, credential identity (the secret name, or the field names in fixed order), normalized scopes, and credential value digest. Concurrent requests share one mint operation.
 5. The handler attaches the access token only to the request sent to the Google API.
 6. Safe mint and request audit events are emitted without the assertion, private key, provider response, or access token.
 7. A downstream 401 evicts the cached token so the next request mints again.
@@ -67,6 +69,20 @@ Application authors declare policy in `280.json`. Credential hosts are normalize
       }
     ]
   }
+}
+```
+
+A typed credential may instead bind its fields under the app's own secret names with a `secrets` map (exactly one of `secret` or `secrets`, never both):
+
+```json
+{
+  "host": "sheets.googleapis.com",
+  "type": "google-service-account",
+  "secrets": {
+    "client_email": "GOOGLE_CLIENT_EMAIL",
+    "private_key": "GOOGLE_PRIVATE_KEY"
+  },
+  "scopes": ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 }
 ```
 

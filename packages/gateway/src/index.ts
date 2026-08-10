@@ -1,7 +1,6 @@
 // @280/gateway: the edge identity gateway. The deployable Worker is src/worker.ts
-// (wrangler `main`); this library index exposes the pieces the tests and the
-// @280/sdk verify against, above all the signed identity header scheme
-// (identity.ts) that app code uses to check the caller without the gateway.
+// (wrangler `main`); this library index exposes the identity scheme and gateway
+// pieces used by tests and app Workers.
 export * from './identity.js';
 export * from './gateway.js';
 export * from './hosts.js';

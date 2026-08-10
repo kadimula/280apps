@@ -56,7 +56,7 @@ export function read280(root: string): Policy280 {
   if (o.egress !== undefined && o.egress !== null) {
     fail(
       '280.json "egress" is no longer supported',
-      'remove "egress" and use @280/sdk; deployed apps can only reach the 280 API',
+      'remove "egress" and use @two80/sdk; deployed apps can only reach the 280 API',
     );
   }
   const roles = parseRoles(o.roles);

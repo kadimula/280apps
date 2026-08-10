@@ -39,9 +39,9 @@ The editable Graphviz source is in [`docs/contracts-flow.dot`](docs/contracts-fl
 
 1. The gateway creates `IdentityClaims` containing the viewer, application audience, app role, feature role, capabilities, scope, and lifetime.
 2. `IdentitySigner` signs the compact token with ES256 and the gateway private key.
-3. The application Worker or SDK constructs `IdentityVerifier` from public JWKs.
+3. The application Worker constructs `IdentityVerifier` from public JWKs.
 4. Verification checks token type, algorithm, key identifier, signature, issuer, audience, and time bounds.
-5. The application receives a normalized `VerifiedIdentity` only after every check succeeds.
+5. The Worker stamps the verified token for the container, where `@two80/sdk` decodes it into the application identity.
 
 ### Sample flow: device authentication
 

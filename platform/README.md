@@ -13,7 +13,7 @@ defaults and wiring; read them.
 
 `container.js` locks `enableInternet` off and gives Cloudflare's `ContainerProxy`
 one exact allowed host from `TWO80_SDK_API_ORIGIN`. It injects the same origin as
-`TWO80_API` for `@280/sdk`. The backend image vendors `@280/gateway` and
+`TWO80_API` for `@two80/sdk`. The backend image vendors `@280/gateway` and
 `@280/contracts`; `scripts/bundle-smoke.sh` proves the production layout and checks
 that the retired credential handler is absent.
 

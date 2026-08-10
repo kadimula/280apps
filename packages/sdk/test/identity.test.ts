@@ -1,28 +1,19 @@
-// The app-side of the signed identity: sign a header exactly as the gateway does,
-// then prove @280/sdk verifies it and exposes { user, can, scope } — and rejects a
-// forged, expired, or wrong-audience token.
+// The app-side of the identity header: build a token exactly as the gateway signs it,
+// then prove @280/sdk decodes it and exposes { user, can, scope }. The gateway verifies
+// the signature, audience, and expiry upstream and owns the container's sole ingress,
+// so the SDK trusts the stamped header and only reads its claims.
 
-import { afterEach, describe, expect, it } from 'vitest';
-import {
-  IdentitySigner,
-  publicJwkFromPrivate,
-  type SignInput,
-} from '@280/contracts/identity';
-import { identity, sdkApiUrl, verifyIdentityToken, IdentityError, ID_HEADER } from '../src/index.js';
+import { describe, expect, it } from 'vitest';
+import { IdentitySigner, type SignInput } from '@280/contracts/identity';
+import { identity, sdkApiUrl, IdentityError, ID_HEADER } from '../src/index.js';
 
 const ISSUER = 'https://auth.280apps.run';
 const AUD = 'renewals.280apps.run';
 
-async function keys(): Promise<{ privateJwk: JsonWebKey; jwks: Record<string, JsonWebKey> }> {
-  const kid = 'k1';
+async function sign(input: SignInput, ttlSecs = 120): Promise<string> {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-  return { privateJwk, jwks: { [kid]: publicJwkFromPrivate(privateJwk, kid) } };
-}
-
-async function sign(privateJwk: JsonWebKey, input: SignInput, ttlSecs = 120): Promise<string> {
-  const signer = new IdentitySigner({ kid: 'k1', privateJwk, issuer: ISSUER, ttlSecs });
-  return signer.sign(input);
+  return new IdentitySigner({ kid: 'k1', privateJwk, issuer: ISSUER, ttlSecs }).sign(input);
 }
 
 function req(token: string): Request {
@@ -42,11 +33,6 @@ const baseClaims = (over: Partial<SignInput> = {}): SignInput => ({
   ...over,
 });
 
-afterEach(() => {
-  delete (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-    ?.TWO80_IDENTITY_JWKS;
-});
-
 describe('sdkApiUrl', () => {
   it('resolves SDK paths against the injected platform origin', () => {
     expect(sdkApiUrl('/v1/sdk/database/query', { origin: 'https://api.280apps.com' }).href).toBe(
@@ -54,18 +40,16 @@ describe('sdkApiUrl', () => {
     );
   });
 
-  it('rejects non SDK paths and broadened origins', () => {
+  it('rejects non SDK paths and non-HTTPS origins', () => {
     expect(() => sdkApiUrl('/v1/apps', { origin: 'https://api.280apps.com' })).toThrow(/\/v1\/sdk/);
-    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'http://api.280apps.com' })).toThrow(/exact HTTPS origin/);
-    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'https://*.280apps.com' })).toThrow(/exact HTTPS origin/);
+    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'http://api.280apps.com' })).toThrow(/HTTPS origin/);
+    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'not a url' })).toThrow(/HTTPS origin/);
   });
 });
 
 describe('identity()', () => {
-  it('verifies a gateway-signed header and exposes user, can, scope', async () => {
-    const { privateJwk, jwks } = await keys();
-    const token = await sign(privateJwk, baseClaims());
-    const id = await identity(req(token), { jwks, issuer: ISSUER, audience: AUD });
+  it('decodes a gateway-stamped header and exposes user, can, scope', async () => {
+    const id = await identity(req(await sign(baseClaims())));
 
     expect(id.user).toEqual({ sub: 'usr_1', email: 'alice@evergreen.com', tenant: 'evergreen.com', name: 'Alice' });
     expect(id.appRole).toBe('viewer');
@@ -77,74 +61,33 @@ describe('identity()', () => {
   });
 
   it('can() reflects the feature role: no role means no capability', async () => {
-    const { privateJwk, jwks } = await keys();
-    const token = await sign(privateJwk, baseClaims({ role: '', caps: [] }));
-    const id = await identity(req(token), { jwks });
+    const id = await identity(req(await sign(baseClaims({ role: '', caps: [] }))));
     expect(id.role).toBe('');
     expect(id.can('manager')).toBe(false);
   });
 
-  it('reads the JWKS injected via TWO80_IDENTITY_JWKS', async () => {
-    const { privateJwk, jwks } = await keys();
-    (globalThis as unknown as { process: { env: Record<string, string> } }).process.env.TWO80_IDENTITY_JWKS =
-      JSON.stringify(jwks);
-    const token = await sign(privateJwk, baseClaims());
-    const id = await identity(req(token));
-    expect(id.user.email).toBe('alice@evergreen.com');
-  });
-
-  it('accepts a JWKS { keys: [...] } document from the environment', async () => {
-    const { privateJwk, jwks } = await keys();
-    (globalThis as unknown as { process: { env: Record<string, string> } }).process.env.TWO80_IDENTITY_JWKS =
-      JSON.stringify({ keys: Object.values(jwks) });
-    const token = await sign(privateJwk, baseClaims());
-    const id = await identity(req(token));
-    expect(id.user.email).toBe('alice@evergreen.com');
-  });
-
-  it('rejects a forged token (bad signature)', async () => {
-    const a = await keys();
-    const b = await keys(); // different key
-    const token = await sign(a.privateJwk, baseClaims());
-    await expect(identity(req(token), { jwks: b.jwks })).rejects.toThrow(IdentityError);
-  });
-
-  it('rejects an expired token', async () => {
-    const { privateJwk, jwks } = await keys();
-    const token = await sign(privateJwk, baseClaims(), -3600); // expired an hour ago
-    await expect(identity(req(token), { jwks })).rejects.toThrow(/expired/);
-  });
-
-  it('rejects a token minted for another app host', async () => {
-    const { privateJwk, jwks } = await keys();
-    const token = await sign(privateJwk, baseClaims({ aud: 'sales.280apps.run' }));
-    await expect(identity(req(token), { jwks, audience: AUD })).rejects.toThrow(/audience/);
-  });
-
   it('throws when the header is absent', async () => {
-    const { jwks } = await keys();
-    await expect(identity(new Request('https://renewals.280apps.run/'), { jwks })).rejects.toThrow(
-      /no 280 identity header/,
-    );
+    await expect(identity(new Request('https://renewals.280apps.run/'))).rejects.toThrow(/no 280 identity header/);
+  });
+
+  it('throws on a malformed token', async () => {
+    await expect(identity(req('not.a.jwt.at.all'))).rejects.toThrow(IdentityError);
+    await expect(identity(req('junk'))).rejects.toThrow(IdentityError);
   });
 
   it('works from a Next-style headers() object', async () => {
-    const { privateJwk, jwks } = await keys();
-    const token = await sign(privateJwk, baseClaims());
-    const headers = new Headers({ [ID_HEADER]: token });
-    const id = await verifyIdentityToken(headers.get(ID_HEADER)!, { jwks });
+    const headers = new Headers({ [ID_HEADER]: await sign(baseClaims()) });
+    const id = await identity(headers);
     expect(id.user.email).toBe('alice@evergreen.com');
   });
 });
 
 describe('anonymous identity (public apps)', () => {
   it('exposes anonymous: true and an empty email for the platform-minted anonymous viewer', async () => {
-    const { privateJwk, jwks } = await keys();
     const token = await sign(
-      privateJwk,
       baseClaims({ sub: 'anon', email: '', name: 'Anonymous', appRole: 'viewer', role: '', caps: [], scope: {}, anon: true }),
     );
-    const id = await identity(req(token), { jwks, issuer: ISSUER, audience: AUD });
+    const id = await identity(req(token));
     expect(id.anonymous).toBe(true);
     expect(id.user.email).toBe('');
     expect(id.user.tenant).toBe('');
@@ -153,11 +96,8 @@ describe('anonymous identity (public apps)', () => {
   });
 
   it('a real viewer is not anonymous, and an empty email without anon is rejected', async () => {
-    const { privateJwk, jwks } = await keys();
-    const real = await identity(req(await sign(privateJwk, baseClaims())), { jwks, issuer: ISSUER, audience: AUD });
+    const real = await identity(req(await sign(baseClaims())));
     expect(real.anonymous).toBe(false);
-
-    const forged = await sign(privateJwk, baseClaims({ email: '' }));
-    await expect(identity(req(forged), { jwks, issuer: ISSUER, audience: AUD })).rejects.toThrow(IdentityError);
+    await expect(identity(req(await sign(baseClaims({ email: '' }))))).rejects.toThrow(IdentityError);
   });
 });

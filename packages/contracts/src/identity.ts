@@ -180,46 +180,67 @@ export class IdentityVerifier {
     if (!ok) throw new IdentityError('bad signature');
 
     const claims = decodeJson(p, 'payload') as Partial<IdentityClaims>;
-    requireStr(claims.sub, 'sub');
-    // The anonymous identity (anon: true) is the one claim set allowed an empty
-    // email; every real viewer must carry one.
-    if (claims.anon === true) {
-      if (typeof claims.email !== 'string') throw new IdentityError('missing email');
-    } else {
-      requireStr(claims.email, 'email');
-    }
-    if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') {
-      throw new IdentityError('missing iat/exp');
-    }
+    requireClaimShape(claims);
     const now = this.now();
-    if (claims.exp + this.skewSecs < now) throw new IdentityError('identity has expired');
-    if (claims.iat - this.skewSecs > now) throw new IdentityError('identity is not yet valid');
+    if (claims.exp! + this.skewSecs < now) throw new IdentityError('identity has expired');
+    if (claims.iat! - this.skewSecs > now) throw new IdentityError('identity is not yet valid');
     if (this.issuer !== undefined && claims.iss !== this.issuer) throw new IdentityError('wrong issuer');
     if (opts.audience !== undefined && claims.aud !== opts.audience) throw new IdentityError('wrong audience');
+    return toVerified(normalizeClaims(claims));
+  }
+}
 
-    const full: IdentityClaims = {
-      iss: claims.iss ?? '',
-      aud: claims.aud ?? '',
-      sub: claims.sub!,
-      email: claims.email!,
-      tenant: claims.tenant ?? '',
-      name: claims.name ?? '',
-      app: claims.app ?? '',
-      appRole: claims.appRole ?? '',
-      role: claims.role ?? '',
-      caps: Array.isArray(claims.caps) ? claims.caps.filter((c): c is string => typeof c === 'string') : [],
-      scope: claims.scope !== null && typeof claims.scope === 'object' && !Array.isArray(claims.scope)
+// decodeIdentityToken reads the claims WITHOUT checking the signature or expiry. It
+// is for a caller that already sits behind the gateway: the gateway verified both and
+// owns the container's sole ingress, so the app only needs to read the claims. Never
+// call it on a token from an untrusted source; use IdentityVerifier there.
+export function decodeIdentityToken(token: string): VerifiedIdentity {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new IdentityError('token is not a compact JWS');
+  const [, p] = parts as [string, string, string];
+  const claims = decodeJson(p, 'payload') as Partial<IdentityClaims>;
+  requireClaimShape(claims);
+  return toVerified(normalizeClaims(claims));
+}
+
+// The anonymous identity (anon: true) is the one claim set allowed an empty email;
+// every real viewer must carry one.
+function requireClaimShape(claims: Partial<IdentityClaims>): void {
+  requireStr(claims.sub, 'sub');
+  if (claims.anon === true) {
+    if (typeof claims.email !== 'string') throw new IdentityError('missing email');
+  } else {
+    requireStr(claims.email, 'email');
+  }
+  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') {
+    throw new IdentityError('missing iat/exp');
+  }
+}
+
+function normalizeClaims(claims: Partial<IdentityClaims>): IdentityClaims {
+  return {
+    iss: claims.iss ?? '',
+    aud: claims.aud ?? '',
+    sub: claims.sub!,
+    email: claims.email!,
+    tenant: claims.tenant ?? '',
+    name: claims.name ?? '',
+    app: claims.app ?? '',
+    appRole: claims.appRole ?? '',
+    role: claims.role ?? '',
+    caps: Array.isArray(claims.caps) ? claims.caps.filter((c): c is string => typeof c === 'string') : [],
+    scope:
+      claims.scope !== null && typeof claims.scope === 'object' && !Array.isArray(claims.scope)
         ? (claims.scope as Record<string, unknown>)
         : {},
-      ...(claims.anon === true ? { anon: true } : {}),
-      iat: claims.iat,
-      exp: claims.exp,
-    };
-    return {
-      user: { sub: full.sub, email: full.email, tenant: full.tenant, name: full.name },
-      claims: full,
-    };
-  }
+    ...(claims.anon === true ? { anon: true } : {}),
+    iat: claims.iat!,
+    exp: claims.exp!,
+  };
+}
+
+function toVerified(full: IdentityClaims): VerifiedIdentity {
+  return { user: { sub: full.sub, email: full.email, tenant: full.tenant, name: full.name }, claims: full };
 }
 
 // Drops the private scalar `d`, leaving the public JWK the verifier and JWKS

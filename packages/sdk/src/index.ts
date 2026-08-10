@@ -1,8 +1,6 @@
-// @280/sdk: the only identity code a 280 app ever contains. The gateway verifies
-// the caller, gates the route, and forwards a short-lived ES256-signed header; this
-// SDK verifies that header offline and hands the app one object — the user, a can()
-// capability check, and a scope() resolver. Apps write no auth: no sessions, no
-// token handling, no user table (the-280-way).
+// @280/sdk verifies the gateway-signed caller identity and resolves platform API
+// paths against the sole host the container network permits. Apps write no auth,
+// session, or token handling.
 //
 //   import { identity } from "@280/sdk";
 //   const { user, can, scope } = await identity(request);
@@ -48,6 +46,36 @@ export interface HeaderSource {
   get(name: string): string | null | undefined;
 }
 export type RequestLike = HeaderSource | { headers: HeaderSource };
+
+export interface SdkApiOptions {
+  origin?: string;
+}
+
+export function sdkApiUrl(path: string, opts: SdkApiOptions = {}): URL {
+  if (path !== '/v1/sdk' && !path.startsWith('/v1/sdk/')) {
+    throw new Error('280 SDK API paths must start with /v1/sdk/');
+  }
+  const raw = opts.origin ?? readEnv('TWO80_API');
+  let origin: URL;
+  try {
+    origin = new URL(raw);
+  } catch {
+    throw new Error('TWO80_API must be one exact HTTPS origin');
+  }
+  if (
+    origin.protocol !== 'https:' ||
+    origin.username !== '' ||
+    origin.password !== '' ||
+    origin.port !== '' ||
+    origin.pathname !== '/' ||
+    origin.search !== '' ||
+    origin.hash !== '' ||
+    origin.hostname.includes('*')
+  ) {
+    throw new Error('TWO80_API must be one exact HTTPS origin');
+  }
+  return new URL(path, origin);
+}
 
 export interface IdentityOptions {
   // The platform's public JWKS. Defaults to TWO80_IDENTITY_JWKS (the JSON the

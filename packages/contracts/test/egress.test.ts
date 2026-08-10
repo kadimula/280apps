@@ -300,7 +300,7 @@ describe('validateWireEgressPolicy accepts the normalized form the CLI actually 
   });
 });
 
-describe('the fake preflight rejects the same typed policy errors as the backend', () => {
+describe('the fake preflight rejects retired app egress policy', () => {
   const identity = { appId: '', slug: 'demo', framework: 'next', gitRemote: '', clientRef: '', forceNew: false };
   const sync = (egress: unknown, secrets: string[]) =>
     new Fake().sync({
@@ -308,13 +308,14 @@ describe('the fake preflight rejects the same typed policy errors as the backend
       manifest: manifest({ egress, secrets }),
     });
 
-  it('lets a well-formed typed policy through preflight', async () => {
-    await expect(sync({ credentials: [google()] }, ['GSA'])).resolves.toMatchObject({ resolution: 'created' });
+  it('rejects a well formed typed policy', async () => {
+    await expect(sync({ credentials: [google()] }, ['GSA'])).rejects.toMatchObject({
+      code: DeployCode.PreflightRejected,
+    });
   });
 
-  it('accepts a typed credential whose secret is not in the top-level secrets list', async () => {
-    // The credential self-declares its secret; leanness means no duplicate listing.
-    await expect(sync({ credentials: [google()] }, [])).resolves.toMatchObject({ resolution: 'created' });
+  it('accepts only the empty compatibility field', async () => {
+    await expect(sync({ allowedHosts: [], credentials: [] }, [])).resolves.toMatchObject({ resolution: 'created' });
   });
 
   it('rejects a typed credential on a non-provider host with PreflightRejected', async () => {

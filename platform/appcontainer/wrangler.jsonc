@@ -6,7 +6,7 @@
 	"compatibility_flags": ["nodejs_compat"],
 
 	// Reference binding shape for the harness. The roll generates the real per-app
-	// config (packages/backend/.../registry-builder.ts), pointing `image` at the
+	// config (packages/backend/.../cloudflare-container-deployment.ts), pointing `image` at the
 	// pushed registry ref; this file is not deployed directly. Locked security
 	// defaults (enableInternet=false, interceptHttps=true) live in src/container.js.
 	"durable_objects": {

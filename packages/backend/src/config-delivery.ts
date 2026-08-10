@@ -5,8 +5,8 @@ import type { SecretCipher } from './secrets.js';
 // ControlPlaneConfigDelivery resolves the container-env map for a rollout: the
 // manifest's committed-public values, overlaid with the dashboard-entered values
 // (stored encrypted with kind='config') revealed via the cipher. It is the config
-// counterpart to ControlPlaneSecretDelivery, but the resolved map is baked into the
-// container env (TWO80_CONFIG), never the Worker vault — config is non-secret.
+// resolved map is baked into the container env through TWO80_CONFIG. Credentials
+// never use this channel.
 //
 // A dashboard value that fails to reveal (missing cipher, bad envelope) is dropped
 // rather than thrown: the app sees the committed values, and the missing one is

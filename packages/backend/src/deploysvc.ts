@@ -18,7 +18,6 @@ import {
   requiredConfigNames,
   stateTerminal,
   validateConfig,
-  validateWireEgressPolicy,
   type ConfigEntry,
   type EgressPolicy,
   type App as PublicApp,
@@ -466,9 +465,7 @@ export function preflight(m: Manifest): void {
   // 280.json too; this is the server-side backstop that does not trust the client.
   preflightPolicy(m.access ?? '', m.roles ?? [], m.routes ?? [], reject);
 
-  // The egress policy is the app's outbound trust boundary; a malformed one must
-  // fail closed here rather than reach a per-app Worker binding or the container gate.
-  preflightEgress(m.egress ?? { allowedHosts: [], credentials: [] }, m.secrets ?? [], reject);
+  preflightEgress(m.egress ?? { allowedHosts: [], credentials: [] }, reject);
 
   // The config block reaches the container's process.env; a malformed one (bad
   // identifier, secret/config overlap, reserved name, or a required value with no
@@ -485,38 +482,10 @@ function preflightConfig(config: ConfigEntry[], secrets: string[], reject: (why:
   }
 }
 
-// A hostname the egress allowlist can carry: DNS labels, optionally a single
-// leading "*." wildcard (the container library's subdomain glob). No scheme, port,
-// path, or whitespace — those would never match the container's host check.
-const EGRESS_HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
-// A legal HTTP header field name (RFC 7230 token).
-const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
-
-// preflightEgress is the server-side backstop for an app's outbound trust boundary,
-// run before any state change. Credential *semantics* — supported types (header and
-// google-service-account), provider host pinning, scope rules, duplicate hosts,
-// undeclared/reserved secrets — are the contract's single source of truth via
-// validateWireEgressPolicy (fed the normalized wire form the CLI actually sends).
-// This layer adds only the two syntax checks the contract does not carry: the
-// allowlist/credential-host DNS form and a legal static header name.
-function preflightEgress(egress: EgressPolicy, secrets: string[], reject: (why: string) => never): void {
-  for (const raw of egress.allowedHosts ?? []) {
-    const host = String(raw ?? '').trim().toLowerCase();
-    if (host !== '' && !EGRESS_HOST_RE.test(host)) {
-      reject(`egress host "${raw}" is not a valid hostname`);
-    }
+function preflightEgress(egress: EgressPolicy, reject: (why: string) => never): void {
+  if ((egress.allowedHosts ?? []).length > 0 || (egress.credentials ?? []).length > 0) {
+    reject('app egress policy is no longer supported; remove it and use @280/sdk');
   }
-  for (const cred of egress.credentials ?? []) {
-    const host = String(cred.host ?? '').trim().toLowerCase();
-    if (host !== '' && !EGRESS_HOST_RE.test(host)) {
-      reject(`egress credential host "${cred.host ?? ''}" is not a valid hostname`);
-    }
-    const header = String(cred.header ?? '');
-    if (header !== '' && !HEADER_NAME_RE.test(header)) {
-      reject(`egress credential for "${host}" sets an illegal header name "${header}"`);
-    }
-  }
-  validateWireEgressPolicy(egress, secrets);
 }
 
 // preflightPolicy rejects an access mode the platform does not enforce, a route with

@@ -4,17 +4,18 @@
 
 `App280Container` (`src/container.js`): the container class every 280 app runs
 in, with the platform security defaults locked on. `src/worker.js` is the per-app
-harness Worker that fronts it (verify-and-forward via `@280/gateway`, then the
-egress boundary). This is live production code: the backend image copies it in as
-`APP_WORKER_ENTRYPOINT` and the roll (`packages/backend/.../registry-builder.ts`)
+harness Worker that fronts it with verify and forward via `@280/gateway`. The
+container network permits only the fixed 280 SDK API host. This is live production
+code: the backend image copies it in as
+`APP_WORKER_ENTRYPOINT` and the roll (`packages/backend/.../cloudflare-container-deployment.ts`)
 deploys `App280Container` as the container class. Both files document their own
 defaults and wiring; read them.
 
-`container.js` imports the tested `@280/egress` (`packages/egress`) — the outbound
-credential handler, typed-token minters, vault read, and fail-closed wiring. The
-backend image (`packages/backend/Dockerfile`) vendors its built `dist` into this
-Worker's `node_modules` alongside `@280/gateway` and `@280/contracts`; the harness
-bundle smoke (`scripts/bundle-smoke.sh`) proves the vendored layout resolves.
+`container.js` locks `enableInternet` off and gives Cloudflare's `ContainerProxy`
+one exact allowed host from `TWO80_SDK_API_ORIGIN`. It injects the same origin as
+`TWO80_API` for `@280/sdk`. The backend image vendors `@280/gateway` and
+`@280/contracts`; `scripts/bundle-smoke.sh` proves the production layout and checks
+that the retired credential handler is absent.
 
 ## Server side
 

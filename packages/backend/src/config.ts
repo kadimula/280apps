@@ -1,7 +1,6 @@
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
 import type { SecretCipher } from './secrets.js';
-import type { SecretDelivery } from './seams.js';
 
 export interface ConfigVars {
   LOG_FORMAT?: string;
@@ -116,5 +115,4 @@ export interface RequestDeps {
   appDomain: string;
   viewAsOrigin: string;
   secretCipher?: SecretCipher;
-  secretDelivery?: SecretDelivery;
 }

@@ -13,7 +13,7 @@ import type { ContainerApp } from '../../src/seams.js';
 import type { Logger } from '../../src/observe.js';
 import { DepotBuilder, type DepotApi } from '../../src/runtime/container/depot-builder.js';
 import type { RolloutJob } from '../../src/runtime/container/container.js';
-import type { ExecFn } from '../../src/runtime/container/registry-builder.js';
+import type { ExecFn } from '../../src/runtime/container/cloudflare-container-deployment.js';
 
 function app(over: Partial<ContainerApp> = {}): ContainerApp {
   return { id: 'app_1', script: 'demo-abc', ...over };
@@ -29,7 +29,7 @@ function activation(files: Record<string, string>): { act: RolloutJob } {
         path,
         read: async () => new TextEncoder().encode(body),
       })),
-      runtime: { routes: [], secrets: [], egress: { allowedHosts: [], credentials: [] }, env: {} },
+      runtime: { routes: [], env: {} },
     },
   };
 }
@@ -286,7 +286,21 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     await rm(workdir, { recursive: true, force: true });
   });
 
-  it('writes the exact normalized egress policy to EGRESS_POLICY, keyed to the emitted app id', async () => {
+  it('rejects an SDK API destination that is not one exact HTTPS origin', () => {
+    const { api } = fakeApi();
+    expect(
+      () => new DepotBuilder({
+        accountId: 'acct1',
+        apiToken: 't',
+        depotToken: 'd',
+        projectId: 'p',
+        sdkApiOrigin: 'https://*.280apps.com',
+        api,
+      }),
+    ).toThrow(/exact HTTPS origin/);
+  });
+
+  it('bakes the one SDK API origin and no app-controlled egress policy', async () => {
     const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
     let rollConfig: Record<string, unknown> = {};
     const exec: ExecFn = async (cmd, args, opts) => {
@@ -301,80 +315,17 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       apiToken: 't',
       depotToken: 'd',
       projectId: 'p',
-      workerEntry: 'harness.js',
+      sdkApiOrigin: 'https://api-development.280apps.com',
       workdir,
       exec,
       api,
       fetch: credsFetch(),
     });
-    // A policy the roll must bake verbatim: an allowlisted (credential-less) host and
-    // a credentialed host. This is already normalized (sorted hosts, cred host folded
-    // into allowedHosts), so it must survive to the var byte for byte.
-    const egress = {
-      allowedHosts: ['api.stripe.com', 'data.example.com'],
-      credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY', header: 'authorization', scheme: 'Bearer' }],
-    };
-    const vars = () => (rollConfig.vars as Record<string, string>);
-    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { egress }));
-
-    expect(vars().EGRESS_POLICY).toBe(JSON.stringify(egress));
-    // The egress Worker reads env.TWO80_APP_ID for its audit app id; the roll must
-    // emit exactly that var so audit events are not keyed to an empty id.
-    expect(vars().TWO80_APP_ID).toBe('app_1');
-    await rm(workdir, { recursive: true, force: true });
-  });
-
-  it('defaults EGRESS_POLICY to an empty default-deny policy when the app declares none', async () => {
-    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
-    let rollConfig: Record<string, unknown> = {};
-    const exec: ExecFn = async (cmd, args, opts) => {
-      if (cmd === 'wrangler' && args[0] === 'deploy') {
-        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
-      }
-      return { code: 0, output: '' };
-    };
-    const { api } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', workdir, exec, api, fetch: credsFetch() });
     await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act));
-    expect((rollConfig.vars as Record<string, string>).EGRESS_POLICY).toBe('{"allowedHosts":[],"credentials":[]}');
+    const vars = rollConfig.vars as Record<string, string>;
+    expect(vars.TWO80_SDK_API_ORIGIN).toBe('https://api-development.280apps.com');
+    expect(vars.EGRESS_POLICY).toBeUndefined();
     await rm(workdir, { recursive: true, force: true });
-  });
-
-  it('delivers Worker secrets in bulk through stdin', async () => {
-    const { exec, calls } = recordingExec();
-    const { api } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'acct1', apiToken: 'tok1', depotToken: 'd', projectId: 'p', exec, api });
-    const value = ['runtime', 'credential'].join(':');
-
-    await builder.bulk(app(), { API_KEY: value, REMOVED_KEY: null });
-
-    const call = calls[0]!;
-    expect(call.args).toEqual(['secret', 'bulk', '--name', 'demo-abc']);
-    expect(call.args).not.toContain(value);
-    expect(call.input).toBe(JSON.stringify({ API_KEY: value, REMOVED_KEY: null }));
-    expect(call.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 'tok1', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
-  });
-
-  it('batches Worker secret delivery at the Wrangler limit', async () => {
-    const { exec, calls } = recordingExec();
-    const { api } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
-    const values = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`KEY_${i}`, null]));
-
-    await builder.bulk(app(), values);
-
-    expect(calls).toHaveLength(2);
-    expect(Object.keys(JSON.parse(calls[0]!.input!))).toHaveLength(100);
-    expect(Object.keys(JSON.parse(calls[1]!.input!))).toHaveLength(1);
-  });
-
-  it('reports secret delivery failure without returning command output', async () => {
-    const output = ['sensitive', 'echo'].join(':');
-    const exec: ExecFn = async () => ({ code: 1, output });
-    const { api } = fakeApi();
-    const builder = new DepotBuilder({ accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p', exec, api });
-
-    await expect(builder.bulk(app(), { API_KEY: output })).rejects.not.toThrow(output);
   });
 
   it('teardown deletes the app worker by name: wrangler delete <script> --force', async () => {

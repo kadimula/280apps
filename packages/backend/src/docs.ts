@@ -90,12 +90,12 @@ export const RUNTIME_LIMITS: CapabilityGroup = {
     {
       name: 'Unrestricted outbound network',
       status: 'unsupported',
-      note: 'Default deny; list every host in 280.json egress.allow (others get HTTP 520)',
+      note: 'Default deny; containers can reach only the 280 SDK API host (others get HTTP 520)',
     },
     {
       name: 'Raw TCP outbound (e.g. Postgres on :5432)',
       status: 'unsupported',
-      note: 'Credential injection is HTTPS only; reach a database over its HTTPS endpoint',
+      note: 'Use an available @280/sdk capability instead',
     },
     {
       name: 'Background work while idle (setInterval, polling loops)',
@@ -136,6 +136,11 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'Gateway signs a verified identity header; the app reads it via @280/sdk',
     },
     {
+      name: 'Fixed SDK API network boundary',
+      status: 'supported',
+      note: 'Cloudflare permits only the platform supplied TWO80_API host',
+    },
+    {
       name: 'Feature permissions, sharing grants, route gates',
       status: 'supported',
       note: 'Two-tier roles in 280.json; owner shares in the dialog; gateway enforces',
@@ -148,7 +153,7 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
     {
       name: 'Config env vars the app reads (280.json config)',
       status: 'supported',
-      note: 'Non-secret values (ids, regions, flags) reach process.env; a value the app never reads is a secret, injected at egress',
+      note: 'Non-credential values such as ids, regions, and flags reach process.env',
     },
     {
       name: 'Per app Postgres and R2',

@@ -8,7 +8,7 @@ import {
   publicJwkFromPrivate,
   type SignInput,
 } from '@280/contracts/identity';
-import { identity, verifyIdentityToken, IdentityError, ID_HEADER } from '../src/index.js';
+import { identity, sdkApiUrl, verifyIdentityToken, IdentityError, ID_HEADER } from '../src/index.js';
 
 const ISSUER = 'https://auth.280apps.run';
 const AUD = 'renewals.280apps.run';
@@ -45,6 +45,20 @@ const baseClaims = (over: Partial<SignInput> = {}): SignInput => ({
 afterEach(() => {
   delete (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
     ?.TWO80_IDENTITY_JWKS;
+});
+
+describe('sdkApiUrl', () => {
+  it('resolves SDK paths against the injected platform origin', () => {
+    expect(sdkApiUrl('/v1/sdk/database/query', { origin: 'https://api.280apps.com' }).href).toBe(
+      'https://api.280apps.com/v1/sdk/database/query',
+    );
+  });
+
+  it('rejects non SDK paths and broadened origins', () => {
+    expect(() => sdkApiUrl('/v1/apps', { origin: 'https://api.280apps.com' })).toThrow(/\/v1\/sdk/);
+    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'http://api.280apps.com' })).toThrow(/exact HTTPS origin/);
+    expect(() => sdkApiUrl('/v1/sdk/x', { origin: 'https://*.280apps.com' })).toThrow(/exact HTTPS origin/);
+  });
 });
 
 describe('identity()', () => {

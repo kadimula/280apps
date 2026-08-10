@@ -1,6 +1,6 @@
 # @280/contracts
 
-The contracts package is the shared protocol and policy boundary between the 280 CLI, backend, gateway, SDK, and egress layer. It owns deploy and device login wire models, runtime schemas, stable error codes, content derivations, access policy helpers, and the signed application identity format.
+The contracts package is the shared protocol and policy boundary between the 280 CLI, backend, gateway, and SDK. It owns deploy and device login wire models, runtime schemas, stable error codes, content derivations, access policy helpers, and the signed application identity format.
 
 It also provides the deploy `Port`, a production HTTP adapter, an in memory fake, and one executable conformance suite. Consumers depend on the same behavior instead of maintaining local interpretations of the protocol.
 
@@ -22,7 +22,7 @@ The editable Graphviz source is in [`docs/contracts-flow.dot`](docs/contracts-fl
 ### Sample flow: deterministic synchronization
 
 1. `digestBytes` computes the content address of each build context blob.
-2. `canonicalDigest` folds build configuration, files, access policy, routes, secrets, and egress policy into one deterministic manifest digest.
+2. `canonicalDigest` folds build configuration, files, access policy, routes, config, and compatibility fields into one deterministic manifest digest.
 3. The backend combines the application identifier and canonical digest to derive the deploy identifier.
 4. Repeating sync for unchanged content therefore resumes the same deployment instead of creating another attempt.
 5. A policy or content change alters the digest and produces a distinct deploy.
@@ -32,7 +32,7 @@ The editable Graphviz source is in [`docs/contracts-flow.dot`](docs/contracts-fl
 1. The CLI parses `280.json` into shared manifest types and calls the shared policy validators.
 2. The backend validates the normalized wire manifest again before changing state.
 3. Access helpers resolve route gates and role ordering for the gateway and application Worker.
-4. Egress helpers normalize allowed hosts, credential types, scopes, and reserved bindings for the CLI, backend, and egress handler.
+4. The legacy egress shape remains parseable for wire compatibility, while deploy preflight rejects any non-empty app policy.
 5. The canonical manifest digest includes policy, so a policy change cannot be separated from the deployment that enforces it.
 
 ### Sample flow: signed application identity
@@ -63,7 +63,7 @@ The editable Graphviz source is in [`docs/contracts-flow.dot`](docs/contracts-fl
 
 | Component | Responsibility | Implementation |
 | --- | --- | --- |
-| Deploy and auth models | Defines manifests, applications, deploy state, sync, status, delete, device flow, egress, access, route, preview, and policy shapes with Zod schemas. | `src/types.ts` |
+| Deploy and auth models | Defines manifests, applications, deploy state, sync, status, delete, device flow, access, route, preview, and policy shapes with Zod schemas. | `src/types.ts` |
 | Deploy port | Defines the idempotent sync, blob upload, status, and delete interface used by callers and adapters. | `src/port.ts` |
 | Error contract | Defines stable deploy and auth codes, their HTTP mapping, the wire error schema, and throwable `DeployErr`. | `src/errors.ts`, `src/deploy/error.ts` |
 | HTTP deploy adapter | Implements `Port` over API v1, streams blob bodies, attaches machine and CLI version headers, validates responses, and normalizes transport failures. | `src/deploy/http.ts` |
@@ -72,7 +72,7 @@ The editable Graphviz source is in [`docs/contracts-flow.dot`](docs/contracts-fl
 | Conformance suite | Runs the same end to end behavioral cases against any fresh `Port` implementation. | `src/deploy/conformance.ts` |
 | Content derivations | Computes blob digests, canonical manifest digests, and the manifest blob set. | `src/types.ts` |
 | Access policy helpers | Normalizes access modes, compares app roles, resolves route gates, checks effective grants, and derives registered app policy. | `src/types.ts` |
-| Egress policy helpers | Normalizes credential configuration and scopes, validates provider boundaries and secret declarations, and protects reserved Worker bindings. | `src/types.ts` |
+| Legacy egress compatibility | Parses the retired wire shape so old clients receive an actionable preflight rejection. | `src/types.ts` |
 | Signed identity | Defines claims and performs ES256 signing, public JWK projection, and fail closed verification. | `src/identity.ts` |
 | Version comparison | Compares CLI release versions consistently on client and server. | `src/version.ts` |
 | HTTP body helpers | Safely reads error bodies and extracts messages for transport adapters. | `src/http-body.ts` |

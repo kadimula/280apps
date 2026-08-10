@@ -1,6 +1,6 @@
 // The Depot builder (the recommended build home): managed remote BuildKit, driven
 // daemonless from the Railway control plane. It reuses the shared
-// RegistryContainerBuilder spine (materialize, roll, teardown, exec discipline) and
+// CloudflareContainerDeployment spine (materialize, roll, teardown, exec discipline) and
 // swaps the two Docker commands for one `depot build --push`, which streams the
 // context to Depot's remote builders and pushes straight to registry.cloudflare.com
 // — no local Docker daemon anywhere in the loop.
@@ -18,21 +18,21 @@ import { DeployCode, DeployErr } from '@280/contracts';
 import type { ContainerApp } from '../../seams.js';
 import type { RolloutJob } from './container.js';
 import {
-  RegistryContainerBuilder,
-  type RegistryBuilderConfig,
-} from './registry-builder.js';
+  CloudflareContainerDeployment,
+  type CloudflareContainerDeploymentConfig,
+} from './cloudflare-container-deployment.js';
 
 // DepotApi is the headless Depot control surface the builder needs: resolve a
 // project (isolated builder + cache) and open one build for a one-time token. The
 // default is HttpDepotApi against api.depot.dev with the org token; tests inject a
-// fake. Exec (the actual `depot build`) stays on the RegistryContainerBuilder exec
+// fake. Exec (the actual `depot build`) stays on the CloudflareContainerDeployment exec
 // seam, so no builder logic reaches the network except through this interface.
 export interface DepotApi {
   ensureProject(name: string): Promise<{ id: string }>;
   createBuild(projectId: string): Promise<{ buildId: string; buildToken: string }>;
 }
 
-export interface DepotBuilderConfig extends RegistryBuilderConfig {
+export interface DepotBuilderConfig extends CloudflareContainerDeploymentConfig {
   // depotToken is the Depot organization token (DEPOT_TOKEN) that authorizes
   // createBuild and, in turn, the per-build token the CLI uses.
   depotToken: string;
@@ -49,7 +49,7 @@ export interface DepotBuilderConfig extends RegistryBuilderConfig {
 const DEPOT_API_BASE = 'https://api.depot.dev';
 const DOCKER_CONFIG_DIR = '.docker';
 
-export class DepotBuilder extends RegistryContainerBuilder {
+export class DepotBuilder extends CloudflareContainerDeployment {
   private readonly depotToken: string;
   private readonly configuredProjectId: string;
   private readonly api: DepotApi;

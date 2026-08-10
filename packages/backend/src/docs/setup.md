@@ -1,13 +1,13 @@
 280apps.com is an opinionated platform which helps agents and teams securely build internal tools. The platform is built around three tenets:
 
-**Tenet 1. Zero-trust for agent-generated code.**
-Application code never sees or manages credentials (Google service-account JWTs, AWS SigV4, raw DB passwords, etc.)
+**Tenet 1. Zero trust for agent generated code.**
+Application code never sees or manages provider credentials.
 
 **Tenet 2. Agents own deployment and debugging.**
-An agent-optimized CLI handles all housekeeping.
+An agent optimized CLI handles all housekeeping.
 
-**Tenet 3. Humans own login, secrets, and access control.**
-Granting access to trusted identities and entering secret values stay a human's job.
+**Tenet 3. Humans own login and access control.**
+Granting access to trusted identities stays a human's job.
 
 Following are the steps necessary to securely deploy to the platform.
 
@@ -19,79 +19,43 @@ Following are the steps necessary to securely deploy to the platform.
 
 | Stack | Notes |
 | --- | --- |
-| Static HTML | Any static site (HTML, CSS, JS, assets); served with SPA fallback to index.html |
-| Next.js | Full Node 20 container, so SSR, API routes, SSG/ISR, Server Actions, middleware, next/image, and native/WASM deps all work |
+| Static HTML | Any static site with HTML, CSS, JS, and assets; served with SPA fallback to index.html |
+| Next.js | Full Node 20 container, so SSR, API routes, SSG or ISR, Server Actions, middleware, next/image, and native or WASM dependencies work |
 
-Any other stack ships a repo root Dockerfile that listens on port 8080 (the platform sets `PORT=8080`); Next.js and static sites build automatically.
+Any other stack ships a repo root Dockerfile that listens on port 8080. Next.js and static sites build automatically.
 
 **Not supported**
 
 | Not supported | Do this instead |
 | --- | --- |
-| Inline credentials the app never reads (keys, tokens, connection strings) | Declare a `secret` bound to its host; 280 injects it at egress (steps 2 and 3) |
-| Values the app must read (resource ids, regions, public client ids, flags) | Declare them in `config`; 280 sets them as env vars the app reads (step 4) |
-| Authenticated SDKs (`googleapis`, AWS SDK, password-based Postgres clients) | Call the provider's HTTP API directly (step 2) |
-| Unrestricted outbound network | Allowlist every host in `280.json` `egress.allow` (others get HTTP 520) |
-| Raw TCP outbound (Postgres on `:5432`) | Reach the database over its HTTPS endpoint |
-| Background work while idle (`setInterval`, polling loops) | An instance sleeps after ~2 min idle; use request handlers |
+| Direct calls to external APIs | Use `@280/sdk`; the container can only reach the 280 API |
+| Authenticated provider SDKs | Use the corresponding `@280/sdk` capability when available |
+| Raw TCP outbound | Use the corresponding `@280/sdk` capability when available |
+| App managed credentials | Remove them from application code and configuration |
+| Background work while idle | An instance sleeps after about 2 minutes idle; use request handlers |
 | Websockets | Poll instead |
 
-## 2. Call provider APIs directly, not through credentialed SDKs
+## 2. Use the 280 SDK for platform capabilities
 
-Before anything else, strip out every authenticated SDK. 280 injects credentials at the egress boundary, so the app must reach each provider over plain HTTP with no auth wiring of its own.
+The container has a fixed network boundary. It can reach the 280 API and no other host. Do not call provider APIs directly and do not add an `egress` block to `280.json`.
 
-- Replace credentialed clients (`googleapis`, the AWS SDK, a Postgres client that takes a password, etc.) with direct calls to the provider's HTTP API: no keys, no request signing, no `Authorization` header, no connection string.
-- Reach provisioned Postgres over its allowlisted HTTPS endpoint with a serverless driver, never a raw `:5432` connection.
+Install the SDK:
 
-280 attaches the credential in-flight from the `280.json` `egress` block (step 3); the value never enters the container. Land this refactor before you push.
+    npm install @280/sdk
 
-## 3. Hand every secret to the platform
+Use SDK capabilities for database, file, and integration access as they become available. The SDK reads the platform supplied `TWO80_API` origin. Never override that environment variable.
 
-280 is zero-trust: it never lets your app hold a credential, so a leak, a stray log line, or compromised code can't expose one. Secrets are the platform's job. Two rules:
+The SDK is an application API, not the security boundary. Cloudflare enforces the one host network rule, and the 280 API authorizes every operation for the current app and user.
 
-- **The app never holds a secret value** — no reading env, embedding in code, building auth headers, or logging. If the running app can see a credential, it's wrong.
-- **The app never manages secrets** — write plain API calls with no auth wiring. 280 attaches the credential in-flight from `280.json`; the value never enters the container.
+## 3. Remove credentials from the app
 
-The test is simple: **a value is a secret only if the app never reads it.** A credential the app hands to no code (an API key, a service-account JSON, a connection token) is a secret; 280 attaches it at egress. A value the app *does* read to work (a resource id, a region, a public client id) is **config**, not a secret: declare it in `config` instead (step 4).
+Remove API keys, access tokens, service account files, connection strings, provider SDK authentication, and code that builds authorization headers. Do not put credentials in `280.json`, source files, environment files, Docker build arguments, or application logs.
 
-So your only task is to declare each secret and bind it to the host it authenticates against:
-
-    {
-      "egress": {
-        "credentials": [{ "host": "<api-host>", "secret": "<SECRET_NAME>" }]
-      }
-    }
-
-Binding a secret to a host is what declares it: you do not repeat it in a top-level `secrets` list, and you do not add its host to `allow` (a credentialed host is allowed automatically). 280 injects the value on requests to that host (`Authorization: Bearer` by default; set `"header"`/`"scheme"` to differ). Remove the app's own secret handling, and author names only, never a value anywhere. Users enter values in the 280 dashboard (step 7).
-
-### Static header vs. minted provider tokens
-
-The binding above is **static header injection**: 280 attaches the vault-held value verbatim as a request header. Use it when the secret value *is* the authorization the API accepts, an API key or a long-lived bearer or personal access token (Stripe, GitHub, most REST APIs).
-
-Some providers do not accept their durable credential as a header. A Google service account holds a JSON key that must be exchanged for a short-lived, scoped access token that expires; the app cannot mint or refresh that token without holding the JSON key, which zero-trust forbids. For these, declare a **typed credential**: 280 keeps the durable credential in the vault, mints a scoped provider token in-flight, caches and refreshes it, and attaches it. The app still makes plain unauthenticated calls.
-
-Google service accounts use `type: "google-service-account"`. Bind the service account JSON secret to the exact Google API host and list the OAuth scopes the minted token must carry:
-
-    {
-      "egress": {
-        "credentials": [
-          {
-            "host": "sheets.googleapis.com",
-            "secret": "SHEETS_SERVICE_ACCOUNT",
-            "type": "google-service-account",
-            "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
-          }
-        ]
-      }
-    }
-
-The same lean rule holds: the binding declares both the secret and the host, so `SHEETS_SERVICE_ACCOUNT` goes in no top-level `secrets` list and `sheets.googleapis.com` goes in no `allow` list. Do not set `header` or `scheme`; the platform mints and attaches the token. The host must be an exact Google API host (`*.googleapis.com`), and `scopes` is required.
-
-The dashboard value the user enters (step 7) is the **durable service account JSON key**, never a short-lived Google access token. 280 does the token exchange in-flight; the app never reads the JSON or the minted token and makes unauthenticated HTTP calls to `sheets.googleapis.com`.
+If a required provider capability does not exist in `@280/sdk`, report it as unsupported rather than weakening the network boundary.
 
 ## 4. Declare config the app reads
 
-Config is the mirror of secrets: values the app **reads** with `process.env` to function (resource ids, regions, public client ids, feature flags, internal hostnames). Never a credential — if the app never reads it, it is a secret (step 3). Declare config as a map of env-var name to value:
+Config is a value the app reads with `process.env` to function, such as a resource id, region, public client id, feature flag, or internal display setting. It must never be a credential. Declare config as a map from environment variable name to value:
 
     {
       "config": {
@@ -102,41 +66,39 @@ Config is the mirror of secrets: values the app **reads** with `process.env` to 
 
 Two forms:
 
-- **`"NAME": "value"`** — a committed-public value. It lives in `280.json`, so editing it redeploys.
-- **`"NAME": { "sensitive": true }`** — a value the user enters in the dashboard (step 7); it is stored encrypted, kept out of logs, and the deploy waits until it is set. Use this for a mildly confidential value the app still reads (a private resource id, an internal host). It stays config — the app reads it — it is never promoted to a secret.
+1. `"NAME": "value"`: a committed public value. It lives in `280.json`, so editing it redeploys.
+2. `"NAME": { "sensitive": true }`: a value the user enters in the dashboard. It is stored encrypted, kept out of logs, and the deploy waits until it is set. The running app can read it, so it is config rather than a credential.
 
-Each declared name arrives as an environment variable in the container, so the app reads it directly:
+Each declared name arrives as an environment variable in the container:
 
     const sheetId = process.env.SHEET_ID;
 
-Names must be valid env identifiers; `PORT`, `HOSTNAME`, `NODE_ENV`, `NODE_EXTRA_CA_CERTS`, and the `TWO80_` prefix are reserved.
+Names must be valid environment identifiers. `PORT`, `HOSTNAME`, `NODE_ENV`, `NODE_EXTRA_CA_CERTS`, `TWO80_API`, and the `TWO80_` prefix are reserved.
 
 ## 5. Install the CLI and push
 
     npx -y two80@latest push
 
-Auto-inits new projects. Safe to re-run; every step resumes, nothing duplicates.
+This initializes new projects automatically. It is safe to run again because every step resumes without duplication.
 
-## 6. Login (in the user's browser)
+## 6. Login in the user's browser
 
 When push prints a login link, relay it and wait. Never open it yourself.
 
 > Log in to 280 to deploy: <url>
 
-After they confirm, push again.
+After the user confirms, push again.
 
-## 7. Variable values (also the user's browser)
+## 7. Config values in the user's browser
 
-When push exits reporting missing values, relay the link and ask the user to enter them. Never ask for the values yourself. This covers both secrets and dashboard-entered (`sensitive`) config — the dashboard calls them variables.
+When push exits reporting missing values, relay the link and ask the user to enter them. Never ask for the values yourself.
 
-> Enter values for STRIPE_KEY at: <url>
-
-Push does not wait: once the user confirms the values are saved, run `two80 push` again to resume.
+Push does not wait. Once the user confirms that values are saved, run `two80 push` again to resume.
 
 ## 8. Verify, then hand over the link
 
 Push exits with the live URL. The edge can lag up to a minute.
 
-- Broken or stale: wait 30 seconds, retry. Do not re-push yet.
-- Still broken after two retries: fix, push again.
-- Clean: give the user the live link.
+1. If broken or stale, wait 30 seconds and retry. Do not push again yet.
+2. If still broken after two retries, fix it and push again.
+3. If clean, give the user the live link.

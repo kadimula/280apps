@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Production harness bundle smoke: prove the per-app Worker (src/worker.js, the roll
-# config's `main`) bundles from the ACTUAL vendored layout the backend image builds —
-# @280/gateway, @280/contracts, and @280/egress copied flat into node_modules. Root
-# typecheck and lint do not cover this isolated JavaScript harness or its cross-package
-# import resolution, so a broken vendoring (a missing dist, a renamed export) would
-# otherwise only surface at deploy time as "Could not resolve". Mirrors the Dockerfile
-# build+vendor stage, then runs a `wrangler deploy --dry-run` esbuild bundle and
-# asserts the egress data path actually resolved into the output.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,25 +7,20 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 echo "[smoke] building vendored packages"
-pnpm --dir "$repo" --filter @280/contracts --filter @280/gateway --filter @280/egress build >/dev/null
+pnpm --dir "$repo" --filter @280/contracts --filter @280/gateway build >/dev/null
 
 echo "[smoke] staging appcontainer + installing harness deps"
 cp -R "$repo/platform/appcontainer/." "$work/"
 rm -rf "$work/node_modules"
 npm --prefix "$work" install --silent >/dev/null 2>&1
 
-# Vendor the workspace packages flat into node_modules, exactly as packages/backend/Dockerfile does.
-for pkg in contracts gateway egress; do
+for pkg in contracts gateway; do
   dest="$work/node_modules/@280/$pkg"
   mkdir -p "$dest"
   cp "$repo/packages/$pkg/package.json" "$dest/package.json"
   cp -R "$repo/packages/$pkg/dist" "$dest/dist"
 done
 
-# A deployable-shaped config: the reference wrangler.jsonc carries a placeholder image
-# ref the real roll fills in, which fails config validation. This mirrors the roll's
-# generated shape (main -> worker.js, App280Container bound as APP) with a valid image
-# tag so validation passes and the bundle proceeds.
 cat > "$work/smoke.wrangler.json" <<'JSON'
 {
   "name": "280-appcontainer-smoke",
@@ -63,14 +50,16 @@ if grep -qiE 'could not resolve|build failed' "$log"; then
   exit 1
 fi
 
-# The bundle succeeding is not enough: assert the egress data path (and its typed
-# minter) actually resolved into the output, so a tree-shaken-away or stubbed import
-# cannot pass silently.
-for marker in 280-egress makeEgressHandler oauth2.googleapis.com; do
+for marker in ContainerProxy TWO80_SDK_API_ORIGIN TWO80_API; do
   if ! grep -rq "$marker" "$out"; then
-    echo "[smoke] FAIL: expected marker '$marker' missing from bundle (egress not resolved)" >&2
+    echo "[smoke] FAIL: expected marker '$marker' missing from bundle" >&2
     exit 1
   fi
 done
 
-echo "[smoke] OK: gateway, contracts, and egress resolve from the vendored layout"
+if grep -rq '@280/egress\|makeEgressHandler\|oauth2.googleapis.com' "$out"; then
+  echo "[smoke] FAIL: retired egress handler remains in bundle" >&2
+  exit 1
+fi
+
+echo "[smoke] OK: fixed SDK API boundary resolves from the vendored layout"

@@ -22,7 +22,7 @@ import type { RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';
 import { open as openBlobStore } from '../../src/blobstore/index.js';
 import { FakeBuilder } from '../../src/runtime/container/index.js';
-import type { ConfigDelivery, SecretDelivery, Store } from '../../src/seams.js';
+import type { ConfigDelivery, Store } from '../../src/seams.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from '../../src/secrets.js';
 import { MemoryStore } from './memory-store.js';
 import { hasDatabase, newStore } from '../pg.js';
@@ -41,7 +41,6 @@ export async function newPlatform(
     frontendOrigin?: string;
     store?: Store;
     builder?: FakeBuilder;
-    secrets?: SecretDelivery;
     config?: ConfigDelivery;
   } = {},
 ): Promise<Harness> {
@@ -67,7 +66,6 @@ export async function newPlatform(
     store,
     blobs,
     builder,
-    secrets: opts.secrets,
     config: opts.config,
   });
   const platform = new Platform({
@@ -120,7 +118,6 @@ export interface TestServerOpts {
   machineTokenTtlSecs?: number;
   logger?: Logger;
   secretCipher?: SecretCipher;
-  secretDelivery?: SecretDelivery;
 }
 
 // Long enough that a token seeded at real time never expires mid-test; a case that
@@ -143,7 +140,6 @@ export function testDeps(harness: Harness, opts: Omit<TestServerOpts, 'harness' 
       'secretCipher' in opts
         ? opts.secretCipher
         : new EnvelopeSecretCipher(new LocalKeyWrapper(Buffer.alloc(32, 7).toString('base64'), 'test')),
-    secretDelivery: opts.secretDelivery,
   };
 }
 

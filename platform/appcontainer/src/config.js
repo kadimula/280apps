@@ -19,3 +19,16 @@ export function parseConfig(raw) {
   }
   return out;
 }
+
+export function parseSdkApi(raw) {
+  if (typeof raw !== 'string' || raw === '') return { origin: '', host: '' };
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.port !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.hostname.includes('*')) {
+      return { origin: '', host: '' };
+    }
+    return { origin: url.origin, host: url.hostname };
+  } catch {
+    return { origin: '', host: '' };
+  }
+}

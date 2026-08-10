@@ -1,21 +1,17 @@
-// @280/sdk: the only identity code a 280 app ever contains. The gateway verifies
-// the caller, gates the route, and forwards a short-lived ES256-signed header; this
-// SDK verifies that header offline and hands the app one object — the user, a can()
-// capability check, and a scope() resolver. Apps write no auth: no sessions, no
-// token handling, no user table (the-280-way).
+// @280/sdk: the only identity code a 280 app ever contains. The gateway authenticates
+// the caller, gates the route, verifies the signed identity, strips every client
+// x-280-* header, then forwards one short-lived claim set as X-280-Identity. The
+// container's sole ingress is that gateway, so the app trusts the header and this SDK
+// only decodes it into one object — the user, a can() capability check, and a scope()
+// resolver. Apps write no auth: no sessions, no token handling, no user table.
 //
 //   import { identity } from "@280/sdk";
 //   const { user, can, scope } = await identity(request);
-//   user.email            // verified by the gateway, not by app code
+//   user.email            // resolved by the gateway, not by app code
 //   can("approvals.edit") // true when the viewer holds that feature role
 //   scope("salaries")     // the advisory data scope, or null
 
-import {
-  ID_HEADER,
-  IdentityError,
-  IdentityVerifier,
-  type IdentityClaims,
-} from '@280/contracts/identity';
+import { ID_HEADER, IdentityError, decodeIdentityToken, type IdentityClaims } from '@280/contracts/identity';
 
 export { ID_HEADER, IdentityError };
 export type { IdentityClaims };
@@ -49,32 +45,32 @@ export interface HeaderSource {
 }
 export type RequestLike = HeaderSource | { headers: HeaderSource };
 
-export interface IdentityOptions {
-  // The platform's public JWKS. Defaults to TWO80_IDENTITY_JWKS (the JSON the
-  // runtime injects into the container), so a scaffolded app needs no config.
-  jwks?: Record<string, JsonWebKey>;
-  // The expected issuer and audience (the app's own host). Both optional; when set,
-  // a token from another issuer or minted for another app is rejected.
-  issuer?: string;
-  audience?: string;
-  now?: () => number;
+export interface SdkApiOptions {
+  origin?: string;
 }
 
-// identity reads the signed header off the request and returns the verified viewer.
-// Throws IdentityError when the header is absent, malformed, expired, or not signed
-// by the platform — an app treats that as "no authenticated caller".
-export async function identity(request: RequestLike, opts: IdentityOptions = {}): Promise<Identity280> {
+export function sdkApiUrl(path: string, opts: SdkApiOptions = {}): URL {
+  if (path !== '/v1/sdk' && !path.startsWith('/v1/sdk/')) {
+    throw new Error('280 SDK API paths must start with /v1/sdk/');
+  }
+  let origin: URL;
+  try {
+    origin = new URL(opts.origin ?? readEnv('TWO80_API'));
+  } catch {
+    throw new Error('TWO80_API must be an HTTPS origin');
+  }
+  if (origin.protocol !== 'https:') throw new Error('TWO80_API must be an HTTPS origin');
+  return new URL(path, origin);
+}
+
+// identity reads the gateway-stamped header off the request and returns the viewer.
+// Throws IdentityError when the header is absent or malformed — an app treats that as
+// "no authenticated caller". The token is not re-verified here: the gateway already
+// verified it and is the container's only ingress (see @280/contracts decodeIdentityToken).
+export async function identity(request: RequestLike): Promise<Identity280> {
   const token = readHeader(request, ID_HEADER);
   if (token === '') throw new IdentityError('no 280 identity header on the request');
-  return verifyIdentityToken(token, opts);
-}
-
-// verifyIdentityToken is the lower-level entry for callers that already hold the
-// header value (e.g. a framework middleware that extracted it).
-export async function verifyIdentityToken(token: string, opts: IdentityOptions = {}): Promise<Identity280> {
-  const verifier = verifierFor(opts);
-  const audience = opts.audience;
-  const { user, claims } = await verifier.verify(token, audience !== undefined ? { audience } : {});
+  const { user, claims } = decodeIdentityToken(token);
   const caps = new Set(claims.caps);
   return {
     user,
@@ -87,48 +83,6 @@ export async function verifyIdentityToken(token: string, opts: IdentityOptions =
   };
 }
 
-// verifierFor builds the ES256 verifier from the provided or injected JWKS. The
-// verifier is cheap and stateless beyond its imported keys, so a fresh one per call
-// is fine; apps that want caching can hold their own via verifyIdentityToken.
-function verifierFor(opts: IdentityOptions): IdentityVerifier {
-  const jwks = opts.jwks ?? injectedJwks();
-  if (jwks === null) {
-    throw new IdentityError(
-      'no identity JWKS: pass { jwks } or set TWO80_IDENTITY_JWKS (the platform injects it at deploy)',
-    );
-  }
-  return new IdentityVerifier({
-    publicJwks: jwks,
-    ...(opts.issuer !== undefined ? { issuer: opts.issuer } : {}),
-    ...(opts.now !== undefined ? { now: opts.now } : {}),
-  });
-}
-
-// injectedJwks reads the platform-injected public key set from the environment,
-// tolerating its absence (returns null) and a malformed value (throws a clear
-// error, since a present-but-broken JWKS is a misconfiguration, not "unset").
-function injectedJwks(): Record<string, JsonWebKey> | null {
-  const raw = readEnv('TWO80_IDENTITY_JWKS');
-  if (raw === '') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new IdentityError('TWO80_IDENTITY_JWKS is not valid JSON');
-  }
-  // Accept either a bare { kid: jwk } map or a JWKS { keys: [ ... ] } document.
-  if (parsed !== null && typeof parsed === 'object' && Array.isArray((parsed as { keys?: unknown }).keys)) {
-    const out: Record<string, JsonWebKey> = {};
-    for (const k of (parsed as { keys: JsonWebKey[] }).keys) {
-      const kid = (k as { kid?: unknown }).kid;
-      if (typeof kid === 'string') out[kid] = k;
-    }
-    return out;
-  }
-  if (parsed !== null && typeof parsed === 'object') return parsed as Record<string, JsonWebKey>;
-  throw new IdentityError('TWO80_IDENTITY_JWKS must be a JWKS object');
-}
-
 function readEnv(name: string): string {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
   const v = env?.[name];
@@ -137,7 +91,9 @@ function readEnv(name: string): string {
 
 function readHeader(request: RequestLike, name: string): string {
   const src: HeaderSource =
-    'headers' in request && request.headers !== undefined ? (request as { headers: HeaderSource }).headers : (request as HeaderSource);
+    'headers' in request && request.headers !== undefined
+      ? (request as { headers: HeaderSource }).headers
+      : (request as HeaderSource);
   const v = src.get(name) ?? src.get(name.toLowerCase());
   return typeof v === 'string' ? v : '';
 }

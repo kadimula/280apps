@@ -1,4 +1,4 @@
-import type { BuildSpec, EgressPolicy, RouteGate } from '@280/contracts';
+import type { BuildSpec, RouteGate } from '@280/contracts';
 import type { ContainerApp } from '../../seams.js';
 
 export interface ContextFile {
@@ -13,8 +13,6 @@ export interface RolloutJob {
   files: ContextFile[];
   runtime: {
     routes: RouteGate[];
-    secrets: string[];
-    egress: EgressPolicy;
     env: Record<string, string>;
   };
 }

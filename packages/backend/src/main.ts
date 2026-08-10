@@ -31,12 +31,11 @@ async function run(log: Logger): Promise<void> {
   // do not depend on the CI migrate runner having gone first.
   const store = await openStore(config.dbConnectionString, config.dbSchema);
   const blobs = await openBlobs(config, log);
-  const { builder, secretDelivery, configDelivery } = buildContainerServices(config, log, store, secretCipher);
+  const { builder, configDelivery } = buildContainerServices(config, log, store, secretCipher);
   const activator = new ContainerDeploymentCoordinator({
     store,
     blobs,
     builder,
-    secrets: secretDelivery,
     config: configDelivery,
   });
 
@@ -62,7 +61,6 @@ async function run(log: Logger): Promise<void> {
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
     secretCipher,
-    secretDelivery,
   };
 
   const app = new Server({ buildDeps: () => deps, logger: log }).handler();

@@ -1,7 +1,7 @@
 {
   "name": "@280/sdk",
   "version": "0.0.0",
-  "description": "The only identity code a 280 app contains: read the gateway-verified user, check capabilities, and resolve scopes.",
+  "description": "Identity and platform API primitives for applications running on 280.",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {

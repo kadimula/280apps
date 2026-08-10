@@ -2,13 +2,12 @@ import {
   DeployCode,
   DeployErr,
   State,
-  normalizeEgressPolicy,
   publicConfig,
   requiredConfigNames,
   stateTerminal,
   type DeployError,
 } from '@280/contracts';
-import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, SecretDelivery, Store } from './seams.js';
+import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, Store } from './seams.js';
 import type { ContainerBuilder, RolloutJob } from './runtime/container/container.js';
 import { asDeployErr, deployShaped, errText, internal } from './deploysvc.js';
 
@@ -16,7 +15,6 @@ export interface ContainerDeploymentDeps {
   store: Store;
   blobs: BlobStore;
   builder: ContainerBuilder;
-  secrets?: SecretDelivery;
   config?: ConfigDelivery;
   now?: () => number;
 }
@@ -67,8 +65,6 @@ function rolloutJob(deps: ContainerDeploymentDeps, app: App, dep: Deploy): Rollo
     })),
     runtime: {
       routes: dep.manifest.routes ?? [],
-      secrets: dep.manifest.secrets ?? [],
-      egress: normalizeEgressPolicy(dep.manifest.egress ?? { allowedHosts: [], credentials: [] }),
       env: publicConfig(dep.manifest.config ?? []),
     },
   };
@@ -110,7 +106,7 @@ export class ContainerDeploymentCoordinator {
     if (state === State.Activating) await this.prepare(job);
 
     const config = dep.manifest.config ?? [];
-    const required = [...job.runtime.secrets, ...requiredConfigNames(config)];
+    const required = requiredConfigNames(config);
     if (required.length > 0 && (await this.secretsUnconfigured(app.id, required))) {
       await this.deps.store.parkActivation(app.id, dep.id, (this.deps.now ?? nowSecs)());
       if (await this.secretsUnconfigured(app.id, required)) return;
@@ -135,7 +131,6 @@ export class ContainerDeploymentCoordinator {
   private async rollout(job: RolloutJob): Promise<void> {
     try {
       await this.deps.builder.rollout(job, this.deps.builder.imageRef(job.app, job.deployId));
-      await this.deps.secrets?.rollout(job.app, job.runtime.secrets);
     } catch (err) {
       throw deploymentFailed(err);
     }

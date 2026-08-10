@@ -1,9 +1,8 @@
 // Parsing 280.json into the platform-enforced policy the Manifest carries, plus
 // the route→gate diff the deploy prints. The whole file is the app's trust
 // boundary (design §5.1): `access` decides who may open the app, `roles` names the
-// feature roles, `routes` gates paths, `secrets` declares credential names, and
-// `egress` (phase 3) is the outbound allowlist. A malformed 280.json fails here,
-// before any upload, so the builder fixes it in the same session.
+// feature roles, `routes` gates paths, and `secrets` declares platform-held values.
+// A malformed 280.json fails here before any upload.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,12 +12,9 @@ import {
   asDeployError,
   describeGate,
   isAppAccess,
-  normalizeEgressPolicy,
   resolveRouteGate,
   validateConfig,
-  validateEgressPolicy,
   type ConfigEntry,
-  type EgressCredential,
   type EgressPolicy,
   type RouteGate,
 } from '@280/contracts';
@@ -42,9 +38,8 @@ const EMPTY: Policy280 = {
   config: [],
 };
 
-// read280 parses the whole 280.json into the enforced policy. Absent file =>
-// default-deny egress and the invited default with no roles or gates. Every
-// malformed section fails preflight with an agent-actionable fix.
+// read280 parses the whole 280.json into the enforced policy. Absent file uses
+// invited access with no roles or gates. Every malformed section fails preflight.
 export function read280(root: string): Policy280 {
   const path = join(root, '280.json');
   if (!fileExists(path)) return { ...EMPTY };
@@ -58,36 +53,22 @@ export function read280(root: string): Policy280 {
     fail('280.json must be a JSON object', 'wrap your settings in { ... }');
   }
   const o = parsed as Record<string, unknown>;
+  if (o.egress !== undefined && o.egress !== null) {
+    fail(
+      '280.json "egress" is no longer supported',
+      'remove "egress" and use @280/sdk; deployed apps can only reach the 280 API',
+    );
+  }
   const roles = parseRoles(o.roles);
-  // A credentialed secret is declared by its egress credential, so the top-level
-  // "secrets" list is now optional (kept for back-compat and non-credential secrets).
-  // The effective declared set the manifest carries is the union of both.
-  const explicitSecrets = parseSecrets(o.secrets);
-  const egress = parseEgress(o.egress, explicitSecrets);
-  const secrets = unionSecrets(explicitSecrets, egress.credentials);
+  const secrets = parseSecrets(o.secrets);
   return {
-    egress,
+    egress: { allowedHosts: [], credentials: [] },
     access: parseAccess(o.access),
     roles,
     routes: parseRoutes(o.routes, roles),
     secrets,
     config: parseConfig(o.config, secrets),
   };
-}
-
-// unionSecrets folds every egress credential's secret name into the explicit
-// secrets list (order preserved, deduped), so a credentialed secret need not be
-// repeated in "secrets" yet still reaches delivery, the waiting gate, and the digest.
-function unionSecrets(explicit: string[], creds: EgressCredential[]): string[] {
-  const out = [...explicit];
-  const seen = new Set(explicit);
-  for (const c of creds) {
-    if (c.secret !== '' && !seen.has(c.secret)) {
-      seen.add(c.secret);
-      out.push(c.secret);
-    }
-  }
-  return out;
 }
 
 // parseConfig reads the non-secret config block: a map of env-var NAME to either a
@@ -205,77 +186,6 @@ function parseRoutes(v: unknown, roles: string[]): RouteGate[] {
     }
     return { path: r.path, appRole, role };
   });
-}
-
-// parseEgress reads the app's outbound contract. Author-supplied fields keep their
-// raw presence (an absent transport field is left unset, not defaulted) so the
-// contract's validateEgressPolicy can reject a typed credential that carries a
-// header/scheme, or a static one that carries scopes, before any default is baked.
-// The whole policy is validated against the declared secrets here — the same gate
-// the backend runs — so a bad credential fails before openPort and before upload.
-function parseEgress(v: unknown, secrets: string[]): EgressPolicy {
-  if (v === undefined || v === null) return { allowedHosts: [], credentials: [] };
-  if (typeof v !== 'object') {
-    fail('280.json "egress" must be an object', 'set "egress": { "allow": [...], "credentials": [...] }');
-  }
-  const e = v as { allow?: unknown; allowedHosts?: unknown; credentials?: unknown };
-  const allow = e.allow ?? e.allowedHosts ?? [];
-  if (!Array.isArray(allow) || allow.some((h) => typeof h !== 'string')) {
-    fail('280.json egress.allow must be a list of host strings', 'e.g. "allow": ["api.stripe.com", "*.supabase.co"]');
-  }
-  const rawCreds = e.credentials ?? [];
-  if (!Array.isArray(rawCreds)) {
-    fail('280.json egress.credentials must be a list', 'e.g. "credentials": [{ "host": "api.stripe.com", "secret": "STRIPE_KEY" }]');
-  }
-  const credentials = rawCreds.map(parseCredential);
-  const policy: EgressPolicy = { allowedHosts: allow as string[], credentials };
-  validateEgressOrFail(policy, secrets);
-  return normalizeEgressPolicy(policy);
-}
-
-// parseCredential shape-checks one raw credential and carries every author-supplied
-// field through with its presence intact (absent stays absent). Only structural
-// typos are caught here; the semantic rules (type vocabulary, provider host
-// boundary, scope-on-header, reserved/undeclared secret) are validateEgressPolicy's.
-function parseCredential(c: unknown, i: number): EgressCredential {
-  if (c === null || typeof c !== 'object' || Array.isArray(c)) {
-    fail(`280.json egress.credentials[${i}] must be an object`, 'e.g. { "host": "api.stripe.com", "secret": "STRIPE_KEY" }');
-  }
-  const raw = c as Record<string, unknown>;
-  if (typeof raw.host !== 'string' || raw.host === '') {
-    fail(`280.json egress.credentials[${i}] needs a "host"`, 'e.g. { "host": "api.stripe.com", "secret": "STRIPE_KEY" }');
-  }
-  if (typeof raw.secret !== 'string' || raw.secret === '') {
-    fail(`280.json egress.credentials[${i}] needs a "secret" name`, 'name a secret you declared in 280.json "secrets"');
-  }
-  const cred: EgressCredential = { host: raw.host, secret: raw.secret };
-  for (const field of ['type', 'header', 'scheme'] as const) {
-    if (raw[field] === undefined || raw[field] === null) continue;
-    if (typeof raw[field] !== 'string') {
-      fail(`280.json egress.credentials[${i}] "${field}" must be a string`, `remove or fix "${field}" on the ${raw.host} credential`);
-    }
-    cred[field] = raw[field] as string;
-  }
-  if (raw.scopes !== undefined && raw.scopes !== null) {
-    if (!Array.isArray(raw.scopes) || raw.scopes.some((s) => typeof s !== 'string')) {
-      fail(`280.json egress.credentials[${i}] "scopes" must be a list of strings`, 'e.g. "scopes": ["https://www.googleapis.com/auth/spreadsheets.readonly"]');
-    }
-    cred.scopes = raw.scopes as string[];
-  }
-  return cred;
-}
-
-// validateEgressOrFail runs the contract's single semantic gate and re-raises its
-// rejection as the CLI's PreflightError, so a typed-egress mistake reads like any
-// other preflight failure (code, message, fix) instead of leaking a foreign error.
-function validateEgressOrFail(policy: EgressPolicy, secrets: string[]): void {
-  try {
-    validateEgressPolicy(policy, secrets);
-  } catch (err) {
-    const d = asDeployError(err);
-    if (d) fail(d.message, d.fix, d.code);
-    throw err;
-  }
 }
 
 // routeGateDiff renders what each of the app's routes will require after deploy,

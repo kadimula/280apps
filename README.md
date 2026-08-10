@@ -47,7 +47,6 @@ Fetch 280apps.com/setup.md and push.
 | `packages/backend` | Control plane for deployment, identity, storage, and agent facing documentation. | [README](packages/backend/README.md) |
 | `packages/contracts` | Shared protocol, policy, identity, adapters, and conformance suites. | [README](packages/contracts/README.md) |
 | `packages/dashboard` | Web dashboard for managing apps, access, and configuration. | No README yet |
-| `packages/egress` | Secure outbound requests, credential injection, and call logging. | [README](packages/egress/README.md) |
 | `packages/gateway` | Central identity authority and route enforcement for deployed apps. | [README](packages/gateway/README.md) |
 | `packages/sdk` | App identity, capability checks, and scope resolution. | No README yet |
 

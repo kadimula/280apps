@@ -104,7 +104,7 @@ export interface Event {
   createdAt: number;
 }
 
-// Secret values are injected at egress. Config values are readable by the app.
+// Secret values stay control-plane side for future SDK capabilities. Config values are readable by the app.
 export interface AppSecret {
   appId: string;
   name: string;
@@ -235,12 +235,6 @@ export interface BlobStore {
 export interface ContainerApp {
   id: string;
   script: string;
-}
-
-export interface SecretDelivery {
-  rollout(app: ContainerApp, declared: string[]): Promise<void>;
-  set(app: ContainerApp, name: string): Promise<void>;
-  delete(app: ContainerApp, name: string): Promise<void>;
 }
 
 export interface ConfigDelivery {

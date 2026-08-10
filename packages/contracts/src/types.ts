@@ -108,7 +108,7 @@ export function googleServiceAccountHostAllowed(host: string): boolean {
 // Worker binding/var names the platform roll owns. A credential secret (which the
 // roll delivers as a Worker secret binding) must not collide with these or the
 // TWO80_ platform namespace, or it would clobber identity/egress/route wiring.
-// One exported set so CLI and backend validation agree. See registry-builder rollConfig.
+// One exported set so CLI and backend validation agree. See the Cloudflare container deployment rollConfig.
 export const RESERVED_BINDING_NAMES: ReadonlySet<string> = new Set([
   'APP',
   'GATEWAY',
@@ -457,8 +457,8 @@ function rejectEgress(message: string, fix: string): never {
 
 // ConfigEntry is one non-secret environment variable the app READS at runtime
 // (process.env.NAME): URL path segments, resource ids, region, public client ids,
-// feature flags. This is the opposite of a secret — a secret is a value the app
-// never reads (attached at the egress boundary, never entering the container).
+// feature flags. A credential must never enter app config; future SDK capability
+// endpoints keep provider credentials backend-side.
 // `value` is the committed-public (or committed-sensitive) literal; '' means the
 // value is entered in the dashboard. `sensitive` keeps a value out of logs and
 // (when value is '') routes entry to the dashboard, parking the deploy until set.

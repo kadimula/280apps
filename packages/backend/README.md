@@ -35,18 +35,18 @@ flowchart LR
 4. The CLI streams missing blobs with parallel `PUT` requests. The blob store verifies each body against its declared digest before persisting it.
 5. The final required blob causes the deploy service to invoke the per application container deployment coordinator. There is no separate activation endpoint.
 6. The coordinator materializes the build context and asks Depot to build and push an image to the Cloudflare registry.
-7. The coordinator rolls the per application Worker and Container to the prepared image, applies route and egress policy, and delivers declared secrets.
+7. The coordinator rolls the per application Worker and Container to the prepared image, applies route policy, fixes the SDK API destination, and delivers runtime config.
 8. Postgres atomically marks the deploy live, updates the serving deploy, registers the application policy, and preserves the stable application URL.
 9. The CLI polls status until it receives the live URL or an agent actionable failure.
 
-### Sample flow: deployment waits for secrets
+### Sample flow: deployment waits for required config
 
-1. A manifest declares one or more secret names.
+1. A manifest declares sensitive config without a committed value.
 2. The coordinator builds the image without changing the serving version.
-3. If any declared value is absent, the coordinator parks the deploy in `waiting_secrets` instead of rolling it live.
-4. The dashboard encrypts a submitted value, stores its envelope in Postgres, and delivers the value to the per application Worker binding.
-5. Once every declared value is configured, the backend resumes the same deploy and rolls the prepared image live.
-6. A scheduled sweep fails deployments that remain waiting beyond the configured window with a direct dashboard link and recovery instruction.
+3. If required config is absent, the coordinator parks the deploy in `waiting_secrets`.
+4. The dashboard encrypts the submitted value and stores its envelope in Postgres.
+5. Once every required config value exists, the backend resolves `TWO80_CONFIG` and rolls the prepared image live.
+6. A scheduled sweep fails deployments that remain waiting beyond the configured window.
 
 ### Sample flow: CLI device login
 
@@ -68,7 +68,7 @@ flowchart LR
 
 ## Runtime boundaries
 
-The control plane prepares and deploys applications, but it is not their data plane. Each live application is served by its own Cloudflare Worker in front of its own Container. Identity enforcement happens in the gateway and per application Worker. Outbound enforcement happens through `@280/egress` around the Container.
+The control plane prepares and deploys applications, but it is not their data plane. Each live application is served by its own Cloudflare Worker in front of its own Container. Identity enforcement happens in the gateway and per application Worker. Cloudflare's container network boundary blocks every outbound host except the fixed 280 SDK API host.
 
 Production uses Postgres, R2 through its S3 API, Depot, Cloudflare registry images, and Cloudflare Containers. The filesystem blob store exists for local development and tests only.
 
@@ -80,14 +80,14 @@ Production uses Postgres, R2 through its S3 API, Depot, Cloudflare registry imag
 | HTTP API | Authenticates requests, validates wire bodies, maps typed errors to HTTP responses, and exposes deploy, auth, dashboard, secret, sharing, preview, docs, and health routes. | `src/api.ts` |
 | Deploy service | Implements the user scoped deploy contract, application resolution, preflight, content synchronization, status, and confirmed deletion. | `src/deploysvc.ts` |
 | Container deployment coordinator | Serializes deployment and deletion per application, prepares builds, waits for secrets, rolls live, and records terminal state. | `src/activator.ts` |
-| Container build seam | Defines the `ContainerBuilder` boundary and the `RolloutJob` value that carries build context, access, and egress policy. | `src/runtime/container/container.ts` |
+| Container build seam | Defines the `ContainerBuilder` boundary and the `RolloutJob` value that carries build context, access policy, and runtime config. | `src/runtime/container/container.ts` |
 | Depot builder | Opens remote Depot builds and pushes images directly to the Cloudflare registry without a local Docker daemon. | `src/runtime/container/depot-builder.ts` |
-| Registry rollout | Materializes contexts, runs external commands safely, generates Worker configuration, rolls images, and tears applications down. | `src/runtime/container/registry-builder.ts` |
+| Cloudflare container deployment | Materializes contexts, runs external commands safely, generates Worker configuration, rolls images, and tears applications down. | `src/runtime/container/cloudflare-container-deployment.ts` |
 | Postgres store | Persists users, sessions, tokens, apps, deploys, policies, grants, secrets, previews, and audit events behind one store seam. | `src/store/store.ts` |
 | Migrations | Provides one schema qualified, idempotent DDL sequence used at boot and by the standalone migration runner. | `src/store/migrations.ts`, `src/migrate.ts` |
 | Blob stores | Provide digest scoped application content storage through filesystem and S3 compatible implementations. | `src/blobstore/` |
 | Browser authentication | Runs OIDC login, stable user resolution, hashed opaque sessions, redirect validation, and login rate limiting. | `src/authsvc.ts`, `src/auth/oidc.ts` |
-| Secret storage and delivery | Encrypts values into envelopes and synchronizes live declarations to Worker secret bindings. | `src/secrets.ts`, `src/kms.ts`, `src/secret-delivery.ts` |
+| Credential storage | Encrypts backend-held values into envelopes for future SDK capabilities; values never enter app Workers or Containers. | `src/secrets.ts`, `src/kms.ts` |
 | Sharing surface | Renders the share dialog and manages grants, access overrides, and preview grants through the API and store. | `src/sharepage.ts`, `src/api.ts`, `src/store/store.ts` |
 | Agent documentation | Serves setup, platform support, and capability documents at stable unauthenticated endpoints. | `src/docs.ts`, `src/docs/` |
 | Observability | Adds request observations, account context, structured logging, and panic rendering around every route. | `src/observe.ts`, `src/logger.ts` |

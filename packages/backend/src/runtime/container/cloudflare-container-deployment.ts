@@ -22,7 +22,6 @@ import { DeployCode, DeployErr } from '@280/contracts';
 import type { ContainerApp } from '../../seams.js';
 import type { Logger } from '../../observe.js';
 import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
-import { deliveryFailed, type WorkerSecretStore } from '../../secret-delivery.js';
 
 export interface ExecResult {
   code: number;
@@ -31,8 +30,7 @@ export interface ExecResult {
 
 // ExecFn runs one command in cwd and resolves with its exit code and combined
 // output. It never rejects on a non-zero exit; the builder inspects code. env is
-// merged over the process environment. input is written only to stdin and is used
-// for Worker secret delivery so values never enter argv or a file.
+// merged over the process environment. Optional input is written only to stdin.
 export type ExecFn = (
   cmd: string,
   args: string[],
@@ -48,9 +46,9 @@ const DEFAULT_COMPAT_DATE = '2026-06-01';
 const ROLL_CONFIG_FILE = 'wrangler.roll.json';
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 const REGISTRY_CRED_TTL_MINUTES = 60;
-const SECRET_BULK_LIMIT = 100;
 
 const DEFAULT_APP_DOMAIN = '280apps.run';
+const DEFAULT_SDK_API_ORIGIN = 'https://api.280apps.com';
 // The service binding every app Worker declares to the central identity gateway,
 // and the RPC class it targets (GatewayRPC.mint/jwks). Binding-only: the mint
 // decision is never a public HTTP path.
@@ -60,7 +58,24 @@ const GATEWAY_ENTRYPOINT = 'GatewayRPC';
 // bounds revocation to ~35s while absorbing benign edge clock jitter (design §1).
 const EDGE_SKEW_SECS = '5';
 
-export interface RegistryBuilderConfig {
+function exactHttpsOrigin(raw: string): string {
+  const url = new URL(raw);
+  if (
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.port !== '' ||
+    url.pathname !== '/' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    url.hostname.includes('*')
+  ) {
+    throw new Error('SDK API origin must be one exact HTTPS origin');
+  }
+  return url.origin;
+}
+
+export interface CloudflareContainerDeploymentConfig {
   accountId: string;
   apiToken: string;
   registry?: string; // default registry.cloudflare.com
@@ -85,6 +100,7 @@ export interface RegistryBuilderConfig {
   hostSuffix?: string;
   gatewayService?: string;
   idIssuer?: string;
+  sdkApiOrigin?: string;
   // frameAncestors is the space-separated CSP frame-ancestors allowlist baked into
   // each app Worker (TWO80_FRAME_ANCESTORS): the dashboard origin(s) allowed to embed
   // an app host. Defaulted to the prod console so the shape is explicit.
@@ -97,9 +113,9 @@ export interface RegistryBuilderConfig {
   log?: Logger;
 }
 
-// RegistryContainerBuilder materializes and pushes an image in build(), then rolls
+// CloudflareContainerDeployment materializes and pushes an image in build(), then rolls
 // that image independently in rollout(). Subclasses supply only buildAndPush.
-export abstract class RegistryContainerBuilder implements ContainerBuilder, WorkerSecretStore {
+export abstract class CloudflareContainerDeployment implements ContainerBuilder {
   protected readonly accountId: string;
   protected readonly apiToken: string;
   protected readonly registry: string;
@@ -112,12 +128,13 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
   protected readonly hostSuffix: string;
   protected readonly gatewayService: string;
   protected readonly idIssuer: string;
+  protected readonly sdkApiOrigin: string;
   protected readonly frameAncestors: string;
   protected readonly exec: ExecFn;
   protected readonly fetchImpl: typeof fetch;
   protected readonly log: Logger;
 
-  constructor(cfg: RegistryBuilderConfig) {
+  constructor(cfg: CloudflareContainerDeploymentConfig) {
     this.accountId = cfg.accountId;
     this.apiToken = cfg.apiToken;
     this.registry = cfg.registry ?? DEFAULT_REGISTRY;
@@ -130,6 +147,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
     this.hostSuffix = cfg.hostSuffix ?? '';
     this.gatewayService = cfg.gatewayService ?? `280-gateway${this.hostSuffix}`;
     this.idIssuer = cfg.idIssuer ?? `https://auth${this.hostSuffix}.${this.appDomain}`;
+    this.sdkApiOrigin = exactHttpsOrigin(cfg.sdkApiOrigin ?? DEFAULT_SDK_API_ORIGIN);
     this.frameAncestors = cfg.frameAncestors ?? 'https://console.280apps.com';
     this.exec = cfg.exec ?? spawnExec;
     this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -203,9 +221,9 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
   //               legacy wildcard so it wins during migration.
   //   - services: the GATEWAY service binding to the central gateway's GatewayRPC
   //               (mint/jwks), the only channel the middleware uses.
-  //   - vars:     the baked route policy, the egress policy the container boundary
-  //               enforces, plus the identity vars the middleware reads (app
-  //               id/script, host suffix/domain, issuer, edge skew).
+  //   - vars:     the baked route policy, fixed SDK API origin, plus the identity
+  //               vars the middleware reads (app id/script, host suffix/domain,
+  //               issuer, edge skew).
   protected rollConfig(job: RolloutJob, image: string): Record<string, unknown> {
     const script = job.app.script;
     const host = `${script}${this.hostSuffix}.${this.appDomain}`;
@@ -230,7 +248,7 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
       vars: {
         TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
-        EGRESS_POLICY: JSON.stringify(job.runtime.egress),
+        TWO80_SDK_API_ORIGIN: this.sdkApiOrigin,
         TWO80_APP_ID: job.app.id,
         TWO80_SCRIPT: script,
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,
@@ -238,28 +256,13 @@ export abstract class RegistryContainerBuilder implements ContainerBuilder, Work
         TWO80_ID_ISSUER: this.idIssuer,
         TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
         TWO80_FRAME_ANCESTORS: this.frameAncestors,
-        // Non-secret config the container reads via process.env. A plaintext var
-        // like EGRESS_POLICY (never a Worker secret): it carries only non-secret
-        // values. Omitted when empty so a config-less roll is byte-identical.
+        // Non-secret config the container reads via process.env. It carries only
+        // non-secret values. Omitted when empty so a config-less roll is byte-identical.
         ...(Object.keys(job.runtime.env).length > 0
           ? { TWO80_CONFIG: JSON.stringify(job.runtime.env) }
           : {}),
       },
     };
-  }
-
-  async bulk(app: ContainerApp, values: Record<string, string | null>): Promise<void> {
-    const entries = Object.entries(values);
-    for (let offset = 0; offset < entries.length; offset += SECRET_BULK_LIMIT) {
-      const batch = Object.fromEntries(entries.slice(offset, offset + SECRET_BULK_LIMIT));
-      const names = Object.keys(batch);
-      const res = await this.exec('wrangler', ['secret', 'bulk', '--name', app.script], {
-        cwd: this.workdir,
-        env: { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId },
-        input: JSON.stringify(batch),
-      });
-      if (res.code !== 0) throw deliveryFailed(names);
-    }
   }
 
   async teardown(app: ContainerApp): Promise<void> {

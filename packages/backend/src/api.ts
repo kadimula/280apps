@@ -38,7 +38,6 @@ import { Auth, AuthError } from './authsvc.js';
 import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
 import type { RequestDeps } from './config.js';
 import { DeviceStatus, type App as StoreApp, type AppRole, type User } from './seams.js';
-import { containerApp } from './activator.js';
 
 // Caller's binary version; the server uses it to refuse a CLI too old for this API.
 const HEADER_CLI_VERSION = 'X-280-Cli-Version';
@@ -615,7 +614,6 @@ export class Server {
     } catch {
       throw unavailable('could not save the secret');
     }
-    if (app.activeDeploy !== '') await this.deps(c).secretDelivery?.set(containerApp(app), req.name);
     await this.deps(c).platform.resumeWaitingSecrets(app).catch(() => {
       throw unavailable('could not resume the waiting deploy');
     });
@@ -654,7 +652,6 @@ export class Server {
     await this.deps(c).platform.store.deleteAppSecret(app.id, req.name, user.email).catch(() => {
       throw unavailable('could not delete the variable');
     });
-    if (app.activeDeploy !== '') await this.deps(c).secretDelivery?.delete(containerApp(app), req.name);
     return c.body(null, 204);
   }
 

@@ -20,7 +20,7 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
-import { credentialType, EGRESS_CREDENTIAL_TYPE, type ConfigEntry, type EgressPolicy } from '@280/contracts';
+import type { ConfigEntry } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { fail, fileExists, walkContext } from './walk.js';
@@ -39,12 +39,12 @@ const EMPTY_POLICY: Policy280 = {
 export const APP_PORT = 8080;
 
 // CA_PATH is where Cloudflare mounts the ephemeral per-instance CA at runtime. The
-// entrypoint installs it before the app starts so platform-injected HTTPS egress
-// is trusted; it cannot be baked into the image (it only exists at runtime).
+// entrypoint installs it before the app starts so HTTPS interception for the fixed
+// SDK API boundary is trusted. It only exists at runtime.
 const CA_PATH = '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
 
-// ENTRYPOINT installs the runtime CA (platform egress, phase 3) and then execs the
-// app. Locked platform behaviour, generated into every buildpack image so app
+// ENTRYPOINT installs the runtime CA for the fixed SDK API boundary and then execs
+// the app. Locked platform behaviour, generated into every buildpack image so app
 // authors never handle it. A no-op when the CA is absent (e.g. local docker run).
 const ENTRYPOINT = `#!/bin/sh
 set -e
@@ -248,10 +248,6 @@ function assemble(
   if (policy.access !== 'invited') {
     extra.push(`access: ${policy.access}`);
   }
-  if (policy.egress.allowedHosts.length) {
-    extra.push(`egress allowlist: ${policy.egress.allowedHosts.join(', ')} (everything else is blocked)`);
-  }
-  extra.push(...egressDisclosure(policy.egress));
   extra.push(...configDisclosure(policy.config));
   // The route → gate diff, so the builder sees exactly what each route requires
   // (and which fall through to Owner-only) in the same push. Route discovery reads
@@ -260,26 +256,6 @@ function assemble(
   const diff = routeGateDiff(discoverNextRoutes(files.map((f) => f.path)), policy.routes);
 
   return { manifest, content, notes: [...notes, ...extra, ...diff] };
-}
-
-// egressDisclosure is the prospective policy summary the push prints: for each
-// credential, the exact host, its credential type, and (for a minted typed token)
-// the normalized scopes this push will configure. It discloses what the platform
-// will attach, not consent; only the secret NAME appears — the value never leaves
-// the vault and never enters this output. The policy is already normalized, so
-// scopes are deduped and byte-sorted here.
-export function egressDisclosure(egress: EgressPolicy): string[] {
-  if (egress.credentials.length === 0) return [];
-  const lines = ['egress credentials this push will configure (secret values stay in the vault):'];
-  for (const c of egress.credentials) {
-    const type = credentialType(c);
-    const scopes =
-      type === EGRESS_CREDENTIAL_TYPE.GoogleServiceAccount && c.scopes?.length
-        ? `, scopes: ${c.scopes.join(' ')}`
-        : '';
-    lines.push(`  ${c.host}  →  ${type} via secret ${c.secret}${scopes}`);
-  }
-  return lines;
 }
 
 // configDisclosure is the config summary the push prints: the non-secret env vars
@@ -319,7 +295,7 @@ export function buildNextContainer(root: string): Bundle {
       'dockerfile',
       [
         'using your Dockerfile; your app must listen on port ' + APP_PORT,
-        'to allow platform HTTPS egress, install the Cloudflare CA in your entrypoint (' + CA_PATH + ')',
+        'to reach the 280 SDK API, install the Cloudflare CA in your entrypoint (' + CA_PATH + ')',
         ...skippedNote(skipped),
       ],
       policy,

@@ -127,17 +127,11 @@ digraph Architecture {
     fillcolor="#17251A"
     color="#70A87B"
   ]
-  egress [
-    label=<<B>Egress</B><BR/><FONT POINT-SIZE="10">Allowlist, credentials, and call log</FONT>>
-    URL="../packages/egress/"
-    fillcolor="#17251A"
-    color="#70A87B"
-  ]
-  apis [
-    label="Approved external APIs"
-    shape=oval
-    fillcolor="#12232C"
-    color="#65A9D0"
+  boundary [
+    label=<<B>ContainerProxy</B><BR/><FONT POINT-SIZE="10">280 API host only</FONT>>
+    URL="../platform/appcontainer/"
+    fillcolor="#28172A"
+    color="#B56BAA"
   ]
 
   contracts [
@@ -204,7 +198,7 @@ digraph Architecture {
     gateway
     container
     sdk
-    egress
+    boundary
   }
 
   postgres_gateway [
@@ -230,7 +224,7 @@ digraph Architecture {
   { rank=same; cli; dashboard }
   { rank=same; postgres; backend; r2; worker; gateway; postgres_gateway }
   { rank=same; depot; registry; container; oidc }
-  { rank=same; sdk; egress; apis }
+  { rank=same; sdk; boundary }
 
   actor -> cli [label="push", color="#D8AA35", fontcolor="#D8AA35"]
   actor -> dashboard [label="manage", color="#D8AA35", fontcolor="#D8AA35"]
@@ -248,9 +242,9 @@ digraph Architecture {
   gateway -> postgres_gateway [label="sessions, grants, audit", constraint=false]
   gateway -> oidc [dir=both, label="central login"]
   worker -> container [label="verified request"]
-  container -> sdk [label="read identity"]
-  container -> egress [label="outbound request"]
-  egress -> apis [label="allowlisted request"]
+  container -> sdk [label="identity and platform API"]
+  sdk -> boundary [label="HTTPS request"]
+  boundary -> backend [label="only allowed host", constraint=false]
 
   actor -> viewer [style=invis, weight=20]
   viewer -> contracts [style=invis, weight=20]
@@ -259,5 +253,4 @@ digraph Architecture {
   postgres -> backend [style=invis, weight=20]
   backend -> r2 [style=invis, weight=20]
   registry -> viewer [style=invis, weight=20]
-  sdk -> egress [style=invis, weight=20]
 }

@@ -108,7 +108,7 @@ App images are built with **Depot** (daemonless remote BuildKit): one
 `wrangler deploy --containers-rollout immediate` against a generated container
 config whose `image` is the pre-built registry ref, so no Docker runs on the roll.
 `rollConfig` emits the per-app route, the `GATEWAY` service binding, and the baked
-identity/route policy vars (`registry-builder.ts`). The control-plane backend
+identity/route policy vars (`cloudflare-container-deployment.ts`). The control-plane backend
 (`@280/backend`) runs as **Node on Railway** with **PostgreSQL** and **R2** as
 the image-registry backing. Dev runs the same shapes on isolated infra; see
 [`dev-environment.md`](./dev-environment.md).

@@ -87,59 +87,10 @@ describe('push (fake)', () => {
     expect(r.out).toContain('unknown flag --stat for `push`');
   });
 
-  it('discloses the prospective egress policy on stderr (host, type, scopes) before opening the port, with no secret value', async () => {
+  it('rejects the retired egress manifest before opening the port', async () => {
     const root = tmpProject({
       'index.html': '<h1>hi</h1>',
-      '280.json': JSON.stringify({
-        name: 'demo',
-        secrets: ['SHEETS_SA'],
-        egress: {
-          credentials: [
-            {
-              host: 'sheets.googleapis.com',
-              secret: 'SHEETS_SA',
-              type: 'google-service-account',
-              scopes: [
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive.readonly',
-              ],
-            },
-          ],
-        },
-      }),
-    });
-    // The disclosure is a push-time bundle note, printed on stderr after the bundle
-    // is built and before the platform port opens. A sentinel openPort proves that
-    // ordering and isolates the assertion from the deploy transport.
-    const openPort = async (): Promise<never> => {
-      throw Object.assign(new Error('stop after disclosure'), { code: 'port_sentinel' });
-    };
-    const r = await runCli(['push'], {
-      root,
-      deps: { buildBundle: async (dir) => build(dir, 'static'), openPort },
-    });
-    expect(r.err).toContain('two80: egress allowlist: sheets.googleapis.com (everything else is blocked)');
-    expect(r.err).toContain(
-      'two80:   sheets.googleapis.com  →  google-service-account via secret SHEETS_SA, scopes: https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets',
-    );
-    // Only the secret NAME is disclosed; no value and no static header/scheme leak.
-    expect(r.err).not.toContain('Bearer');
-    expect(r.out).not.toContain('SHEETS_SA');
-    expect(parseToon(r.out).error).toBe('port_sentinel');
-  });
-
-  it('fails an invalid typed egress manifest before opening the port or uploading', async () => {
-    const root = tmpProject({
-      'index.html': '<h1>hi</h1>',
-      '280.json': JSON.stringify({
-        name: 'demo',
-        secrets: ['SHEETS_SA'],
-        egress: {
-          credentials: [
-            { host: 'evil.example.com', secret: 'SHEETS_SA', type: 'google-service-account', scopes: ['x'] },
-          ],
-        },
-      }),
+      '280.json': JSON.stringify({ egress: { allow: ['api.stripe.com'] } }),
     });
     const openPort = async (): Promise<never> => {
       throw new Error('openPort must not run when the manifest is invalid');
@@ -149,10 +100,9 @@ describe('push (fake)', () => {
       deps: { buildBundle: async (dir) => build(dir, 'static'), openPort },
     });
     expect(r.code).toBe(1);
-    const t = parseToon(r.out);
-    expect(t.error).toBe('preflight_rejected');
-    expect(t.message).toContain('not a valid google-service-account host');
+    expect(parseToon(r.out).message).toContain('egress');
   });
+
 });
 
 describe('whoami', () => {

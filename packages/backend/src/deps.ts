@@ -3,16 +3,14 @@ import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
 import type { ContainerBuilder } from './runtime/container/container.js';
-import type { ConfigDelivery, ExpiryCounts, SecretDelivery, Store } from './seams.js';
+import type { ConfigDelivery, ExpiryCounts, Store } from './seams.js';
 import type { Logger } from './observe.js';
 import type { Config } from './config.js';
 import type { SecretCipher } from './secrets.js';
-import { ControlPlaneSecretDelivery } from './secret-delivery.js';
 import { ControlPlaneConfigDelivery } from './config-delivery.js';
 
 export interface ContainerServices {
   builder: ContainerBuilder;
-  secretDelivery: SecretDelivery;
   configDelivery: ConfigDelivery;
 }
 
@@ -25,7 +23,6 @@ export function buildContainerServices(
   const builder = buildDepotBuilder(config, log);
   return {
     builder,
-    secretDelivery: new ControlPlaneSecretDelivery(store, cipher, builder),
     configDelivery: new ControlPlaneConfigDelivery(store, cipher),
   };
 }
@@ -52,6 +49,7 @@ function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {
     hostSuffix: config.hostSuffix,
     gatewayService: config.gatewayService,
     idIssuer: config.idIssuer,
+    sdkApiOrigin: config.apiOrigin,
     frameAncestors: config.frameAncestors,
     log,
   });

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MANIFEST_KIND_CONTAINER } from '@280/contracts';
-import { buildNextContainer, egressDisclosure, APP_PORT } from './container.js';
+import { buildNextContainer, APP_PORT } from './container.js';
 import { PreflightError } from './walk.js';
 
 function write(path: string, body: string): void {
@@ -169,99 +169,20 @@ describe('buildpack CA-trust (intercepted-HTTPS validates inside the container)'
   });
 });
 
-describe('280.json egress allowlist', () => {
-  it('defaults to an empty (default-deny) policy when there is no 280.json', () => {
-    const b = buildNextContainer(nextProject());
-    expect(b.manifest.egress).toEqual({ allowedHosts: [], credentials: [] });
+describe('280.json outbound policy', () => {
+  it('keeps the legacy wire field empty because network policy is platform owned', () => {
+    expect(buildNextContainer(nextProject()).manifest.egress).toEqual({ allowedHosts: [], credentials: [] });
   });
 
-  it('lifts allow + credentials into the manifest and folds credential hosts into the allowlist', () => {
+  it('rejects the retired egress block before deploy', () => {
     const root = nextProject({
-      '280.json': JSON.stringify({
-        name: 'demo',
-        secrets: ['STRIPE_KEY'],
-        egress: {
-          allow: ['data.example.com'],
-          credentials: [{ host: 'api.stripe.com', secret: 'STRIPE_KEY' }],
-        },
-      }),
+      '280.json': JSON.stringify({ egress: { allow: ['api.stripe.com'] } }),
     });
-    const b = buildNextContainer(root);
-    expect(b.manifest.egress.allowedHosts).toEqual(['api.stripe.com', 'data.example.com']);
-    expect(b.manifest.egress.credentials[0]).toMatchObject({
-      host: 'api.stripe.com',
-      secret: 'STRIPE_KEY',
-      header: 'authorization',
-      scheme: 'Bearer',
-    });
-    // The allowlist is surfaced to the author in the push notes.
-    expect(b.notes.some((n) => n.includes('egress allowlist') && n.includes('api.stripe.com'))).toBe(true);
-  });
-
-  it('a 280.json without an egress block stays default-deny', () => {
-    const root = nextProject({ '280.json': JSON.stringify({ name: 'demo', features: [] }) });
-    expect(buildNextContainer(root).manifest.egress.allowedHosts).toEqual([]);
-  });
-
-  it('rejects a malformed egress block at preflight', () => {
-    const root = nextProject({
-      '280.json': JSON.stringify({ egress: { allow: [{ not: 'a string' }] } }),
-    });
-    expect(() => buildNextContainer(root)).toThrow(PreflightError);
+    expect(() => buildNextContainer(root)).toThrow(/egress.*no longer supported/);
   });
 
   it('rejects invalid 280.json before deploy', () => {
     const root = nextProject({ '280.json': '{ not json' });
     expect(() => buildNextContainer(root)).toThrow(PreflightError);
-  });
-
-  it('discloses host, type, and normalized scopes per credential without any secret value', () => {
-    const root = nextProject({
-      '280.json': JSON.stringify({
-        name: 'demo',
-        secrets: ['STRIPE_KEY', 'SHEETS_SA'],
-        egress: {
-          credentials: [
-            { host: 'api.stripe.com', secret: 'STRIPE_KEY' },
-            {
-              host: 'sheets.googleapis.com',
-              secret: 'SHEETS_SA',
-              type: 'google-service-account',
-              scopes: [
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive.readonly',
-              ],
-            },
-          ],
-        },
-      }),
-    });
-    const notes = buildNextContainer(root).notes.join('\n');
-    expect(notes).toContain('api.stripe.com  →  header via secret STRIPE_KEY');
-    expect(notes).toContain(
-      'sheets.googleapis.com  →  google-service-account via secret SHEETS_SA, scopes: https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets',
-    );
-    // The disclosure names the secret but never carries its value or a header/scheme
-    // for the minted typed token.
-    expect(notes).not.toContain('Bearer');
-  });
-});
-
-describe('egressDisclosure', () => {
-  it('returns nothing when there are no credentials', () => {
-    expect(egressDisclosure({ allowedHosts: ['data.example.com'], credentials: [] })).toEqual([]);
-  });
-
-  it('omits scopes for a header credential and reports its type', () => {
-    const lines = egressDisclosure({
-      allowedHosts: ['api.stripe.com'],
-      credentials: [
-        { host: 'api.stripe.com', secret: 'STRIPE_KEY', type: 'header', header: 'authorization', scheme: 'Bearer', scopes: [] },
-      ],
-    });
-    expect(lines).toEqual([
-      'egress credentials this push will configure (secret values stay in the vault):',
-      '  api.stripe.com  →  header via secret STRIPE_KEY',
-    ]);
   });
 });

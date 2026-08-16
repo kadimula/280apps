@@ -91,6 +91,11 @@ export const EventKind = {
   AppPreviewedAs: 'app.previewed_as',
   SecretSet: 'secret.set',
   SecretRemoved: 'secret.removed',
+  IntegrationConnected: 'integration.connected',
+  IntegrationReauthorized: 'integration.reauthorized',
+  IntegrationDisconnected: 'integration.disconnected',
+  IntegrationResourceAdded: 'integration.resource_added',
+  IntegrationResourceRemoved: 'integration.resource_removed',
 } as const;
 export type EventKind = (typeof EventKind)[keyof typeof EventKind];
 
@@ -120,6 +125,7 @@ export interface ExpiryCounts {
   rateLimits: number;
   tokens: number;
   previewGrants: number;
+  integrationAttempts: number;
 }
 
 export const AppRole = {
@@ -138,6 +144,57 @@ export interface Grant {
   dataScope: Record<string, unknown> | null;
   grantedBy: string;
   grantedAt: number;
+}
+
+export const IntegrationStatus = {
+  Active: 'active',
+  ReauthorizationRequired: 'reauthorization_required',
+  Revoked: 'revoked',
+} as const;
+export type IntegrationStatus = (typeof IntegrationStatus)[keyof typeof IntegrationStatus];
+
+// One external account authorization belonging to one 280 app. The credential
+// envelope is provider-opaque JSON encrypted by SecretCipher; only the provider
+// adapter interprets its plaintext. credentialVersion backs the refresh compare-and-swap.
+export interface IntegrationConnection {
+  id: string;
+  appId: string;
+  provider: string;
+  accountId: string;
+  accountLabel: string;
+  credentialEnvelope: string;
+  credentialVersion: number;
+  scopes: string[];
+  status: IntegrationStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Binds an app-friendly alias (e.g. "orders") to one provider resource (e.g. a
+// spreadsheet id). externalId is server-resolved: app code never sends it.
+export interface IntegrationResource {
+  id: string;
+  connectionId: string;
+  appId: string;
+  capability: string;
+  alias: string;
+  externalId: string;
+  displayName: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// One-time OAuth callback state. Only the state hash is stored; the payload
+// envelope holds the encrypted PKCE verifier, browser binding, and return path.
+export interface IntegrationOAuthAttempt {
+  stateHash: string;
+  appId: string;
+  userId: string;
+  provider: string;
+  payloadEnvelope: string;
+  expiresAt: number;
+  consumedAt: number;
 }
 
 export interface Store {
@@ -211,6 +268,35 @@ export interface Store {
   deleteAppSecret(appId: string, name: string, deletedBy: string): Promise<boolean>;
   appSecrets(appId: string): Promise<AppSecret[]>;
   appSecretNames(appId: string): Promise<string[]>;
+
+  // One-time OAuth state. consumeOAuthAttempt atomically marks the state consumed
+  // and returns it only if it was fresh (unconsumed and unexpired), so a replayed
+  // callback cannot exchange a code twice.
+  createOAuthAttempt(a: IntegrationOAuthAttempt): Promise<void>;
+  consumeOAuthAttempt(stateHash: string, now: number): Promise<IntegrationOAuthAttempt | null>;
+
+  // Upsert keyed on (app_id, provider): reconnecting an app replaces its credential
+  // in place. Emits a connect/reauthorize audit event naming metadata only.
+  putConnection(c: IntegrationConnection, reconnect: boolean): Promise<void>;
+  connectionById(appId: string, id: string): Promise<IntegrationConnection | null>;
+  connectionByProvider(appId: string, provider: string): Promise<IntegrationConnection | null>;
+  connectionsByApp(appId: string): Promise<IntegrationConnection[]>;
+  // Compare-and-swap on credentialVersion so a replica cannot overwrite newer token
+  // material. Returns false when the expected version no longer matches.
+  swapConnectionCredential(
+    id: string,
+    expectedVersion: number,
+    next: { envelope: string; accountId: string; accountLabel: string; scopes: string[]; status: IntegrationStatus },
+  ): Promise<boolean>;
+  setConnectionStatus(id: string, status: IntegrationStatus): Promise<void>;
+  // Removes the connection and its resources, returning the removed row so the
+  // caller can best-effort revoke the provider token before it is gone.
+  deleteConnection(appId: string, id: string): Promise<IntegrationConnection | null>;
+
+  putResource(r: IntegrationResource): Promise<void>;
+  resourceByAlias(appId: string, capability: string, alias: string): Promise<IntegrationResource | null>;
+  resourcesByConnection(connectionId: string): Promise<IntegrationResource[]>;
+  deleteResource(appId: string, id: string): Promise<boolean>;
 
   // Audit failures must not block requests.
   recordAppAccess(e: {

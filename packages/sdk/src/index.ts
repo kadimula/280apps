@@ -16,6 +16,17 @@ import { ID_HEADER, IdentityError, decodeIdentityToken, type IdentityClaims } fr
 export { ID_HEADER, IdentityError };
 export type { IdentityClaims };
 
+export {
+  googleSheets,
+  IntegrationRequestError,
+  type GoogleSheetsClient,
+  type GoogleSheetsOptions,
+  type SheetsReadInput,
+  type SheetsReadResult,
+  type SheetsWriteInput,
+  type SheetsWriteResult,
+} from './googleSheets.js';
+
 export interface User280 {
   sub: string;
   email: string;

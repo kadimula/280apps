@@ -26,6 +26,10 @@ import {
   type Event,
   type ExpiryCounts,
   type Grant,
+  type IntegrationConnection,
+  type IntegrationOAuthAttempt,
+  type IntegrationResource,
+  type IntegrationStatus,
   type OAuthAccount,
   type Session,
   type Store,
@@ -49,6 +53,9 @@ export class MemoryStore implements Store {
   private readonly policies = new Map<string, AppPolicy>(); // appId -> policy (manifest-declared access)
   private readonly secrets = new Map<string, AppSecret>(); // `${appId}/${name}`
   private readonly accessOverrides = new Map<string, string>(); // appId -> dashboard override
+  private readonly connections = new Map<string, IntegrationConnection>(); // id -> connection
+  private readonly resources = new Map<string, IntegrationResource>(); // id -> resource
+  private readonly oauthAttempts = new Map<string, IntegrationOAuthAttempt>(); // stateHash -> attempt
   private readonly events: Event[] = [];
 
   async close(): Promise<void> {}
@@ -174,7 +181,14 @@ export class MemoryStore implements Store {
         previewGrants++;
       }
     }
-    return { sessions, deviceCodes, rateLimits, tokens, previewGrants };
+    let integrationAttempts = 0;
+    for (const [k, a] of [...this.oauthAttempts.entries()]) {
+      if (a.expiresAt <= now) {
+        this.oauthAttempts.delete(k);
+        integrationAttempts++;
+      }
+    }
+    return { sessions, deviceCodes, rateLimits, tokens, previewGrants, integrationAttempts };
   }
 
   async createDeviceCode(d: DeviceCode): Promise<void> {
@@ -283,6 +297,15 @@ export class MemoryStore implements Store {
     }
     for (const [key, secret] of [...this.secrets.entries()]) {
       if (secret.appId === appId) this.secrets.delete(key);
+    }
+    for (const [key, r] of [...this.resources.entries()]) {
+      if (r.appId === appId) this.resources.delete(key);
+    }
+    for (const [key, conn] of [...this.connections.entries()]) {
+      if (conn.appId === appId) this.connections.delete(key);
+    }
+    for (const [key, a] of [...this.oauthAttempts.entries()]) {
+      if (a.appId === appId) this.oauthAttempts.delete(key);
     }
     return true;
   }
@@ -561,6 +584,146 @@ export class MemoryStore implements Store {
     }
     return removed;
   }
+
+  async createOAuthAttempt(a: IntegrationOAuthAttempt): Promise<void> {
+    this.oauthAttempts.set(a.stateHash, { ...a });
+  }
+
+  async consumeOAuthAttempt(stateHash: string, now: number): Promise<IntegrationOAuthAttempt | null> {
+    const a = this.oauthAttempts.get(stateHash);
+    if (!a || a.consumedAt !== 0 || a.expiresAt <= now) return null;
+    a.consumedAt = now;
+    return { ...a };
+  }
+
+  async putConnection(c: IntegrationConnection, reconnect: boolean): Promise<void> {
+    const existing = this.connByProvider(c.appId, c.provider);
+    const stored: IntegrationConnection = existing
+      ? { ...c, id: existing.id, credentialVersion: existing.credentialVersion + 1, scopes: [...c.scopes] }
+      : { ...c, scopes: [...c.scopes] };
+    this.connections.set(stored.id, stored);
+    this.record({
+      userId: this.userIdFor(c.appId),
+      appId: c.appId,
+      kind: reconnect ? EventKind.IntegrationReauthorized : EventKind.IntegrationConnected,
+      detail: JSON.stringify({ provider: c.provider, account: c.accountLabel }),
+    });
+  }
+
+  private connByProvider(appId: string, provider: string): IntegrationConnection | undefined {
+    for (const c of this.connections.values()) {
+      if (c.appId === appId && c.provider === provider) return c;
+    }
+    return undefined;
+  }
+
+  async connectionById(appId: string, id: string): Promise<IntegrationConnection | null> {
+    const c = this.connections.get(id);
+    return c && c.appId === appId ? cloneConnection(c) : null;
+  }
+
+  async connectionByProvider(appId: string, provider: string): Promise<IntegrationConnection | null> {
+    const c = this.connByProvider(appId, provider);
+    return c ? cloneConnection(c) : null;
+  }
+
+  async connectionsByApp(appId: string): Promise<IntegrationConnection[]> {
+    return [...this.connections.values()]
+      .filter((c) => c.appId === appId)
+      .sort((a, b) => cmp(a.provider, b.provider))
+      .map(cloneConnection);
+  }
+
+  async swapConnectionCredential(
+    id: string,
+    expectedVersion: number,
+    next: { envelope: string; accountId: string; accountLabel: string; scopes: string[]; status: IntegrationStatus },
+  ): Promise<boolean> {
+    const c = this.connections.get(id);
+    if (!c || c.credentialVersion !== expectedVersion) return false;
+    c.credentialEnvelope = next.envelope;
+    c.accountId = next.accountId;
+    c.accountLabel = next.accountLabel;
+    c.scopes = [...next.scopes];
+    c.status = next.status;
+    c.credentialVersion += 1;
+    return true;
+  }
+
+  async setConnectionStatus(id: string, status: IntegrationStatus): Promise<void> {
+    const c = this.connections.get(id);
+    if (c) c.status = status;
+  }
+
+  async deleteConnection(appId: string, id: string): Promise<IntegrationConnection | null> {
+    const c = this.connections.get(id);
+    if (!c || c.appId !== appId) return null;
+    this.connections.delete(id);
+    for (const [k, r] of [...this.resources.entries()]) {
+      if (r.connectionId === id) this.resources.delete(k);
+    }
+    this.record({
+      userId: this.userIdFor(appId),
+      appId,
+      kind: EventKind.IntegrationDisconnected,
+      detail: JSON.stringify({ provider: c.provider, account: c.accountLabel }),
+    });
+    return cloneConnection(c);
+  }
+
+  async putResource(r: IntegrationResource): Promise<void> {
+    const existing = this.resByAlias(r.appId, r.capability, r.alias);
+    const stored: IntegrationResource = existing
+      ? { ...r, id: existing.id, metadata: { ...r.metadata } }
+      : { ...r, metadata: { ...r.metadata } };
+    this.resources.set(stored.id, stored);
+    this.record({
+      userId: this.userIdFor(r.appId),
+      appId: r.appId,
+      kind: EventKind.IntegrationResourceAdded,
+      detail: JSON.stringify({ capability: r.capability, alias: r.alias, name: r.displayName }),
+    });
+  }
+
+  private resByAlias(appId: string, capability: string, alias: string): IntegrationResource | undefined {
+    for (const r of this.resources.values()) {
+      if (r.appId === appId && r.capability === capability && r.alias === alias) return r;
+    }
+    return undefined;
+  }
+
+  async resourceByAlias(appId: string, capability: string, alias: string): Promise<IntegrationResource | null> {
+    const r = this.resByAlias(appId, capability, alias);
+    return r ? cloneResource(r) : null;
+  }
+
+  async resourcesByConnection(connectionId: string): Promise<IntegrationResource[]> {
+    return [...this.resources.values()]
+      .filter((r) => r.connectionId === connectionId)
+      .sort((a, b) => cmp(a.capability, b.capability) || cmp(a.alias, b.alias))
+      .map(cloneResource);
+  }
+
+  async deleteResource(appId: string, id: string): Promise<boolean> {
+    const r = this.resources.get(id);
+    if (!r || r.appId !== appId) return false;
+    this.resources.delete(id);
+    this.record({
+      userId: this.userIdFor(appId),
+      appId,
+      kind: EventKind.IntegrationResourceRemoved,
+      detail: JSON.stringify({ capability: r.capability, alias: r.alias, name: r.displayName }),
+    });
+    return true;
+  }
+}
+
+function cloneConnection(c: IntegrationConnection): IntegrationConnection {
+  return { ...c, scopes: [...c.scopes] };
+}
+
+function cloneResource(r: IntegrationResource): IntegrationResource {
+  return { ...r, metadata: { ...r.metadata } };
 }
 
 interface StoredApp extends App {

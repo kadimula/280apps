@@ -3,7 +3,7 @@ import { serve } from '@hono/node-server';
 import { Server } from './api.js';
 import { Platform } from './deploysvc.js';
 import { ContainerDeploymentCoordinator } from './activator.js';
-import { buildContainerServices, buildAuth, sweepExpired } from './deps.js';
+import { buildContainerServices, buildAuth, buildIntegrations, sweepExpired } from './deps.js';
 import { resolveConfig, type Config, type RequestDeps } from './config.js';
 import { open as openStore } from './store/index.js';
 import { open as openFsBlobStore, openS3, type S3Config } from './blobstore/index.js';
@@ -49,6 +49,7 @@ async function run(log: Logger): Promise<void> {
   });
 
   const auth = buildAuth(store, config, log);
+  const integrations = buildIntegrations(store, config, log, secretCipher);
 
   // One container reused for every request: the store is a process-lifetime pool,
   // torn down once at shutdown rather than per request.
@@ -61,6 +62,7 @@ async function run(log: Logger): Promise<void> {
     appDomain: config.appDomain,
     viewAsOrigin: `https://auth.${config.appDomain}`,
     secretCipher,
+    integrations,
   };
 
   const app = new Server({ buildDeps: () => deps, logger: log }).handler();

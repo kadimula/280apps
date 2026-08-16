@@ -252,6 +252,59 @@ export function migrations(schema: string): string[] {
        expires_at BIGINT NOT NULL
      )`,
 
+    // One external account authorization per 280 app. The credential envelope is
+    // encrypted provider-opaque JSON; credential_version backs the refresh
+    // compare-and-swap. One connection per (app, provider) in phase one, so the
+    // capability path resolves a single answer.
+    `CREATE TABLE IF NOT EXISTS ${t('integration_connections')} (
+       id                  TEXT PRIMARY KEY,
+       app_id              TEXT NOT NULL,
+       provider            TEXT NOT NULL,
+       account_id          TEXT NOT NULL DEFAULT '',
+       account_label       TEXT NOT NULL DEFAULT '',
+       credential_envelope TEXT NOT NULL,
+       credential_version  BIGINT NOT NULL DEFAULT 1,
+       scopes              TEXT NOT NULL DEFAULT '',
+       status              TEXT NOT NULL DEFAULT 'active',
+       created_at          BIGINT NOT NULL DEFAULT (${epochDefault}),
+       updated_at          BIGINT NOT NULL DEFAULT (${epochDefault})
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS integration_conn_by_app_provider
+       ON ${t('integration_connections')}(app_id, provider)`,
+
+    // Binds an app-friendly alias to one provider resource. external_id is
+    // server-resolved and never accepted from app code. Unique per (app, capability, alias).
+    `CREATE TABLE IF NOT EXISTS ${t('integration_resources')} (
+       id            TEXT PRIMARY KEY,
+       connection_id TEXT NOT NULL,
+       app_id        TEXT NOT NULL,
+       capability    TEXT NOT NULL,
+       alias         TEXT NOT NULL,
+       external_id   TEXT NOT NULL,
+       display_name  TEXT NOT NULL DEFAULT '',
+       metadata      TEXT NOT NULL DEFAULT '',
+       created_at    BIGINT NOT NULL DEFAULT (${epochDefault}),
+       updated_at    BIGINT NOT NULL DEFAULT (${epochDefault})
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS integration_resource_by_alias
+       ON ${t('integration_resources')}(app_id, capability, alias)`,
+    `CREATE INDEX IF NOT EXISTS integration_resource_by_connection
+       ON ${t('integration_resources')}(connection_id)`,
+
+    // One-time OAuth callback state, modeled on device_codes: only the state hash is
+    // stored. The payload envelope holds the encrypted PKCE verifier, browser binding,
+    // and safe return path. Short TTL, swept with the other expiring records.
+    `CREATE TABLE IF NOT EXISTS ${t('integration_oauth_attempts')} (
+       state_hash       TEXT PRIMARY KEY,
+       app_id           TEXT NOT NULL,
+       user_id          TEXT NOT NULL,
+       provider         TEXT NOT NULL,
+       payload_envelope TEXT NOT NULL,
+       expires_at       BIGINT NOT NULL,
+       consumed_at      BIGINT NOT NULL DEFAULT 0,
+       created_at       BIGINT NOT NULL DEFAULT (${epochDefault})
+     )`,
+
     // One-time, idempotent carry-over of the next-auth tables the frontend used to
     // own (a no-op when they are absent). Copies id/email/name/image and the Google
     // linkage; passwords are left behind since login is now OIDC-only, and a migrated

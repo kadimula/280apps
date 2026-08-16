@@ -61,7 +61,7 @@ describe('scheduled cleanup', () => {
     const { logger, records } = capturingLogger();
     const counts = await sweepExpired(store, logger, now, ttl);
 
-    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1, previewGrants: 1 });
+    expect(counts).toEqual({ sessions: 1, deviceCodes: 1, rateLimits: 1, tokens: 1, previewGrants: 1, integrationAttempts: 0 });
 
     expect(await store.sessionByHash('sess_new')).not.toBeNull();
     expect(await store.sessionByHash('sess_old')).toBeNull();
@@ -129,6 +129,7 @@ describe('scheduled cleanup', () => {
       rateLimits: 0,
       tokens: 0,
       previewGrants: 0,
+      integrationAttempts: 0,
     });
     expect(await store.sessionByHash('s')).not.toBeNull();
   });

@@ -1,6 +1,7 @@
 import type { Platform } from './deploysvc.js';
 import type { Auth } from './authsvc.js';
 import type { SecretCipher } from './secrets.js';
+import type { IntegrationService } from './integrations/service.js';
 
 export interface ConfigVars {
   LOG_FORMAT?: string;
@@ -27,6 +28,10 @@ export interface ConfigVars {
 
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_INTEGRATION_CLIENT_ID?: string;
+  GOOGLE_INTEGRATION_CLIENT_SECRET?: string;
+  GOOGLE_PICKER_API_KEY?: string;
+  GOOGLE_PROJECT_NUMBER?: string;
   DEPOT_TOKEN?: string;
   CLOUDFLARE_API_TOKEN?: string;
   DATABASE_URL?: string;
@@ -54,6 +59,9 @@ export interface Config {
   machineTokenTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
+  // A dedicated OAuth client for third-party data integrations, separate from the
+  // dashboard login client above so their consent scopes never mix.
+  googleIntegration: { clientId: string; clientSecret: string; pickerApiKey: string; projectNumber: string };
   depot: { token: string; projectId: string };
   cloudflare: { accountId: string; apiToken: string };
   workerEntry: string;
@@ -92,6 +100,12 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       max: num(vars.LOGIN_RATE_LIMIT_MAX_REQUESTS, 30),
     },
     google: { clientId: vars.GOOGLE_CLIENT_ID ?? '', clientSecret: vars.GOOGLE_CLIENT_SECRET ?? '' },
+    googleIntegration: {
+      clientId: vars.GOOGLE_INTEGRATION_CLIENT_ID ?? '',
+      clientSecret: vars.GOOGLE_INTEGRATION_CLIENT_SECRET ?? '',
+      pickerApiKey: vars.GOOGLE_PICKER_API_KEY ?? '',
+      projectNumber: vars.GOOGLE_PROJECT_NUMBER ?? '',
+    },
     depot: { token: vars.DEPOT_TOKEN ?? '', projectId: vars.DEPOT_PROJECT_ID ?? '' },
     cloudflare: { accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '', apiToken: vars.CLOUDFLARE_API_TOKEN ?? '' },
     workerEntry: str(vars.APP_WORKER_ENTRYPOINT, 'worker.js'),
@@ -115,4 +129,5 @@ export interface RequestDeps {
   appDomain: string;
   viewAsOrigin: string;
   secretCipher?: SecretCipher;
+  integrations?: IntegrationService;
 }

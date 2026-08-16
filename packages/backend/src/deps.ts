@@ -1,4 +1,5 @@
 import { DeployCode, type DeployError } from '@280/contracts';
+import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
@@ -29,15 +30,15 @@ export function buildContainerServices(
 
 function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {
   const missing = [
-    ['DEPOT_TOKEN', config.depot.token],
+    ['DEPOT_API_TOKEN', config.depot.token],
     ['CLOUDFLARE_ACCOUNT_ID', config.cloudflare.accountId],
-    ['CLOUDFLARE_API_TOKEN', config.cloudflare.apiToken],
+    ['CLOUDFLARE_DEPLOY_API_TOKEN', config.cloudflare.apiToken],
   ].filter(([, v]) => v === '').map(([k]) => k);
   if (missing.length > 0) {
     throw new Error(`the depot builder requires ${missing.join(', ')}`);
   }
   if (config.depot.projectId === '') {
-    log.warn('DEPOT_PROJECT_ID unset: a project is resolved per app via the Depot API');
+    log.warn('DEPOT_BUILD_PROJECT_ID unset: a project is resolved per app via the Depot API');
   }
   return new DepotBuilder({
     accountId: config.cloudflare.accountId,
@@ -69,7 +70,7 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
 
   if (Object.keys(providers).length === 0) {
     log.warn(
-      'no login provider configured (set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET): the web surface cannot sign anyone in',
+      'no login provider configured (set GOOGLE_OIDC_CLIENT_ID/GOOGLE_OIDC_CLIENT_SECRET): the web surface cannot sign anyone in',
     );
     return undefined;
   }
@@ -77,7 +78,7 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
   return new Auth(store, {
     providers,
     apiOrigin: config.apiOrigin,
-    frontendOrigin: config.frontendOrigin,
+    frontendOrigin: config.dashboardOrigin,
     cookieDomain: config.cookieDomain,
     sessionCookieName: config.sessionCookieName,
     oauthCookieName: config.oauthCookieName,
@@ -96,7 +97,7 @@ export async function sweepExpired(
   log: Logger,
   now: number,
   machineTokenTtlSecs: number,
-  frontendOrigin = 'https://console.280apps.com',
+  frontendOrigin = resolvePlatformTopology({}).dashboardOrigin,
 ): Promise<ExpiryCounts> {
   const counts = await store.deleteExpired(now, machineTokenTtlSecs);
   const waiting = await store.waitingDeploysBefore(now - WAITING_SECRETS_TTL_SECS);

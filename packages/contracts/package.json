@@ -30,6 +30,10 @@
     "./identity": {
       "types": "./dist/identity.d.ts",
       "import": "./dist/identity.js"
+    },
+    "./platform-config": {
+      "types": "./dist/platform-config.d.ts",
+      "import": "./dist/platform-config.js"
     }
   },
   "main": "./dist/index.js",

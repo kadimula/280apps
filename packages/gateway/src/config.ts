@@ -1,29 +1,17 @@
-// Env -> Config for the gateway Worker. Mirrors packages/backend/src/config.ts.
+import { PLATFORM_POLICY, resolvePlatformTopology } from '@280/contracts/platform-config';
 
 export interface Env {
-  // Shares the control plane's Postgres (users/sessions/oauth) via Hyperdrive.
   HYPERDRIVE: Hyperdrive;
 
-  DATABASE_SCHEMA?: string;
-  APP_BASE_DOMAIN?: string;
-  APP_HOST_SUFFIX?: string;
-  AUTH_HOST?: string;
-  SESSION_COOKIE_DOMAIN?: string;
-  SESSION_TTL_DAYS?: string;
-  LOGIN_RATE_LIMIT_WINDOW_SECONDS?: string;
-  LOGIN_RATE_LIMIT_MAX_REQUESTS?: string;
-  IDENTITY_TOKEN_ISSUER?: string;
-  IDENTITY_TOKEN_TTL_SECONDS?: string;
-  IDENTITY_TOKEN_SIGNING_KID?: string;
-  ENTRA_TENANT?: string;
-  FALLBACK_REDIRECT_URL?: string;
+  DEPLOYMENT_ENVIRONMENT?: string;
+  PLATFORM_DOMAIN?: string;
+  APP_SERVING_DOMAIN?: string;
 
-  GOOGLE_CLIENT_ID?: string;
-  GOOGLE_CLIENT_SECRET?: string;
-  ENTRA_CLIENT_ID?: string;
-  ENTRA_CLIENT_SECRET?: string;
-  // ECDSA P-256 private key as a JWK JSON string. Only this Worker holds it.
-  ID_SIGNING_JWK?: string;
+  GOOGLE_OIDC_CLIENT_ID?: string;
+  GOOGLE_OIDC_CLIENT_SECRET?: string;
+  MICROSOFT_ENTRA_OIDC_CLIENT_ID?: string;
+  MICROSOFT_ENTRA_OIDC_CLIENT_SECRET?: string;
+  IDENTITY_SIGNING_PRIVATE_JWK?: string;
 }
 
 export interface Config {
@@ -47,33 +35,38 @@ export interface Config {
 }
 
 export function readConfig(env: Env): Config {
-  const str = (v: string | undefined, fallback: string): string =>
-    v !== undefined && v !== '' ? v : fallback;
-  const num = (v: string | undefined, fallback: number): number => Number(str(v, String(fallback))) || fallback;
-
-  const appDomain = str(env.APP_BASE_DOMAIN, '280apps.run');
-  const authHost = str(env.AUTH_HOST, `auth.${appDomain}`);
+  const topology = resolvePlatformTopology({
+    environment: env.DEPLOYMENT_ENVIRONMENT,
+    platformDomain: env.PLATFORM_DOMAIN,
+    appServingDomain: env.APP_SERVING_DOMAIN,
+  });
 
   return {
-    dbSchema: str(env.DATABASE_SCHEMA, 'platform'),
+    dbSchema: PLATFORM_POLICY.databaseSchema,
     dbConnectionString: env.HYPERDRIVE.connectionString,
-    appDomain,
-    hostSuffix: env.APP_HOST_SUFFIX ?? '',
-    authHost,
-    authOrigin: `https://${authHost}`,
-    cookieDomain: str(env.SESSION_COOKIE_DOMAIN, `.${appDomain}`),
-    sessionTtlSecs: num(env.SESSION_TTL_DAYS, 30) * 24 * 60 * 60,
+    appDomain: topology.appServingDomain,
+    hostSuffix: topology.hostSuffix,
+    authHost: topology.authHost,
+    authOrigin: topology.authOrigin,
+    cookieDomain: topology.gatewayCookieDomain,
+    sessionTtlSecs: PLATFORM_POLICY.sessionTtlDays * 24 * 60 * 60,
     loginRate: {
-      windowSecs: num(env.LOGIN_RATE_LIMIT_WINDOW_SECONDS, 600),
-      max: num(env.LOGIN_RATE_LIMIT_MAX_REQUESTS, 30),
+      windowSecs: PLATFORM_POLICY.loginRateWindowSecs,
+      max: PLATFORM_POLICY.loginRateMaxRequests,
     },
-    idIssuer: str(env.IDENTITY_TOKEN_ISSUER, `https://${authHost}`),
-    idTtlSecs: num(env.IDENTITY_TOKEN_TTL_SECONDS, 120),
-    idSigningKid: str(env.IDENTITY_TOKEN_SIGNING_KID, 'k1'),
-    idSigningJwk: env.ID_SIGNING_JWK ?? '',
-    entraTenant: str(env.ENTRA_TENANT, 'organizations'),
-    fallbackRedirect: str(env.FALLBACK_REDIRECT_URL, 'https://280apps.com'),
-    google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
-    entra: { clientId: env.ENTRA_CLIENT_ID ?? '', clientSecret: env.ENTRA_CLIENT_SECRET ?? '' },
+    idIssuer: topology.authOrigin,
+    idTtlSecs: PLATFORM_POLICY.identityTokenTtlSecs,
+    idSigningKid: PLATFORM_POLICY.identitySigningKid,
+    idSigningJwk: env.IDENTITY_SIGNING_PRIVATE_JWK ?? '',
+    entraTenant: PLATFORM_POLICY.entraTenant,
+    fallbackRedirect: topology.dashboardOrigin,
+    google: {
+      clientId: env.GOOGLE_OIDC_CLIENT_ID ?? '',
+      clientSecret: env.GOOGLE_OIDC_CLIENT_SECRET ?? '',
+    },
+    entra: {
+      clientId: env.MICROSOFT_ENTRA_OIDC_CLIENT_ID ?? '',
+      clientSecret: env.MICROSOFT_ENTRA_OIDC_CLIENT_SECRET ?? '',
+    },
   };
 }

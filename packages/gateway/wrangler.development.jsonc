@@ -20,18 +20,12 @@
 	// this Worker needs Hyperdrive; app Workers never touch the DB.
 	"hyperdrive": [{ "binding": "HYPERDRIVE", "id": "a32cfdb1e2334b2b9d9cc2a2753b832e" }],
 
-	// Secrets via `wrangler secret put --env development` (or the plain form when
-	// deploying this config): GOOGLE_*, ENTRA_*, ID_SIGNING_JWK.
+	// Secrets via `wrangler secret put`: GOOGLE_OIDC_CLIENT_ID,
+	// GOOGLE_OIDC_CLIENT_SECRET, MICROSOFT_ENTRA_OIDC_CLIENT_ID,
+	// MICROSOFT_ENTRA_OIDC_CLIENT_SECRET, IDENTITY_SIGNING_PRIVATE_JWK.
 	"vars": {
-		"DATABASE_SCHEMA": "platform",
-		"APP_BASE_DOMAIN": "280apps.run",
-		"APP_HOST_SUFFIX": "-development",
-		"AUTH_HOST": "auth-development.280apps.run",
-		"SESSION_COOKIE_DOMAIN": ".280apps.run",
-		"IDENTITY_TOKEN_ISSUER": "https://auth-development.280apps.run",
-		"IDENTITY_TOKEN_TTL_SECONDS": "30",
-		"IDENTITY_TOKEN_SIGNING_KID": "k1",
-		"ENTRA_TENANT": "organizations",
-		"FALLBACK_REDIRECT_URL": "https://280apps.com"
+		"DEPLOYMENT_ENVIRONMENT": "development",
+		"PLATFORM_DOMAIN": "280apps.com",
+		"APP_SERVING_DOMAIN": "280apps.run"
 	}
 }

@@ -27,7 +27,7 @@ if (dsn === '') {
   console.error('DATABASE_URL is empty (run with: node --env-file=.env ...)');
   process.exit(2);
 }
-const schema = process.env.DATABASE_SCHEMA || 'platform';
+const schema = 'platform';
 
 // A stable fake subject so re-runs reuse the same local account.
 // Overridable via TWO80_LOCAL_SUBJECT.

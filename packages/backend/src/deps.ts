@@ -1,4 +1,5 @@
 import { DeployCode, type DeployError } from '@280/contracts';
+import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
@@ -96,7 +97,7 @@ export async function sweepExpired(
   log: Logger,
   now: number,
   machineTokenTtlSecs: number,
-  frontendOrigin = 'https://console.280apps.com',
+  frontendOrigin = resolvePlatformTopology({}).dashboardOrigin,
 ): Promise<ExpiryCounts> {
   const counts = await store.deleteExpired(now, machineTokenTtlSecs);
   const waiting = await store.waitingDeploysBefore(now - WAITING_SECRETS_TTL_SECS);

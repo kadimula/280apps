@@ -396,7 +396,7 @@ describe('gateway-owned framing', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('x-frame-options')).toBeNull();
     const csp = res.headers.get('content-security-policy') ?? '';
-    expect(csp).toContain('frame-ancestors https://console.280apps.com');
+    expect(csp).toContain('frame-ancestors https://280apps.com');
     expect(csp).not.toContain("frame-ancestors 'none'");
     expect(csp).toContain("img-src 'self'"); // the app's other directives survive
   });
@@ -407,7 +407,7 @@ describe('gateway-owned framing', () => {
     const t = await token(signer);
     const res = await handleAppRequest(req(`${ID_COOKIE}=${t}`), env(gw), deps(new FakeContainer()));
     expect(res.headers.get('content-security-policy')).toBe(
-      'frame-ancestors https://console.280apps.com',
+      'frame-ancestors https://280apps.com',
     );
   });
 

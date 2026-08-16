@@ -3,6 +3,7 @@
 // Fault-injection knobs simulate the failure modes push must self-heal from.
 // Spec: contracts/deploy/fake.go (normative).
 
+import { resolvePlatformTopology } from '../platform-config.js';
 import {
   DeployCode,
   MANIFEST_KIND_CONTAINER,
@@ -61,7 +62,7 @@ function byteLess(a: string, b: string): boolean {
 }
 
 export class Fake implements Port {
-  private readonly urlBase = '280apps.run';
+  private readonly urlBase = resolvePlatformTopology({}).appServingDomain;
   private nextApp = 0;
 
   private readonly apps = new Map<string, App>();

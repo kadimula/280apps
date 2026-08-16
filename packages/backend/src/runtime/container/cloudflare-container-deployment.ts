@@ -19,6 +19,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DeployCode, DeployErr } from '@280/contracts';
+import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import type { ContainerApp } from '../../seams.js';
 import type { Logger } from '../../observe.js';
 import type { ContainerBuilder, RolloutJob, RolloutResult } from './container.js';
@@ -47,8 +48,7 @@ const ROLL_CONFIG_FILE = 'wrangler.roll.json';
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 const REGISTRY_CRED_TTL_MINUTES = 60;
 
-const DEFAULT_APP_DOMAIN = '280apps.run';
-const DEFAULT_SDK_API_ORIGIN = 'https://api.280apps.com';
+const DEFAULT_TOPOLOGY = resolvePlatformTopology({});
 // The service binding every app Worker declares to the central identity gateway,
 // and the RPC class it targets (GatewayRPC.mint/jwks). Binding-only: the mint
 // decision is never a public HTTP path.
@@ -143,12 +143,12 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
     this.workdir = cfg.workdir ?? tmpdir();
     this.workerEntry = cfg.workerEntry ?? 'worker.js';
     this.compatibilityDate = cfg.compatibilityDate ?? DEFAULT_COMPAT_DATE;
-    this.appDomain = cfg.appDomain ?? DEFAULT_APP_DOMAIN;
+    this.appDomain = cfg.appDomain ?? DEFAULT_TOPOLOGY.appServingDomain;
     this.hostSuffix = cfg.hostSuffix ?? '';
     this.gatewayService = cfg.gatewayService ?? `280-gateway${this.hostSuffix}`;
     this.idIssuer = cfg.idIssuer ?? `https://auth${this.hostSuffix}.${this.appDomain}`;
-    this.sdkApiOrigin = exactHttpsOrigin(cfg.sdkApiOrigin ?? DEFAULT_SDK_API_ORIGIN);
-    this.frameAncestors = cfg.frameAncestors ?? 'https://console.280apps.com';
+    this.sdkApiOrigin = exactHttpsOrigin(cfg.sdkApiOrigin ?? DEFAULT_TOPOLOGY.apiOrigin);
+    this.frameAncestors = cfg.frameAncestors ?? DEFAULT_TOPOLOGY.dashboardOrigin;
     this.exec = cfg.exec ?? spawnExec;
     this.fetchImpl = cfg.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
     this.log = cfg.log ?? NOOP_LOG;

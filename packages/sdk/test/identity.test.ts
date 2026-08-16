@@ -26,8 +26,8 @@ const baseClaims = (over: Partial<SignInput> = {}): SignInput => ({
   name: 'Alice',
   aud: AUD,
   app: 'app_renewals',
-  appRole: 'viewer',
-  role: 'manager',
+  role: 'viewer',
+  title: 'manager',
   caps: ['manager'],
   scope: { salaries: { kind: 'team', value: 'emea' } },
   ...over,
@@ -52,8 +52,8 @@ describe('identity()', () => {
     const id = await identity(req(await sign(baseClaims())));
 
     expect(id.user).toEqual({ sub: 'usr_1', email: 'alice@evergreen.com', tenant: 'evergreen.com', name: 'Alice' });
-    expect(id.appRole).toBe('viewer');
-    expect(id.role).toBe('manager');
+    expect(id.role).toBe('viewer');
+    expect(id.title).toBe('manager');
     expect(id.can('manager')).toBe(true);
     expect(id.can('admin')).toBe(false);
     expect(id.scope('salaries')).toEqual({ kind: 'team', value: 'emea' });
@@ -61,8 +61,8 @@ describe('identity()', () => {
   });
 
   it('can() reflects the feature role: no role means no capability', async () => {
-    const id = await identity(req(await sign(baseClaims({ role: '', caps: [] }))));
-    expect(id.role).toBe('');
+    const id = await identity(req(await sign(baseClaims({ title: '', caps: [] }))));
+    expect(id.title).toBe('');
     expect(id.can('manager')).toBe(false);
   });
 
@@ -86,13 +86,13 @@ describe('identity()', () => {
 describe('anonymous identity (public apps)', () => {
   it('exposes anonymous: true and an empty email for the platform-minted anonymous viewer', async () => {
     const token = await sign(
-      baseClaims({ sub: 'anon', email: '', name: 'Anonymous', appRole: 'viewer', role: '', caps: [], scope: {}, anon: true }),
+      baseClaims({ sub: 'anon', email: '', name: 'Anonymous', role: 'viewer', title: '', caps: [], scope: {}, anon: true }),
     );
     const id = await identity(req(token));
     expect(id.anonymous).toBe(true);
     expect(id.user.email).toBe('');
     expect(id.user.tenant).toBe('');
-    expect(id.appRole).toBe('viewer');
+    expect(id.role).toBe('viewer');
     expect(id.can('manager')).toBe(false);
   });
 

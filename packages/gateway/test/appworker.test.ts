@@ -31,7 +31,7 @@ async function newSigner(now: () => number, ttlSecs = 30): Promise<Signed> {
 
 function token(
   signer: IdentitySigner,
-  over: { aud?: string; appRole?: string; role?: string; email?: string } = {},
+  over: { aud?: string; role?: string; title?: string; email?: string } = {},
 ): Promise<string> {
   return signer.sign({
     sub: 'u1',
@@ -39,8 +39,8 @@ function token(
     name: 'alice',
     aud: over.aud ?? HOST,
     app: 'app_renewals',
-    appRole: over.appRole ?? 'viewer',
-    role: over.role ?? '',
+    role: over.role ?? 'viewer',
+    title: over.title ?? '',
   });
 }
 
@@ -212,7 +212,7 @@ describe('app-worker middleware', () => {
     const container = new FakeContainer();
     // A viewer-role token hitting an admin-gated /admin path is refused with no proxy.
     const policy = JSON.stringify({ access: 'invited', roles: [], routes: [{ path: '/admin/*', appRole: 'admin', role: '' }], secrets: [] });
-    const t = await token(signer, { appRole: 'viewer' });
+    const t = await token(signer, { role: 'viewer' });
     const res = await handleAppRequest(
       new Request(`https://${HOST}/admin/users`, { headers: { cookie: `${ID_COOKIE}=${t}` } }),
       env(gw, { TWO80_ROUTE_POLICY: policy }),
@@ -226,7 +226,7 @@ describe('app-worker middleware', () => {
     const { signer, publicJwks } = await newSigner(() => NOW);
     const gw = new FakeGateway(publicJwks);
     const policy = JSON.stringify({ access: 'invited', roles: [], routes: [{ path: '/admin/*', appRole: 'admin', role: '' }], secrets: [] });
-    const t = await token(signer, { appRole: 'admin' });
+    const t = await token(signer, { role: 'admin' });
     const res = await handleAppRequest(
       new Request(`https://${HOST}/admin/users`, { headers: { cookie: `${ID_COOKIE}=${t}` } }),
       env(gw, { TWO80_ROUTE_POLICY: policy }),
@@ -438,7 +438,7 @@ describe('public app: anonymous serving and the isolate token cache', () => {
       name: 'Anonymous',
       aud: HOST,
       app: 'app_renewals',
-      appRole: 'viewer',
+      role: 'viewer',
       anon: true,
     });
   }

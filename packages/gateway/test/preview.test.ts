@@ -63,7 +63,7 @@ describe('Gateway.mintPreview', () => {
     expect(user.email).toBe(OWNER);
     expect(claims.aud).toBe(HOST);
     expect(claims.app).toBe('app_renewals');
-    expect(claims.appRole).toBe('owner');
+    expect(claims.role).toBe('owner');
     const allowed = h.store.accessLog.filter((e) => e.allowed);
     expect(allowed).toHaveLength(1);
     expect(allowed[0]!.kind).toBe('app.accessed');
@@ -78,7 +78,7 @@ describe('Gateway.mintPreview', () => {
     if (res.kind !== 'token') return;
     const { user, claims } = await claimsOf(h, res.token);
     expect(user.email).toBe(OWNER); // still the owner's own identity
-    expect(claims.appRole).toBe('viewer'); // previewed down
+    expect(claims.role).toBe('viewer'); // previewed down
   });
 
   it('viewAs role with a feature role mints that role and its capability', async () => {
@@ -88,7 +88,7 @@ describe('Gateway.mintPreview', () => {
     expect(res.kind).toBe('token');
     if (res.kind !== 'token') return;
     const { claims } = await claimsOf(h, res.token);
-    expect(claims.role).toBe('manager');
+    expect(claims.title).toBe('manager');
     expect(claims.caps).toEqual(['manager']);
   });
 
@@ -106,8 +106,8 @@ describe('Gateway.mintPreview', () => {
     const { user, claims } = await claimsOf(h, res.token);
     expect(user.sub).toBe(bob!.id);
     expect(user.email).toBe('bob@contoso.com');
-    expect(claims.appRole).toBe('viewer');
-    expect(claims.role).toBe('manager');
+    expect(claims.role).toBe('viewer');
+    expect(claims.title).toBe('manager');
 
     // The impersonation trail names both the acting owner and the target.
     const audit = h.store.accessLog.filter((e) => e.kind === 'app.previewed_as');
@@ -130,7 +130,7 @@ describe('Gateway.mintPreview', () => {
     expect(user.sub).toBe('carol@firm.com');
     expect(user.name).toBe('carol');
     expect(user.tenant).toBe('firm.com');
-    expect(claims.appRole).toBe('editor');
+    expect(claims.role).toBe('editor');
   });
 
   it('viewAs user runs the normal admission: an unshared target on an invited app is denied', async () => {

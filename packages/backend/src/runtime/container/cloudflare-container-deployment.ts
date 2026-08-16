@@ -102,7 +102,7 @@ export interface CloudflareContainerDeploymentConfig {
   idIssuer?: string;
   sdkApiOrigin?: string;
   // frameAncestors is the space-separated CSP frame-ancestors allowlist baked into
-  // each app Worker (TWO80_FRAME_ANCESTORS): the dashboard origin(s) allowed to embed
+  // each app Worker (APP_FRAME_ANCESTORS): the dashboard origin(s) allowed to embed
   // an app host. Defaulted to the prod console so the shape is explicit.
   frameAncestors?: string;
   exec?: ExecFn;
@@ -247,15 +247,15 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
       vars: {
-        TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
+        APP_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
         TWO80_SDK_API_ORIGIN: this.sdkApiOrigin,
         TWO80_APP_ID: job.app.id,
-        TWO80_SCRIPT: script,
+        APP_SCRIPT_NAME: script,
         TWO80_APP_HOST_SUFFIX: this.hostSuffix,
         TWO80_APP_DOMAIN: this.appDomain,
-        TWO80_ID_ISSUER: this.idIssuer,
-        TWO80_ID_SKEW_SECS: EDGE_SKEW_SECS,
-        TWO80_FRAME_ANCESTORS: this.frameAncestors,
+        IDENTITY_TOKEN_ISSUER: this.idIssuer,
+        IDENTITY_CLOCK_SKEW_SECONDS: EDGE_SKEW_SECS,
+        APP_FRAME_ANCESTORS: this.frameAncestors,
         // Non-secret config the container reads via process.env. It carries only
         // non-secret values. Omitted when empty so a config-less roll is byte-identical.
         ...(Object.keys(job.runtime.env).length > 0

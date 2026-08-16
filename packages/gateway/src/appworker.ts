@@ -1,13 +1,3 @@
-// The thin verify-and-forward middleware compiled into every tenant Worker. It holds
-// only the public JWK set (fetched over the GATEWAY service binding and cached) plus
-// pure verify + route-gate logic. It never holds the private signing key, the DB, or
-// OIDC. See gateway-identity-token-design.md §3.
-//
-// Hot path: read the host-only 280_id cookie, verify it locally with zero network
-// (WebCrypto against the cached JWKS), enforce the route gate against the baked policy
-// and the token's roles, stamp X-280-Identity, hand off to the container. Login and
-// token mint/refresh are the only paths that call the central gateway.
-
 import { IdentityVerifier, IdentityError, type VerifiedIdentity } from '@280/contracts/identity';
 import type { RouteGate } from '@280/contracts';
 import { resolvePlatformTopology } from '@280/contracts/platform-config';
@@ -16,329 +6,352 @@ import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE, VIEW_COOKIE, readCookie, ser
 import type { GatewayBinding, MintResult } from './mint.js';
 import { denyPage, errorPage, unavailablePage } from './pages.js';
 
-// Cloudflare edge clocks are NTP-tight; 5s absorbs real jitter without inflating the
-// revocation window (30s TTL + 5s = ~35s bound). It is the practical floor below which
-// benign jitter starts producing false "expired" re-mints.
-const DEFAULT_EDGE_SKEW_SECS = 5;
-
-// The public JWKS rarely changes; a 300s cache keeps steady-state verification fully
-// local. An unknown kid (a just-rotated key) forces one immediate refetch, so rotation
-// does not wait out the TTL.
-const JWKS_TTL_SECS = 300;
-
-// The platform-reserved path where the dashboard iframe exchanges its preview
-// grant (?g=) for partitioned cookies. Never forwarded to the container.
+const DEFAULT_IDENTITY_CLOCK_SKEW_SECONDS = 5;
+const JWKS_CACHE_TTL_SECONDS = 300;
 const PREVIEW_PATH = '/__280/preview';
-
-// Outlives the grant on purpose: the server-side expires_at (re-checked on every
-// mint) is authoritative, so a lingering cookie only earns a clean deny.
-const PREVIEW_COOKIE_TTL_SECS = 1800;
-
-// The platform, not the builder, decides who may frame an app host: only the 280
-// dashboard origin(s), applied to every served response in serveGated. The live
-// value is baked per app as TWO80_FRAME_ANCESTORS (from backend config, which
-// defaults it to the frontend origin); this constant is only the fallback for a
-// worker deployed without that var set.
+const PREVIEW_COOKIE_TTL_SECONDS = 1800;
 const DEFAULT_FRAME_ANCESTORS = resolvePlatformTopology({}).dashboardOrigin;
+const ANONYMOUS_TOKEN_CACHE_MARGIN_SECONDS = 5;
 
 export interface AppWorkerEnv {
-  // This app's App280Container namespace. The harness Worker (not this middleware)
-  // resolves it into the container Fetcher and passes it in via deps.
-  APP?: DurableObjectNamespace;
-  // The service binding to the central gateway (RPC). A reference, never a secret.
-  GATEWAY: GatewayBinding;
-  // The app's stable script name, becomes the mint `script`.
-  TWO80_SCRIPT?: string;
-  TWO80_APP_HOST_SUFFIX?: string;
-  // The issuer the token must carry; unset skips the issuer check (audience-scoping is
-  // the cross-app firewall regardless).
-  TWO80_ID_ISSUER?: string;
-  // The tight edge-verify skew in seconds; defaults to 5.
-  TWO80_ID_SKEW_SECS?: string;
-  // The baked route gates. Unset means no declared routes, while malformed JSON
-  // fails closed.
-  TWO80_ROUTE_POLICY?: string;
-  // The space-separated origins allowed to frame this app host (CSP frame-ancestors),
-  // baked from backend config. Unset falls back to DEFAULT_FRAME_ANCESTORS.
-  TWO80_FRAME_ANCESTORS?: string;
+  APP?: DurableObjectNamespace; // App280Container namespace binding
+  GATEWAY: GatewayBinding; // GatewayRPC service binding
+  APP_SCRIPT_NAME?: string; // renewals
+  IDENTITY_TOKEN_ISSUER?: string; // https://auth.280apps.run
+  IDENTITY_CLOCK_SKEW_SECONDS?: string; // 5
+  APP_ROUTE_POLICY?: string; // {"routes":[{"path":"/admin/*","appRole":"admin"}]}
+  APP_FRAME_ANCESTORS?: string; // https://280apps.com
 }
 
 export interface AppWorkerDeps {
-  // The Fetcher that reaches this app's running container (harness: getContainer(env.APP)).
   container: Fetcher;
-  // Epoch-seconds clock, injected for tests; defaults to wall clock.
-  now?: () => number;
+  currentEpochSeconds?: () => number;
 }
 
-// A module-level cache so verification is local across requests in one isolate.
-let jwksCache: { keys: Record<string, JsonWebKey>; exp: number } | null = null;
+let jwksCache: { keysById: Record<string, JsonWebKey>; expiresAt: number } | null = null;
+const anonymousTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-// Test-only: clears the isolate JWKS cache so each case starts from a fresh binding.
 export function __resetJwksCache(): void {
   jwksCache = null;
 }
 
-// The per-isolate anonymous-token cache, keyed by host. Cookieless clients on a
-// public app (curl, crawlers) would otherwise cost one central mint per request;
-// the anonymous identity is the same for all of them, so one token per TTL per
-// isolate serves them all. Bounded by the ~120s token TTL, so flipping the app
-// off public stops anonymous serving within TTL + skew.
-const anonTokenCache = new Map<string, { token: string; exp: number }>();
-
-// Test-only: clears the isolate anonymous-token cache between cases.
-export function __resetAnonTokenCache(): void {
-  anonTokenCache.clear();
+export function __resetAnonymousTokenCache(): void {
+  anonymousTokenCache.clear();
 }
 
-// A cached token must outlive the request by a margin, or a token expiring
-// mid-verify would 500 instead of re-minting.
-const ANON_CACHE_MARGIN_SECS = 5;
 
+// Entry point for each app here
 export async function handleAppRequest(
   request: Request,
   env: AppWorkerEnv,
   deps: AppWorkerDeps,
 ): Promise<Response> {
-  const url = new URL(request.url);
-  const host = url.hostname;
-  const path = url.pathname;
-  const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
-  const issuer = env.TWO80_ID_ISSUER;
-  const skew = intOr(env.TWO80_ID_SKEW_SECS, DEFAULT_EDGE_SKEW_SECS);
-  const script = env.TWO80_SCRIPT ?? '';
-  const frameAncestors = (env.TWO80_FRAME_ANCESTORS ?? '').trim() || DEFAULT_FRAME_ANCESTORS;
+  // Resolve request and Worker configuration.
+  const requestUrl = new URL(request.url);
+  const appHost = requestUrl.hostname;
+  const requestPath = requestUrl.pathname;
+  const currentEpochSeconds = deps.currentEpochSeconds ?? (() => Math.floor(Date.now() / 1000));
+  const identityIssuer = env.IDENTITY_TOKEN_ISSUER;
+  const allowedClockSkewSeconds = positiveIntegerOrDefault(
+    env.IDENTITY_CLOCK_SKEW_SECONDS,
+    DEFAULT_IDENTITY_CLOCK_SKEW_SECONDS,
+  );
+  const appScriptName = env.APP_SCRIPT_NAME ?? '';
+  const frameAncestors = (env.APP_FRAME_ANCESTORS ?? '').trim() || DEFAULT_FRAME_ANCESTORS;
 
-  let routes: RouteGate[];
+  // Fail closed when route policy is invalid.
+  let routeGates: RouteGate[];
   try {
-    routes = parseRoutes(env.TWO80_ROUTE_POLICY);
+    routeGates = parseRouteGates(env.APP_ROUTE_POLICY);
   } catch {
-    // A set-but-malformed policy fails closed: serving with unknown gates would be
-    // fail-open. Deploy produces this JSON, so this is a config bug, not a viewer input.
-    return html(errorPage(), 500);
-  }
-  const gateway = env.GATEWAY;
-
-  // The preview bootstrap: the dashboard iframe's first hop, carrying the grant in
-  // the URL exactly once before it moves into the partitioned cookie.
-  if (path === PREVIEW_PATH) {
-    return handlePreviewBootstrap(url, gateway, script, host);
+    return htmlResponse(errorPage(), 500);
   }
 
-  // Steady state: a valid host-only token serves entirely locally, no central call.
-  const idCookie = readCookie(request, ID_COOKIE);
-  if (idCookie !== '') {
+  // Exchange preview grants before normal authentication.
+  const identityGateway = env.GATEWAY;
+  if (requestPath === PREVIEW_PATH) {
+    return handlePreviewBootstrap(requestUrl, identityGateway, appScriptName, appHost);
+  }
+
+  // Prefer a valid local identity token.
+  const identityToken = readCookie(request, ID_COOKIE);
+  if (identityToken !== '') {
     try {
-      const verified = await verifyToken(idCookie, { host, issuer, skew, gateway, now });
-      return serveGated(request, idCookie, verified, routes, path, deps.container, null, frameAncestors);
-    } catch (err) {
-      // Any verification failure (expired, wrong audience, bad signature, unknown key
-      // after a refetch) means there is no usable local token: fall through to mint.
-      if (!(err instanceof IdentityError)) throw err;
+      const verifiedIdentity = await verifyIdentityToken(identityToken, {
+        appHost,
+        identityIssuer,
+        allowedClockSkewSeconds,
+        identityGateway,
+        currentEpochSeconds,
+      });
+      return serveAuthorizedRequest(
+        request,
+        identityToken,
+        verifiedIdentity,
+        routeGates,
+        requestPath,
+        deps.container,
+        null,
+        frameAncestors,
+      );
+    } catch (error) {
+      if (!(error instanceof IdentityError)) throw error;
     }
   }
 
-  // Mint or refresh: resolve the session centrally into a token / login / deny. A
-  // present preview-grant cookie means this is the dashboard iframe, where no
-  // session cookie ever arrives: refresh from the grant instead, which re-checks
-  // it is live and the acting owner is still admin+ on every cycle.
   const previewGrant = readCookie(request, PREVIEW_COOKIE);
   const sessionToken = readCookie(request, SESSION_COOKIE);
 
-  // A cookieless client (no session, no preview, no id cookie) on a public app is
-  // served from the isolate's cached anonymous token; a cache entry that fails
-  // verification is dropped and the request falls through to a central mint.
+  // Reuse anonymous identities for cookieless requests.
   if (previewGrant === '' && sessionToken === '') {
-    const cached = anonTokenCache.get(host);
-    if (cached !== undefined && cached.exp > now() + ANON_CACHE_MARGIN_SECS) {
+    const cachedAnonymousToken = anonymousTokenCache.get(appHost);
+    if (
+      cachedAnonymousToken !== undefined &&
+      cachedAnonymousToken.expiresAt > currentEpochSeconds() + ANONYMOUS_TOKEN_CACHE_MARGIN_SECONDS
+    ) {
       try {
-        const verified = await verifyToken(cached.token, { host, issuer, skew, gateway, now });
-        const setCookie = serializeCookie(ID_COOKIE, cached.token, { maxAge: cached.exp - now() });
-        return serveGated(request, cached.token, verified, routes, path, deps.container, setCookie, frameAncestors);
-      } catch (err) {
-        if (!(err instanceof IdentityError)) throw err;
-        anonTokenCache.delete(host);
+        const verifiedIdentity = await verifyIdentityToken(cachedAnonymousToken.token, {
+          appHost,
+          identityIssuer,
+          allowedClockSkewSeconds,
+          identityGateway,
+          currentEpochSeconds,
+        });
+        const identityCookie = serializeCookie(ID_COOKIE, cachedAnonymousToken.token, {
+          maxAge: cachedAnonymousToken.expiresAt - currentEpochSeconds(),
+        });
+        return serveAuthorizedRequest(
+          request,
+          cachedAnonymousToken.token,
+          verifiedIdentity,
+          routeGates,
+          requestPath,
+          deps.container,
+          identityCookie,
+          frameAncestors,
+        );
+      } catch (error) {
+        if (!(error instanceof IdentityError)) throw error;
+        anonymousTokenCache.delete(appHost);
       }
     }
   }
 
-  let result: MintResult;
+  // Mint or refresh identity through the gateway.
+  let mintResult: MintResult;
   try {
-    result =
+    mintResult =
       previewGrant !== ''
-        ? await gateway.mintPreview({ grant: previewGrant, script, host })
-        : await gateway.mint({
+        ? await identityGateway.mintPreview({ grant: previewGrant, script: appScriptName, host: appHost })
+        : await identityGateway.mint({
             sessionToken,
             viewCookie: readCookie(request, VIEW_COOKIE),
-            script,
-            host,
+            script: appScriptName,
+            host: appHost,
           });
   } catch {
-    // Central unreachable and no valid local token: sign-in is down, not the app.
-    return html(unavailablePage(), 503);
+    return htmlResponse(unavailablePage(), 503);
   }
 
-  if (result.kind === 'login') {
-    return new Response(null, { status: 302, headers: { location: result.url } });
+  if (mintResult.kind === 'login') {
+    return new Response(null, { status: 302, headers: { location: mintResult.url } });
   }
-  if (result.kind === 'deny') {
-    return html(denyPage(result.reason), 403);
+  if (mintResult.kind === 'deny') {
+    return htmlResponse(denyPage(mintResult.reason), 403);
   }
 
-  let verified: VerifiedIdentity;
+  // Verify and forward the newly minted identity.
+  let verifiedIdentity: VerifiedIdentity;
   try {
-    verified = await verifyToken(result.token, { host, issuer, skew, gateway, now });
+    verifiedIdentity = await verifyIdentityToken(mintResult.token, {
+      appHost,
+      identityIssuer,
+      allowedClockSkewSeconds,
+      identityGateway,
+      currentEpochSeconds,
+    });
   } catch {
-    // A freshly minted token that fails local verification is a key/config mismatch
-    // between the gateway and this Worker's JWKS, not a viewer problem.
-    return html(errorPage(), 500);
+    return htmlResponse(errorPage(), 500);
   }
-  if (verified.claims.anon === true) {
-    anonTokenCache.set(host, { token: result.token, exp: now() + result.ttlSecs });
+
+  if (verifiedIdentity.claims.anon === true) {
+    anonymousTokenCache.set(appHost, {
+      token: mintResult.token,
+      expiresAt: currentEpochSeconds() + mintResult.ttlSecs,
+    });
   }
-  const setCookie = serializeCookie(ID_COOKIE, result.token, {
-    maxAge: result.ttlSecs,
-    // A cookie set from inside the cross-site iframe must be partitioned or the
-    // browser drops it, which would re-mint on every single request.
+  const identityCookie = serializeCookie(ID_COOKIE, mintResult.token, {
+    maxAge: mintResult.ttlSecs,
     partitioned: previewGrant !== '',
   });
-  return serveGated(request, result.token, verified, routes, path, deps.container, setCookie, frameAncestors);
+  return serveAuthorizedRequest(
+    request,
+    mintResult.token,
+    verifiedIdentity,
+    routeGates,
+    requestPath,
+    deps.container,
+    identityCookie,
+    frameAncestors,
+  );
 }
 
-// handlePreviewBootstrap exchanges ?g=<grant> for the two partitioned cookies (the
-// grant reference and a first identity token), then bounces to the target path so
-// the grant never lingers in the iframe's address. Everything the grant authorizes
-// is decided centrally in mintPreview; a dead grant is a plain deny page.
 async function handlePreviewBootstrap(
-  url: URL,
-  gateway: GatewayBinding,
-  script: string,
-  host: string,
+  requestUrl: URL,
+  identityGateway: GatewayBinding,
+  appScriptName: string,
+  appHost: string,
 ): Promise<Response> {
-  const grant = url.searchParams.get('g') ?? '';
-  if (grant === '') return html(errorPage(), 400);
+  const previewGrant = requestUrl.searchParams.get('g') ?? '';
+  if (previewGrant === '') return htmlResponse(errorPage(), 400);
 
-  let result: MintResult;
+  let mintResult: MintResult;
   try {
-    result = await gateway.mintPreview({ grant, script, host });
+    mintResult = await identityGateway.mintPreview({ grant: previewGrant, script: appScriptName, host: appHost });
   } catch {
-    return html(unavailablePage(), 503);
+    return htmlResponse(unavailablePage(), 503);
   }
-  if (result.kind !== 'token') {
-    return html(denyPage(result.kind === 'deny' ? result.reason : 'This preview is not available.'), 403);
+  if (mintResult.kind !== 'token') {
+    return htmlResponse(
+      denyPage(mintResult.kind === 'deny' ? mintResult.reason : 'This preview is not available.'),
+      403,
+    );
   }
 
-  const headers = new Headers({ location: confinePath(url.searchParams.get('to') ?? '') });
-  headers.append(
+  const responseHeaders = new Headers({ location: safeSameOriginPath(requestUrl.searchParams.get('to') ?? '') });
+  responseHeaders.append(
     'set-cookie',
-    serializeCookie(PREVIEW_COOKIE, grant, { maxAge: PREVIEW_COOKIE_TTL_SECS, partitioned: true }),
+    serializeCookie(PREVIEW_COOKIE, previewGrant, {
+      maxAge: PREVIEW_COOKIE_TTL_SECONDS,
+      partitioned: true,
+    }),
   );
-  headers.append(
+  responseHeaders.append(
     'set-cookie',
-    serializeCookie(ID_COOKIE, result.token, { maxAge: result.ttlSecs, partitioned: true }),
+    serializeCookie(ID_COOKIE, mintResult.token, { maxAge: mintResult.ttlSecs, partitioned: true }),
   );
-  return new Response(null, { status: 302, headers });
+  return new Response(null, { status: 302, headers: responseHeaders });
 }
 
-// Only a same-origin absolute path may be the bootstrap's landing: anything else
-// ("//evil", "https://…", relative) collapses to the app root.
-function confinePath(raw: string): string {
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
-  return raw;
+function safeSameOriginPath(candidatePath: string): string {
+  return candidatePath.startsWith('/') && !candidatePath.startsWith('//') ? candidatePath : '/';
 }
 
-// serveGated enforces the route gate against the token's roles, then stamps the raw
-// token as X-280-Identity and forwards to the container. A minted-this-request token is
-// delivered back as the host-only 280_id cookie via setCookie.
-async function serveGated(
+async function serveAuthorizedRequest(
   request: Request,
-  token: string,
-  verified: VerifiedIdentity,
-  routes: RouteGate[],
-  path: string,
+  identityToken: string,
+  verifiedIdentity: VerifiedIdentity,
+  routeGates: RouteGate[],
+  requestPath: string,
   container: Fetcher,
-  setCookie: string | null,
+  identityCookie: string | null,
   frameAncestors: string,
 ): Promise<Response> {
-  const { claims } = verified;
-  const decision = gateForPath(routes, { appRole: claims.role, featureRole: claims.title }, path);
-  if (!decision.allow) return html(denyPage(decision.reason), 403);
+  const { claims } = verifiedIdentity;
+  const accessDecision = gateForPath(
+    routeGates,
+    { appRole: claims.role, featureRole: claims.title },
+    requestPath,
+  );
+  if (!accessDecision.allow) return htmlResponse(denyPage(accessDecision.reason), 403);
 
-  const stamped = stampIdentity(request, token);
-  const res = await container.fetch(stamped);
-  const headers = new Headers(res.headers);
-  ownFraming(headers, frameAncestors);
-  // Public means unlisted: everything a crawler can fetch is served anonymously,
-  // so stamping the anonymous responses noindex keeps public apps out of search.
-  if (claims.anon === true) headers.set('x-robots-tag', 'noindex');
-  if (setCookie !== null) headers.append('set-cookie', setCookie);
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  const authenticatedRequest = stampIdentity(request, identityToken);
+  const containerResponse = await container.fetch(authenticatedRequest);
+  const responseHeaders = new Headers(containerResponse.headers);
+  enforceFrameAncestors(responseHeaders, frameAncestors);
+  if (claims.anon === true) responseHeaders.set('x-robots-tag', 'noindex');
+  if (identityCookie !== null) responseHeaders.append('set-cookie', identityCookie);
+  return new Response(containerResponse.body, {
+    status: containerResponse.status,
+    statusText: containerResponse.statusText,
+    headers: responseHeaders,
+  });
 }
 
-// ownFraming makes who-may-frame-an-app-host a platform guarantee: any
-// container-supplied X-Frame-Options or frame-ancestors is replaced with the 280
-// dashboard origins, so a builder's headers can neither break the dashboard embed
-// nor open the app to other embedders. Other CSP directives the app set survive.
-function ownFraming(headers: Headers, frameAncestors: string): void {
-  headers.delete('x-frame-options');
-  const kept = (headers.get('content-security-policy') ?? '')
+function enforceFrameAncestors(responseHeaders: Headers, frameAncestors: string): void {
+  responseHeaders.delete('x-frame-options');
+  const otherDirectives = (responseHeaders.get('content-security-policy') ?? '')
     .split(';')
-    .map((d) => d.trim())
-    .filter((d) => d !== '' && !d.toLowerCase().startsWith('frame-ancestors'));
-  headers.set('content-security-policy', [`frame-ancestors ${frameAncestors}`, ...kept].join('; '));
+    .map((directive) => directive.trim())
+    .filter((directive) => directive !== '' && !directive.toLowerCase().startsWith('frame-ancestors'));
+  responseHeaders.set('content-security-policy', [`frame-ancestors ${frameAncestors}`, ...otherDirectives].join('; '));
 }
 
-async function verifyToken(
-  token: string,
-  opts: { host: string; issuer: string | undefined; skew: number; gateway: GatewayBinding; now: () => number },
+interface IdentityVerificationOptions {
+  appHost: string;
+  identityIssuer: string | undefined;
+  allowedClockSkewSeconds: number;
+  identityGateway: GatewayBinding;
+  currentEpochSeconds: () => number;
+}
+
+async function verifyIdentityToken(
+  identityToken: string,
+  options: IdentityVerificationOptions,
 ): Promise<VerifiedIdentity> {
-  const keys = await getJwks(opts.gateway, opts.now, false);
+  const publicKeysById = await getPublicJwks(options.identityGateway, options.currentEpochSeconds, false);
   try {
-    return await newVerifier(keys, opts).verify(token, { audience: opts.host });
-  } catch (err) {
-    if (err instanceof IdentityError && err.message.includes('unknown signing key')) {
-      const fresh = await getJwks(opts.gateway, opts.now, true);
-      return newVerifier(fresh, opts).verify(token, { audience: opts.host });
+    return await createIdentityVerifier(publicKeysById, options).verify(identityToken, { audience: options.appHost });
+  } catch (error) {
+    if (error instanceof IdentityError && error.message.includes('unknown signing key')) {
+      const refreshedPublicKeysById = await getPublicJwks(
+        options.identityGateway,
+        options.currentEpochSeconds,
+        true,
+      );
+      return createIdentityVerifier(refreshedPublicKeysById, options).verify(identityToken, {
+        audience: options.appHost,
+      });
     }
-    throw err;
+    throw error;
   }
 }
 
-function newVerifier(
-  keys: Record<string, JsonWebKey>,
-  opts: { issuer: string | undefined; skew: number; now: () => number },
+function createIdentityVerifier(
+  publicKeysById: Record<string, JsonWebKey>,
+  options: Pick<IdentityVerificationOptions, 'identityIssuer' | 'allowedClockSkewSeconds' | 'currentEpochSeconds'>,
 ): IdentityVerifier {
-  return new IdentityVerifier({ publicJwks: keys, issuer: opts.issuer, skewSecs: opts.skew, now: opts.now });
+  return new IdentityVerifier({
+    publicJwks: publicKeysById,
+    issuer: options.identityIssuer,
+    skewSecs: options.allowedClockSkewSeconds,
+    now: options.currentEpochSeconds,
+  });
 }
 
-async function getJwks(
-  gateway: GatewayBinding,
-  now: () => number,
-  force: boolean,
+async function getPublicJwks(
+  identityGateway: GatewayBinding,
+  currentEpochSeconds: () => number,
+  forceRefresh: boolean,
 ): Promise<Record<string, JsonWebKey>> {
-  if (!force && jwksCache !== null && jwksCache.exp > now()) return jwksCache.keys;
-  const doc = await gateway.jwks();
-  const keys: Record<string, JsonWebKey> = {};
-  for (const k of doc.keys) {
-    const kid = (k as { kid?: unknown }).kid;
-    if (typeof kid === 'string' && kid !== '') keys[kid] = k;
+  if (!forceRefresh && jwksCache !== null && jwksCache.expiresAt > currentEpochSeconds()) {
+    return jwksCache.keysById;
   }
-  jwksCache = { keys, exp: now() + JWKS_TTL_SECS };
-  return keys;
+
+  const jwksDocument = await identityGateway.jwks();
+  const keysById: Record<string, JsonWebKey> = {};
+  for (const publicKey of jwksDocument.keys) {
+    const keyId = (publicKey as { kid?: unknown }).kid;
+    if (typeof keyId === 'string' && keyId !== '') keysById[keyId] = publicKey;
+  }
+  jwksCache = {
+    keysById,
+    expiresAt: currentEpochSeconds() + JWKS_CACHE_TTL_SECONDS,
+  };
+  return keysById;
 }
 
-// parseRoutes reads the baked policy JSON and returns its route gates. Unset → no
-// routes (flat, open model). Malformed JSON throws so the caller can fail closed.
-function parseRoutes(raw: string | undefined): RouteGate[] {
-  if (raw === undefined || raw === '') return [];
-  const parsed = JSON.parse(raw) as { routes?: unknown };
-  return Array.isArray(parsed.routes) ? (parsed.routes as RouteGate[]) : [];
+function parseRouteGates(serializedPolicy: string | undefined): RouteGate[] {
+  if (serializedPolicy === undefined || serializedPolicy === '') return [];
+  const policy = JSON.parse(serializedPolicy) as { routes?: unknown };
+  return Array.isArray(policy.routes) ? (policy.routes as RouteGate[]) : [];
 }
 
-function intOr(v: string | undefined, fallback: number): number {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+function positiveIntegerOrDefault(value: string | undefined, defaultValue: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : defaultValue;
 }
 
-function html(body: string, status: number): Response {
+function htmlResponse(body: string, status: number): Response {
   return new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
 }

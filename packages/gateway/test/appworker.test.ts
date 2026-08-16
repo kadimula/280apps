@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   handleAppRequest,
   __resetJwksCache,
-  __resetAnonTokenCache,
+  __resetAnonymousTokenCache,
   type AppWorkerEnv,
   type AppWorkerDeps,
 } from '../src/appworker.js';
@@ -91,9 +91,9 @@ class FakeContainer {
 function env(gateway: GatewayBinding, over: Partial<AppWorkerEnv> = {}): AppWorkerEnv {
   return {
     GATEWAY: gateway,
-    TWO80_SCRIPT: 'renewals',
-    TWO80_ID_ISSUER: ISSUER,
-    TWO80_ID_SKEW_SECS: '5',
+    APP_SCRIPT_NAME: 'renewals',
+    IDENTITY_TOKEN_ISSUER: ISSUER,
+    IDENTITY_CLOCK_SKEW_SECONDS: '5',
     ...over,
   };
 }
@@ -103,7 +103,7 @@ function req(cookie?: string): Request {
 }
 
 function deps(container: FakeContainer, now = NOW): AppWorkerDeps {
-  return { container: container as unknown as Fetcher, now: () => now };
+  return { container: container as unknown as Fetcher, currentEpochSeconds: () => now };
 }
 
 function setCookie(res: Response, name: string): string | null {
@@ -113,7 +113,7 @@ function setCookie(res: Response, name: string): string | null {
 
 beforeEach(() => {
   __resetJwksCache();
-  __resetAnonTokenCache();
+  __resetAnonymousTokenCache();
 });
 
 describe('app-worker middleware', () => {
@@ -215,7 +215,7 @@ describe('app-worker middleware', () => {
     const t = await token(signer, { role: 'viewer' });
     const res = await handleAppRequest(
       new Request(`https://${HOST}/admin/users`, { headers: { cookie: `${ID_COOKIE}=${t}` } }),
-      env(gw, { TWO80_ROUTE_POLICY: policy }),
+      env(gw, { APP_ROUTE_POLICY: policy }),
       deps(container),
     );
     expect(res.status).toBe(403);
@@ -229,7 +229,7 @@ describe('app-worker middleware', () => {
     const t = await token(signer, { role: 'admin' });
     const res = await handleAppRequest(
       new Request(`https://${HOST}/admin/users`, { headers: { cookie: `${ID_COOKIE}=${t}` } }),
-      env(gw, { TWO80_ROUTE_POLICY: policy }),
+      env(gw, { APP_ROUTE_POLICY: policy }),
       deps(new FakeContainer()),
     );
     expect(res.status).toBe(200);
@@ -241,7 +241,7 @@ describe('app-worker middleware', () => {
     const t = await token(signer);
     const res = await handleAppRequest(
       req(`${ID_COOKIE}=${t}`),
-      env(gw, { TWO80_ROUTE_POLICY: '{not json' }),
+      env(gw, { APP_ROUTE_POLICY: '{not json' }),
       deps(new FakeContainer()),
     );
     expect(res.status).toBe(500);
@@ -411,13 +411,13 @@ describe('gateway-owned framing', () => {
     );
   });
 
-  it('honors the baked TWO80_FRAME_ANCESTORS over the default', async () => {
+  it('honors the baked APP_FRAME_ANCESTORS over the default', async () => {
     const { signer, publicJwks } = await newSigner(() => NOW);
     const gw = new FakeGateway(publicJwks);
     const t = await token(signer);
     const res = await handleAppRequest(
       req(`${ID_COOKIE}=${t}`),
-      env(gw, { TWO80_FRAME_ANCESTORS: 'https://console-development.280apps.com https://preview.example' }),
+      env(gw, { APP_FRAME_ANCESTORS: 'https://console-development.280apps.com https://preview.example' }),
       deps(new FakeContainer()),
     );
     expect(res.headers.get('content-security-policy')).toBe(

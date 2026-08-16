@@ -71,7 +71,18 @@ describe('egress semantic helpers', () => {
   });
 
   it('reserves the platform binding names and the TWO80_ namespace', () => {
-    for (const n of ['APP', 'GATEWAY', 'EGRESS_POLICY', 'TWO80_APP_ID', 'TWO80_ROUTE_POLICY', 'TWO80_ANYTHING']) {
+    for (const n of [
+      'APP',
+      'GATEWAY',
+      'EGRESS_POLICY',
+      'TWO80_APP_ID',
+      'APP_ROUTE_POLICY',
+      'APP_SCRIPT_NAME',
+      'IDENTITY_TOKEN_ISSUER',
+      'IDENTITY_CLOCK_SKEW_SECONDS',
+      'APP_FRAME_ANCESTORS',
+      'TWO80_ANYTHING',
+    ]) {
       expect(isReservedBindingName(n)).toBe(true);
     }
     expect(isReservedBindingName('STRIPE_KEY')).toBe(false);

@@ -254,8 +254,12 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     // Depot shares the same rollConfig spine: route + GATEWAY binding + baked policy.
     expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
-    expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual({ routes });
-    expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://280apps.com');
+    const workerVariables = rollConfig.vars as Record<string, string>;
+    expect(JSON.parse(workerVariables.APP_ROUTE_POLICY)).toEqual({ routes });
+    expect(workerVariables.APP_SCRIPT_NAME).toBe('demo-abc');
+    expect(workerVariables.IDENTITY_TOKEN_ISSUER).toBe('https://auth.280apps.run');
+    expect(workerVariables.IDENTITY_CLOCK_SKEW_SECONDS).toBe('5');
+    expect(workerVariables.APP_FRAME_ANCESTORS).toBe('https://280apps.com');
     // A config-less roll omits TWO80_CONFIG entirely (byte-identical to pre-config).
     expect((rollConfig.vars as Record<string, string>).TWO80_CONFIG).toBeUndefined();
     await rm(workdir, { recursive: true, force: true });

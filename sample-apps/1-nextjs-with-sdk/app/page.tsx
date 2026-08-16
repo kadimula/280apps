@@ -52,12 +52,12 @@ export default async function HomePage() {
           <strong>{viewer.user.tenant || "Public"}</strong>
         </article>
         <article className="card metric">
-          <span className="label">App role</span>
-          <strong>{viewer.appRole}</strong>
+          <span className="label">Role</span>
+          <strong>{viewer.role}</strong>
         </article>
         <article className="card metric">
-          <span className="label">Feature role</span>
-          <strong>{viewer.featureRole}</strong>
+          <span className="label">Title</span>
+          <strong>{viewer.title}</strong>
         </article>
       </section>
 

@@ -24,13 +24,13 @@ export interface User280 {
 }
 
 // The one object an app reads per request. can()/scope() are the gateway-resolved
-// grants; role/appRole are exposed directly for apps that branch on them.
+// grants; role/title are exposed directly for apps that branch on them.
 export interface Identity280 {
   user: User280;
   can(capability: string): boolean;
   scope(name: string): unknown;
-  role: string; // the viewer's feature role, '' if none
-  appRole: string; // the viewer's app role
+  role: string; // the viewer's app role: '' | owner | admin | editor | viewer
+  title: string; // the viewer's feature role, '' if none
   // True on the platform-minted anonymous viewer a public app serves to visitors
   // with no session (user.email is '' then). Branch on this before writes or
   // per-user rows: `if (identity.anonymous) ...`.
@@ -75,7 +75,7 @@ export async function identity(request: RequestLike): Promise<Identity280> {
   return {
     user,
     role: claims.role,
-    appRole: claims.appRole,
+    title: claims.title,
     anonymous: claims.anon === true,
     claims,
     can: (capability: string) => caps.has(capability),

@@ -259,7 +259,7 @@ async function serveGated(
   frameAncestors: string,
 ): Promise<Response> {
   const { claims } = verified;
-  const decision = gateForPath(routes, { appRole: claims.appRole, featureRole: claims.role }, path);
+  const decision = gateForPath(routes, { appRole: claims.role, featureRole: claims.title }, path);
   if (!decision.allow) return html(denyPage(decision.reason), 403);
 
   const stamped = stampIdentity(request, token);

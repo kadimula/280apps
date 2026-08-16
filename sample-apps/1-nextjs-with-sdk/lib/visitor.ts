@@ -7,8 +7,8 @@ export async function visitor() {
     return {
       available: true as const,
       user: viewer.user,
-      appRole: viewer.appRole || "none",
-      featureRole: viewer.role || "none",
+      role: viewer.role || "none",
+      title: viewer.title || "none",
       anonymous: viewer.anonymous,
       canManage: viewer.can("manager"),
       regionScope: viewer.scope("region"),

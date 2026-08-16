@@ -25,9 +25,9 @@ export interface IdentityClaims {
   tenant: string;
   name: string;
   app: string; // the app id, so the SDK binds identity to one app
-  appRole: string; // '' | owner | admin | editor | viewer
-  role: string; // '' | a builder-defined feature role
-  caps: string[]; // capabilities can() checks (MVP: [role] when a feature role is held)
+  role: string; // '' | owner | admin | editor | viewer
+  title: string; // '' | a builder-defined feature role
+  caps: string[]; // capabilities can() checks (MVP: [title] when a feature role is held)
   scope: Record<string, unknown>; // advisory data scope, {} when unset
   // True only on the anonymous identity the gateway mints for a public app's
   // no-session visitors (sub 'anon', empty email). Absent on every real viewer.
@@ -64,8 +64,8 @@ export interface SignInput {
   name: string;
   aud: string;
   app?: string;
-  appRole?: string;
   role?: string;
+  title?: string;
   caps?: string[];
   scope?: Record<string, unknown>;
   anon?: boolean;
@@ -116,8 +116,8 @@ export class IdentitySigner {
       tenant: tenantFromEmail(input.email),
       name: input.name,
       app: input.app ?? '',
-      appRole: input.appRole ?? '',
       role: input.role ?? '',
+      title: input.title ?? '',
       caps: input.caps ?? [],
       scope: input.scope ?? {},
       ...(input.anon === true ? { anon: true } : {}),
@@ -226,8 +226,8 @@ function normalizeClaims(claims: Partial<IdentityClaims>): IdentityClaims {
     tenant: claims.tenant ?? '',
     name: claims.name ?? '',
     app: claims.app ?? '',
-    appRole: claims.appRole ?? '',
     role: claims.role ?? '',
+    title: claims.title ?? '',
     caps: Array.isArray(claims.caps) ? claims.caps.filter((c): c is string => typeof c === 'string') : [],
     scope:
       claims.scope !== null && typeof claims.scope === 'object' && !Array.isArray(claims.scope)

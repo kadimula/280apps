@@ -67,7 +67,7 @@ describe('Gateway.mintForApp', () => {
     expect(res.kind).toBe('token');
     if (res.kind !== 'token') return;
     const { claims } = await new IdentityVerifier({ publicJwks, issuer: ISSUER }).verify(res.token, { audience: HOST });
-    expect(claims.appRole).toBe('viewer');
+    expect(claims.role).toBe('viewer');
   });
 
   it('applies a view-as preview from an admin, minting the previewed role', async () => {
@@ -80,6 +80,6 @@ describe('Gateway.mintForApp', () => {
     expect(res.kind).toBe('token');
     if (res.kind !== 'token') return;
     const { claims } = await new IdentityVerifier({ publicJwks, issuer: ISSUER }).verify(res.token, { audience: HOST });
-    expect(claims.appRole).toBe('viewer'); // previewed down from the real admin role
+    expect(claims.role).toBe('viewer'); // previewed down from the real admin role
   });
 });

@@ -29,8 +29,8 @@ describe('public app, anonymous visitor', () => {
     expect(claims.tenant).toBe('');
     expect(claims.name).toBe('Anonymous');
     expect(claims.anon).toBe(true);
-    expect(claims.appRole).toBe('viewer');
-    expect(claims.role).toBe('');
+    expect(claims.role).toBe('viewer');
+    expect(claims.title).toBe('');
     expect(claims.caps).toEqual([]);
     expect(claims.scope).toEqual({});
     expect(claims.aud).toBe(HOST);
@@ -80,7 +80,7 @@ describe('public app, signed-in visitor (D3: no anonymizing branch)', () => {
     const { user, claims } = await new IdentityVerifier({ publicJwks, issuer: ISSUER }).verify(res.token, { audience: HOST });
     expect(user.email).toBe('stranger@anywhere.com');
     expect(claims.anon).toBeUndefined();
-    expect(claims.appRole).toBe('viewer');
+    expect(claims.role).toBe('viewer');
     // Signed-in access on a public app is audited like any other mint.
     expect(store.accessLog.filter((e) => e.allowed)).toHaveLength(1);
   });
@@ -95,7 +95,7 @@ describe('public app, signed-in visitor (D3: no anonymizing branch)', () => {
     expect(res.kind).toBe('token');
     if (res.kind !== 'token') return;
     const { claims } = await new IdentityVerifier({ publicJwks, issuer: ISSUER }).verify(res.token, { audience: HOST });
-    expect(claims.appRole).toBe('editor');
+    expect(claims.role).toBe('editor');
   });
 });
 

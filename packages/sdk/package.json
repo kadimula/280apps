@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "description": "Identity and platform API primitives for applications running on 280.",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kadimula/280apps.git",
+    "directory": "packages/sdk"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"

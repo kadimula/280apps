@@ -158,7 +158,7 @@ class HttpDepotApi implements DepotApi {
     throw new DeployErr({
       code: DeployCode.Unavailable,
       message:
-        'per-app Depot project provisioning is not configured: set a base DEPOT_PROJECT_ID, or inject a DepotApi with project support',
+        'per-app Depot project provisioning is not configured: set DEPOT_BUILD_PROJECT_ID, or inject a DepotApi with project support',
       retryable: false,
     });
   }

@@ -4,6 +4,7 @@
 // transaction-mode pooler (which DDL must not use), and is not reachable at runtime:
 // a standing endpoint that runs DDL is attack surface.
 
+import { PLATFORM_POLICY } from '@280/contracts/platform-config';
 import pg from 'pg';
 import { migrations } from './store/migrations.js';
 
@@ -15,19 +16,13 @@ function dsn(): string {
   return process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL ?? '';
 }
 
-// The platform's tables live in their own schema, defaulting to "platform".
-function schema(): string {
-  const s = process.env.DATABASE_SCHEMA;
-  return s === undefined || s === '' ? 'platform' : s;
-}
-
 export async function migrate(): Promise<void> {
   const url = dsn();
   if (url === '') {
     throw new Error('migrate: set MIGRATE_DATABASE_URL or DATABASE_URL');
   }
   // Validates the schema and throws on a bad identifier before any connection opens.
-  const stmts = migrations(schema());
+  const stmts = migrations(PLATFORM_POLICY.databaseSchema);
 
   const client = new Client({ connectionString: url });
   await client.connect();
@@ -44,7 +39,7 @@ export async function migrate(): Promise<void> {
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   migrate().then(
     () => {
-      console.log(`migrate: applied schema "${schema()}"`);
+      console.log(`migrate: applied schema "${PLATFORM_POLICY.databaseSchema}"`);
     },
     (err: unknown) => {
       console.error(err instanceof Error ? err.message : `migrate: ${String(err)}`);

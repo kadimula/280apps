@@ -6,9 +6,9 @@
 in, with the platform security defaults locked on. `src/worker.js` is the per-app
 harness Worker that fronts it with verify and forward via `@280/gateway`. The
 container network permits only the fixed 280 SDK API host. This is live production
-code: the backend image copies it in as
-`APP_WORKER_ENTRYPOINT` and the roll (`packages/backend/.../cloudflare-container-deployment.ts`)
-deploys `App280Container` as the container class. Both files document their own
+code: the backend image copies it in as the fixed worker entrypoint and the roll
+(`packages/backend/.../cloudflare-container-deployment.ts`) deploys
+`App280Container` as the container class. Both files document their own
 defaults and wiring; read them.
 
 `container.js` locks `enableInternet` off and gives Cloudflare's `ContainerProxy`

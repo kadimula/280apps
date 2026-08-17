@@ -27,6 +27,10 @@ import {
   type Event,
   type ExpiryCounts,
   type Grant,
+  type IntegrationConnection,
+  type IntegrationOAuthAttempt,
+  type IntegrationResource,
+  type IntegrationStatus,
   type OAuthAccount,
   type Session,
   type Store,
@@ -226,6 +230,12 @@ const policyCols = 'app_id, access, access_override, roles, routes, secrets, con
 // The columns a live deploy (re)registers. access_override is deliberately
 // absent: the dashboard's dial survives every redeploy untouched (design D5).
 const registerPolicyCols = 'app_id, access, roles, routes, secrets, config, owner_tenant, updated_at';
+
+const connectionCols =
+  'id, app_id, provider, account_label, credential_envelope, status, created_at, updated_at';
+
+const resourceCols =
+  'id, connection_id, app_id, capability, alias, external_id, display_name, created_at, updated_at';
 
 // Seconds since the epoch, for columns the store writes rather than defaults (it
 // holds no clock of its own). Mirrors migrations' epochDefault.
@@ -438,6 +448,44 @@ function rowToAppSecret(r: Row): AppSecret {
   };
 }
 
+function rowToConnection(r: Row): IntegrationConnection {
+  return {
+    id: r.id,
+    appId: r.app_id,
+    provider: r.provider,
+    accountLabel: r.account_label,
+    credentialEnvelope: r.credential_envelope,
+    status: r.status as IntegrationStatus,
+    createdAt: toNum(r.created_at),
+    updatedAt: toNum(r.updated_at),
+  };
+}
+
+function rowToResource(r: Row): IntegrationResource {
+  return {
+    id: r.id,
+    connectionId: r.connection_id,
+    appId: r.app_id,
+    capability: r.capability,
+    alias: r.alias,
+    externalId: r.external_id,
+    displayName: r.display_name,
+    createdAt: toNum(r.created_at),
+    updatedAt: toNum(r.updated_at),
+  };
+}
+
+function rowToOAuthAttempt(r: Row): IntegrationOAuthAttempt {
+  return {
+    stateHash: r.state_hash,
+    appId: r.app_id,
+    provider: r.provider,
+    payloadEnvelope: r.payload_envelope,
+    expiresAt: toNum(r.expires_at),
+    consumedAt: toNum(r.consumed_at),
+  };
+}
+
 function eventDetail(kv: Record<string, string>): string {
   if (Object.keys(kv).length === 0) {
     return '';
@@ -605,12 +653,17 @@ class PgStore implements Store {
         `DELETE FROM ${this.t('preview_grants')} WHERE expires_at <= $1`,
         [now],
       );
+      const integrationAttempts = await tx.query(
+        `DELETE FROM ${this.t('integration_oauth_attempts')} WHERE expires_at <= $1`,
+        [now],
+      );
       return {
         sessions: sessions.rowCount ?? 0,
         deviceCodes: deviceCodes.rowCount ?? 0,
         rateLimits: rateLimits.rowCount ?? 0,
         tokens: tokens.rowCount ?? 0,
         previewGrants: previewGrants.rowCount ?? 0,
+        integrationAttempts: integrationAttempts.rowCount ?? 0,
       };
     });
   }
@@ -781,6 +834,11 @@ class PgStore implements Store {
       await tx.query(`DELETE FROM ${this.t('app_secrets')} WHERE app_id = $1`, [appId]);
       // Drop preview grants too, else a deleted app's view-as links stay live until the TTL sweep.
       await tx.query(`DELETE FROM ${this.t('preview_grants')} WHERE app_id = $1`, [appId]);
+      // Integration credentials, resource bindings, and any in-flight OAuth state
+      // go with the app, so a re-created app id never inherits another life's connection.
+      await tx.query(`DELETE FROM ${this.t('integration_resources')} WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('integration_connections')} WHERE app_id = $1`, [appId]);
+      await tx.query(`DELETE FROM ${this.t('integration_oauth_attempts')} WHERE app_id = $1`, [appId]);
       // insertEvent, not insertAppEvent: the app row it would read the user
       // from no longer exists.
       await this.insertEvent(tx, {
@@ -1183,6 +1241,168 @@ class PgStore implements Store {
       [appId],
     );
     return res.rows.map((row) => String(row.name));
+  }
+
+  async createOAuthAttempt(a: IntegrationOAuthAttempt): Promise<void> {
+    await this.db.query(
+      `INSERT INTO ${this.t('integration_oauth_attempts')}
+         (state_hash, app_id, provider, payload_envelope, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+      [a.stateHash, a.appId, a.provider, a.payloadEnvelope, a.expiresAt],
+    );
+  }
+
+  // Marks the state consumed and returns it only if it was fresh: a replayed callback
+  // updates zero rows and gets null, so a code can be exchanged at most once.
+  async consumeOAuthAttempt(stateHash: string, now: number): Promise<IntegrationOAuthAttempt | null> {
+    const res = await this.db.query(
+      `UPDATE ${this.t('integration_oauth_attempts')} SET consumed_at = $2
+       WHERE state_hash = $1 AND consumed_at = 0 AND expires_at > $2
+       RETURNING state_hash, app_id, provider, payload_envelope, expires_at, consumed_at`,
+      [stateHash, now],
+    );
+    return res.rows.length ? rowToOAuthAttempt(res.rows[0]) : null;
+  }
+
+  async putConnection(c: IntegrationConnection, reconnect: boolean): Promise<void> {
+    await this.inTx(async (tx) => {
+      await tx.query(
+        `INSERT INTO ${this.t('integration_connections')}
+           (id, app_id, provider, account_label, credential_envelope, status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6, ${epochNow})
+         ON CONFLICT (app_id, provider) DO UPDATE SET
+           account_label       = EXCLUDED.account_label,
+           credential_envelope = EXCLUDED.credential_envelope,
+           status              = EXCLUDED.status,
+           updated_at          = ${epochNow}`,
+        [c.id, c.appId, c.provider, c.accountLabel, c.credentialEnvelope, c.status],
+      );
+      await this.insertAppEvent(
+        tx,
+        c.appId,
+        '',
+        reconnect ? EventKind.IntegrationReauthorized : EventKind.IntegrationConnected,
+        eventDetail({ provider: c.provider, account: c.accountLabel }),
+      );
+    });
+  }
+
+  async connectionById(appId: string, id: string): Promise<IntegrationConnection | null> {
+    const res = await this.db.query(
+      `SELECT ${connectionCols} FROM ${this.t('integration_connections')} WHERE app_id = $1 AND id = $2`,
+      [appId, id],
+    );
+    return res.rows.length ? rowToConnection(res.rows[0]) : null;
+  }
+
+  async connectionByProvider(appId: string, provider: string): Promise<IntegrationConnection | null> {
+    const res = await this.db.query(
+      `SELECT ${connectionCols} FROM ${this.t('integration_connections')} WHERE app_id = $1 AND provider = $2`,
+      [appId, provider],
+    );
+    return res.rows.length ? rowToConnection(res.rows[0]) : null;
+  }
+
+  async connectionsByApp(appId: string): Promise<IntegrationConnection[]> {
+    const res = await this.db.query(
+      `SELECT ${connectionCols} FROM ${this.t('integration_connections')} WHERE app_id = $1 ORDER BY provider`,
+      [appId],
+    );
+    return res.rows.map(rowToConnection);
+  }
+
+  async updateConnectionCredential(id: string, envelope: string): Promise<void> {
+    await this.db.query(
+      `UPDATE ${this.t('integration_connections')}
+       SET credential_envelope = $2, updated_at = ${epochNow} WHERE id = $1`,
+      [id, envelope],
+    );
+  }
+
+  async setConnectionStatus(id: string, status: IntegrationStatus): Promise<void> {
+    await this.db.query(
+      `UPDATE ${this.t('integration_connections')} SET status = $2, updated_at = ${epochNow} WHERE id = $1`,
+      [id, status],
+    );
+  }
+
+  async deleteConnection(appId: string, id: string): Promise<IntegrationConnection | null> {
+    return this.inTx(async (tx) => {
+      const found = await tx.query(
+        `SELECT ${connectionCols} FROM ${this.t('integration_connections')} WHERE app_id = $1 AND id = $2`,
+        [appId, id],
+      );
+      if (found.rows.length === 0) return null;
+      const conn = rowToConnection(found.rows[0]);
+      await tx.query(`DELETE FROM ${this.t('integration_resources')} WHERE connection_id = $1`, [id]);
+      await tx.query(`DELETE FROM ${this.t('integration_connections')} WHERE app_id = $1 AND id = $2`, [appId, id]);
+      await this.insertAppEvent(
+        tx,
+        appId,
+        '',
+        EventKind.IntegrationDisconnected,
+        eventDetail({ provider: conn.provider, account: conn.accountLabel }),
+      );
+      return conn;
+    });
+  }
+
+  async putResource(r: IntegrationResource): Promise<void> {
+    await this.inTx(async (tx) => {
+      await tx.query(
+        `INSERT INTO ${this.t('integration_resources')}
+           (id, connection_id, app_id, capability, alias, external_id, display_name, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, ${epochNow})
+         ON CONFLICT (app_id, capability, alias) DO UPDATE SET
+           connection_id = EXCLUDED.connection_id,
+           external_id   = EXCLUDED.external_id,
+           display_name  = EXCLUDED.display_name,
+           updated_at    = ${epochNow}`,
+        [r.id, r.connectionId, r.appId, r.capability, r.alias, r.externalId, r.displayName],
+      );
+      await this.insertAppEvent(
+        tx,
+        r.appId,
+        '',
+        EventKind.IntegrationResourceAdded,
+        eventDetail({ capability: r.capability, alias: r.alias, name: r.displayName }),
+      );
+    });
+  }
+
+  async resourceByAlias(appId: string, capability: string, alias: string): Promise<IntegrationResource | null> {
+    const res = await this.db.query(
+      `SELECT ${resourceCols} FROM ${this.t('integration_resources')}
+       WHERE app_id = $1 AND capability = $2 AND alias = $3`,
+      [appId, capability, alias],
+    );
+    return res.rows.length ? rowToResource(res.rows[0]) : null;
+  }
+
+  async resourcesByConnection(connectionId: string): Promise<IntegrationResource[]> {
+    const res = await this.db.query(
+      `SELECT ${resourceCols} FROM ${this.t('integration_resources')} WHERE connection_id = $1 ORDER BY capability, alias`,
+      [connectionId],
+    );
+    return res.rows.map(rowToResource);
+  }
+
+  async deleteResource(appId: string, id: string): Promise<boolean> {
+    return this.inTx(async (tx) => {
+      const res = await tx.query(
+        `DELETE FROM ${this.t('integration_resources')} WHERE app_id = $1 AND id = $2
+         RETURNING capability, alias, display_name`,
+        [appId, id],
+      );
+      if (res.rows.length === 0) return false;
+      await this.insertAppEvent(
+        tx,
+        appId,
+        '',
+        EventKind.IntegrationResourceRemoved,
+        eventDetail({ capability: res.rows[0].capability, alias: res.rows[0].alias, name: res.rows[0].display_name }),
+      );
+      return true;
+    });
   }
 
   // A single append to the events table, denormalizing the user from the app row.

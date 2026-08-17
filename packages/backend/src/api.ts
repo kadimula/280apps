@@ -33,6 +33,8 @@ import {
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
 import { docsRoutes } from './docs.js';
+import { sdkIntegrationRoutes } from './integrations/sdk-routes.js';
+import { IntegrationError, type IntegrationService } from './integrations/service.js';
 import { sharePage } from './sharepage.js';
 import { Auth, AuthError } from './authsvc.js';
 import { markAccount, observe, type HonoEnv, type Logger } from './observe.js';
@@ -66,6 +68,10 @@ const DASHBOARD_CONFIRM = 'delete';
 // middleware re-mints ~120s identity tokens from it while the iframe is open, and
 // the dashboard re-issues a grant when it lapses.
 const PREVIEW_GRANT_TTL_SECS = 15 * 60;
+
+// The browser-bound state cookie for an integration OAuth flow, distinct from the
+// dashboard login cookie so the two never collide.
+const INTEGRATION_OAUTH_COOKIE = '280_int_oauth';
 
 export interface ServerConfig {
   // buildDeps constructs the I/O container from the Hono context.
@@ -134,11 +140,26 @@ export class Server {
     // app host's /__280/preview for a gateway-minted identity.
     app.post('/internal/apps/:app/preview-grant', this.route((c) => this.handlePreviewGrant(c)));
 
+    // Integrations: owner-managed connection lifecycle, session-scoped to an app the
+    // caller owns. The OAuth callback below is a browser navigation with no session;
+    // the one-time state binds it to the app that started the flow.
+    app.get('/internal/apps/:app/integrations', this.route((c) => this.handleIntegrationsList(c)));
+    app.get('/internal/apps/:app/integrations/:provider/start', this.route((c) => this.handleIntegrationStart(c)));
+    app.post('/internal/apps/:app/integrations/:id/selector-session', this.route((c) => this.handleIntegrationSelector(c)));
+    app.post('/internal/apps/:app/integrations/:id/resources', this.route((c) => this.handleIntegrationResourceAdd(c)));
+    app.post('/internal/apps/:app/integrations/resources/delete', this.route((c) => this.handleIntegrationResourceDelete(c)));
+    app.delete('/internal/apps/:app/integrations/:id', this.route((c) => this.handleIntegrationDisconnect(c)));
+    app.get('/integrations/:provider/callback', this.route((c) => this.handleIntegrationCallback(c)));
+
     app.get('/healthz', (c) => c.text('ok\n'));
 
     // Agent-facing product docs, unauthenticated; the frontend proxies these at
     // their public URLs. Owned by docs.ts.
     app.route('/v1/docs', docsRoutes());
+
+    // The runtime capability surface, identity-verified per request. Owned by
+    // integrations/sdk-routes.ts; it reads the request-scoped service off the context.
+    app.route('/v1/sdk/integrations', sdkIntegrationRoutes());
 
     return app;
   }
@@ -747,6 +768,134 @@ export class Server {
     return appRoleAtLeast(a, b) ? a : b;
   }
 
+  // integrations resolves the request-scoped integration service or refuses: an unset
+  // service (no dedicated Google client, or no encryption key) is a closed door.
+  private integrations(c: Context<HonoEnv>): IntegrationService {
+    const svc = this.deps(c).integrations;
+    if (svc === undefined) {
+      throw new DeployErr({ code: DeployCode.NotFound, message: 'integrations are not configured' });
+    }
+    return svc;
+  }
+
+  // Maps the service's transport-agnostic error onto a seam error the client renders.
+  private mapIntegrationErr(err: unknown): never {
+    if (err instanceof IntegrationError) {
+      const code =
+        err.kind === 'not_found'
+          ? DeployCode.NotFound
+          : err.kind === 'unavailable'
+            ? DeployCode.Unavailable
+            : DeployCode.PreflightRejected;
+      throw new DeployErr({ code, message: err.message, retryable: err.kind === 'unavailable' });
+    }
+    throw err;
+  }
+
+  private async handleIntegrationsList(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    try {
+      return c.json({ providers: svc.catalog(), connections: await svc.listConnections(app.id) });
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationStart(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    try {
+      const { authUrl, stateCookie } = await svc.startConnection({
+        appId: app.id,
+        provider: c.req.param('provider') ?? '',
+        returnPath: c.req.query('redirect') ?? '',
+      });
+      setCookie(c, INTEGRATION_OAUTH_COOKIE, stateCookie, this.cookieOpts(c, 600));
+      return c.redirect(authUrl, 302);
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationCallback(c: Context<HonoEnv>): Promise<Response> {
+    const svc = this.integrations(c);
+    try {
+      const { redirect } = await svc.completeConnection({
+        provider: c.req.param('provider') ?? '',
+        code: c.req.query('code') ?? '',
+        stateQuery: c.req.query('state') ?? '',
+        stateCookie: getCookie(c, INTEGRATION_OAUTH_COOKIE) ?? '',
+      });
+      deleteCookie(c, INTEGRATION_OAUTH_COOKIE, this.cookieOpts(c, 0));
+      return c.redirect(redirect, 302);
+    } catch (err) {
+      deleteCookie(c, INTEGRATION_OAUTH_COOKIE, this.cookieOpts(c, 0));
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationSelector(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    try {
+      c.header('Cache-Control', 'no-store');
+      return c.json(await svc.selectorSession(app.id, c.req.param('id') ?? ''));
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationResourceAdd(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    const req = await readJson(c, SMALL_LIMIT, integrationResourceSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the resource',
+      appendReason: false,
+    });
+    try {
+      return c.json(
+        await svc.registerResource({
+          appId: app.id,
+          connectionId: c.req.param('id') ?? '',
+          capability: req.capability,
+          alias: req.alias,
+          externalId: req.externalId,
+        }),
+      );
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationResourceDelete(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    const req = await readJson(c, SMALL_LIMIT, integrationResourceDeleteSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the request',
+      appendReason: false,
+    });
+    try {
+      await svc.removeResource(app.id, req.resourceId);
+      return c.body(null, 204);
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
+  private async handleIntegrationDisconnect(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    try {
+      await svc.disconnect(app.id, c.req.param('id') ?? '');
+      return c.body(null, 204);
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
   // handleAuthStart sends the browser to the provider's consent screen. A failure
   // bounces back to the frontend login page rather than showing a bare error.
   private async handleAuthStart(c: Context<HonoEnv>): Promise<Response> {
@@ -1084,6 +1233,21 @@ const secretPutSchema = {
       throw new Error('expected string name and value');
     }
     return { name: object.name, value: object.value };
+  },
+};
+
+const integrationResourceSchema = {
+  parse(u: unknown): { capability: string; alias: string; externalId: string } {
+    const o = asObject(u);
+    return { capability: str(o.capability), alias: str(o.alias), externalId: str(o.externalId) };
+  },
+};
+
+const integrationResourceDeleteSchema = {
+  parse(u: unknown): { resourceId: string } {
+    const o = asObject(u);
+    if (typeof o.resourceId !== 'string' || o.resourceId === '') throw new Error('resourceId must be a non-empty string');
+    return { resourceId: o.resourceId };
   },
 };
 

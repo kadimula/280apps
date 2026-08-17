@@ -2,6 +2,10 @@ import { DeployCode, type DeployError } from '@280/contracts';
 import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import { Auth } from './authsvc.js';
 import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
+import { IntegrationService } from './integrations/service.js';
+import { ProviderRegistry } from './integrations/registry.js';
+import { GoogleWorkspaceProvider } from './integrations/google/provider.js';
+import { SdkIdentityVerifier } from './integrations/sdk-identity.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
 import type { ContainerBuilder } from './runtime/container/container.js';
 import type { ConfigDelivery, ExpiryCounts, Store } from './seams.js';
@@ -87,6 +91,46 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
   });
 }
 
+// buildIntegrations wires the third-party integration core, or returns undefined when
+// it cannot run: no dedicated Google integration client, or no secret encryption key
+// to protect credentials. Undefined leaves the integration surface inert (404), never
+// fatal, matching buildAuth. The SDK boundary verifies identity against the gateway's
+// published JWKS, derived from the identity issuer origin.
+export function buildIntegrations(
+  store: Store,
+  config: Config,
+  log: Logger,
+  cipher?: SecretCipher,
+): IntegrationService | undefined {
+  const g = config.googleIntegration;
+  if (g.clientId === '' || g.clientSecret === '') {
+    log.warn('integrations disabled: set GOOGLE_INTEGRATION_CLIENT_ID/GOOGLE_INTEGRATION_CLIENT_SECRET to enable them');
+    return undefined;
+  }
+  if (cipher === undefined) {
+    log.warn('integrations disabled: credential encryption requires APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY');
+    return undefined;
+  }
+  const registry = new ProviderRegistry([
+    new GoogleWorkspaceProvider({ clientId: g.clientId, clientSecret: g.clientSecret }),
+  ]);
+  const identity = new SdkIdentityVerifier({
+    jwksUri: `${config.idIssuer.replace(/\/$/, '')}/.well-known/280-identity.jwks`,
+    issuer: config.idIssuer,
+  });
+  return new IntegrationService({
+    store,
+    cipher,
+    registry,
+    identity,
+    config: {
+      apiOrigin: config.apiOrigin,
+      frontendOrigin: config.dashboardOrigin,
+      picker: { apiKey: g.pickerApiKey, projectNumber: g.projectNumber },
+    },
+  });
+}
+
 // sweepExpired is the scheduled cleanup's core, factored out of the Worker so it is
 // testable against any Store: delete expired sessions, device codes, lapsed
 // login-rate windows, and machine tokens past their ttl, and log the counts.
@@ -118,6 +162,8 @@ export async function sweepExpired(
     deviceCodes: counts.deviceCodes,
     rateLimits: counts.rateLimits,
     tokens: counts.tokens,
+    previewGrants: counts.previewGrants,
+    integrationAttempts: counts.integrationAttempts,
     waitingSecrets,
   });
   return counts;

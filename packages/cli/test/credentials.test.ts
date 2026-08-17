@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as credentials from '../src/credentials.js';
 import { tmpHome } from './helpers.js';
@@ -56,6 +57,18 @@ describe('credentials', () => {
     if (process.platform !== 'win32') {
       const mode = fs.statSync(path.join(home, 'credentials')).mode & 0o777;
       expect(mode).toBe(0o600);
+    }
+  });
+
+  it('creates a missing credentials directory securely', () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), '280-parent-'));
+    home = path.join(parent, '.280');
+    process.env.TWO80_HOME = home;
+    credentials.save({ token: 'tok' });
+    expect(credentials.load().creds.token).toBe('tok');
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(home).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(home, 'credentials')).mode & 0o777).toBe(0o600);
     }
   });
 

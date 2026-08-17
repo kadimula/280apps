@@ -1,31 +1,18 @@
-// homeview is the bare `two80` content-first view (AXI §8): an agent running with no
-// arguments sees live, directory-scoped state, not a usage manual. This payload is
-// also what the session-start hook injects, so it is budgeted to ~10 lines and
-// never dials the network: login state is read from the credentials file.
-
 import os from 'node:os';
 import { encode } from '@toon-format/toon';
 import * as config from './config.js';
 import * as credentials from './credentials.js';
 import * as output from './output.js';
 import type { Ctx } from './app.js';
-
-// DESCRIPTION is the tool's one-sentence identity. Exported so the skill generator
-// renders the same line, keeping the installable skill a single source of truth.
 export const DESCRIPTION = 'Deploy and share your app with one command.';
-
 export interface HomeParams {
   binPath: string; // absolute path of the current executable
   root: string; // working directory (project root)
   api: string; // resolved platform endpoint
 }
-
-// render builds the home view as a TOON document. Pure and offline, safe on every
-// session start; returns the string without a trailing newline so callers frame it.
 export function render(params: HomeParams): string {
   const { cfg, found } = config.load(params.root);
   const { creds, loggedIn } = credentials.load();
-
   const doc: Record<string, unknown> = {
     bin: collapseHome(params.binPath),
     description: DESCRIPTION,
@@ -35,30 +22,20 @@ export function render(params: HomeParams): string {
   };
   return encode(doc);
 }
-
-// cmdHome renders the home view to stdout. Exit 0: no command is answered with
-// state, not an error.
 export function cmdHome(ctx: Ctx): number {
   output.text(ctx.env.streams, render({ binPath: ctx.env.binPath, root: ctx.env.root, api: ctx.api }));
   return output.ExitOK;
 }
-
 function appLine(found: boolean, cfg: config.Config): string {
   if (!found) return 'none in this directory';
-  // No comma: the TOON encoder would quote a value containing one, and unquoted
-  // reads cleaner.
   const base = `${cfg.name} (${cfg.framework})`;
   return cfg.appId !== '' ? `${base} deployed` : `${base} not yet deployed`;
 }
-
 function helpFor(found: boolean, cfg: config.Config): string[] {
   if (!found) return ['Run `two80 push` to create and deploy this app'];
   if (cfg.appId === '') return ['Run `two80 push` to deploy'];
   return ['Run `two80 push` to redeploy', `Run \`two80 delete --yes ${cfg.name}\` to remove it`];
 }
-
-// collapseHome rewrites a leading home directory to `~` so the bin path is stable
-// and readable across machines (AXI §10).
 function collapseHome(p: string): string {
   const home = os.homedir();
   if (home && (p === home || p.startsWith(home + '/'))) {

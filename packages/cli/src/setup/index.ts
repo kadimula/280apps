@@ -1,7 +1,3 @@
-// `two80 setup`: opt-in command that registers a SessionStart hook running the bare
-// `two80` home view for Claude Code, Codex, and OpenCode, plus the on-demand skill.
-// Everything it writes is JSON-merged or managed-file safe, never overwriting.
-
 import fs from 'node:fs';
 import type { Ctx } from '../app.js';
 import * as output from '../output.js';
@@ -11,9 +7,6 @@ import * as codex from './codex.js';
 import * as opencode from './opencode.js';
 import * as skill from './skill.js';
 import type { InstallResult } from './result.js';
-
-// Three modes: default installs hooks + skill, --check is the CI staleness gate,
-// --write regenerates the committed skill.
 export function cmdSetup(ctx: Ctx): number {
   const s = ctx.env.streams;
   const p = output.parseFlags(s, 'setup', ctx.args, [
@@ -25,12 +18,10 @@ export function cmdSetup(ctx: Ctx): number {
     output.text(s, SETUP_HELP);
     return output.ExitOK;
   }
-
   if (p.values.check) return checkSkill(ctx);
   if (p.values.write) return writeSkill(ctx);
   return installAll(ctx);
 }
-
 function installAll(ctx: Ctx): number {
   const s = ctx.env.streams;
   const command = resolveHookCommand(ctx.env.binPath, process.env.PATH ?? '');
@@ -40,15 +31,12 @@ function installAll(ctx: Ctx): number {
     opencode.install(ctx.env.root, command),
     skill.install(ctx.env.root),
   ];
-
   return output.result(s, {
     setup: `hooks for claude, codex, opencode + skill`,
     installed: results.map((r) => ({ target: r.target, action: r.action, path: r.path })),
     help: ['Restart the agent session so the SessionStart hook loads this directory’s app state'],
   });
 }
-
-// CI staleness gate: fresh exits 0; stale or missing throws a structured failure.
 function checkSkill(ctx: Ctx): number {
   const s = ctx.env.streams;
   const r = skill.check();
@@ -59,14 +47,12 @@ function checkSkill(ctx: Ctx): number {
     'run two80 setup --write to regenerate it, then commit the change',
   );
 }
-
 function writeSkill(ctx: Ctx): number {
   const s = ctx.env.streams;
   const path = skill.committedPath();
   fs.writeFileSync(path, skill.generate());
   return output.result(s, { wrote: path });
 }
-
 const SETUP_HELP = `two80 setup - register a session-start hook (Claude Code, Codex, OpenCode) + install the skill
 
 Runs the bare \`two80\` home view at session start so the agent sees this

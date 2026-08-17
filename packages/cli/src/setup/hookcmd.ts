@@ -1,16 +1,9 @@
-// Resolves the shell command a session-start hook runs to print the bare `two80`
-// home view: the portable name `two80` when it resolves to this executable, else
-// the absolute path, so a hook never silently runs a different binary.
-
 import fs from 'node:fs';
 import path from 'node:path';
-
-// Filesystem seam, injected so resolution is unit-testable without real symlinks.
 export interface BinProbe {
   realpath(p: string): string; // resolved absolute path; throws if missing
   isFile(p: string): boolean; // exists and is a regular file (follows symlinks)
 }
-
 const nodeProbe: BinProbe = {
   realpath: (p) => fs.realpathSync(p),
   isFile: (p) => {
@@ -21,14 +14,9 @@ const nodeProbe: BinProbe = {
     }
   },
 };
-
-// On Windows the launcher is a `.cmd`/`.exe` shim; on unix it is the bare name.
 function candidateNames(): string[] {
   return process.platform === 'win32' ? ['two80.cmd', 'two80.exe', 'two80.bat', 'two80'] : ['two80'];
 }
-
-// Walks PATH the way a shell does (first match wins) and returns portable `two80`
-// only when that first match resolves to this executable, else the absolute path.
 export function resolveHookCommand(binPath: string, pathEnv: string, probe: BinProbe = nodeProbe): string {
   const target = safeReal(binPath, probe);
   const dirs = pathEnv.split(path.delimiter).filter((d) => d !== '');
@@ -37,13 +25,11 @@ export function resolveHookCommand(binPath: string, pathEnv: string, probe: BinP
     for (const name of names) {
       const candidate = path.join(dir, name);
       if (!probe.isFile(candidate)) continue;
-      // First `two80` on PATH is what the shell would run; decide on it alone.
       return safeReal(candidate, probe) === target ? 'two80' : quote(binPath);
     }
   }
   return quote(binPath);
 }
-
 function safeReal(p: string, probe: BinProbe): string {
   try {
     return probe.realpath(p);
@@ -51,13 +37,9 @@ function safeReal(p: string, probe: BinProbe): string {
     return path.resolve(p);
   }
 }
-
-// Double-quotes a path containing whitespace so the hook survives a space in the
-// install path; bare otherwise.
 export function quote(p: string): string {
   return /\s/.test(p) ? `"${p}"` : p;
 }
-
 function program(cmd: string): string {
   const trimmed = cmd.trim();
   if (trimmed.startsWith('"')) {
@@ -66,10 +48,6 @@ function program(cmd: string): string {
   }
   return trimmed.split(/\s+/)[0] ?? '';
 }
-
-// Whether a hook command was written by this tool, so a reinstall repairs it
-// instead of appending a duplicate. Matches the two forms resolveHookCommand
-// emits: the portable `two80` name, and our compiled entry at `dist/bin.js`.
 export function isOurCommand(cmd: string): boolean {
   const prog = program(cmd);
   const base = path.basename(prog).toLowerCase().replace(/\.(exe|cmd|bat)$/, '');

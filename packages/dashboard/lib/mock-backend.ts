@@ -1,7 +1,10 @@
 import type { App } from "@/lib/apps";
 import type { DocsCapabilities } from "@/lib/docs";
 import type { AppAccess } from "@/lib/grants";
-import type { IntegrationConnection } from "@/lib/integrations";
+import type {
+  IntegrationConnection,
+  IntegrationRequirement,
+} from "@/lib/integrations";
 import { MOCK_SHEETS } from "@/lib/mock-sheets";
 import type { SessionUser } from "@/lib/session";
 
@@ -163,6 +166,15 @@ function accessFor(appId: string): MockAccess {
 const MOCK_PROVIDERS = [{ provider: "google", capabilities: ["google-sheets"] }];
 const mockConnections = new Map<string, IntegrationConnection[]>();
 let mockIntSeq = 0;
+
+// The integration requirements each app declared in its 280.json, mirroring the
+// live app_policies.integrations slice. app-notes shows the parked-handoff case:
+// a required alias the owner must bind before the deploy can go live.
+const mockRequirements: Record<string, IntegrationRequirement[]> = {
+  "app-notes": [
+    { alias: "orders", capability: "google-sheets", operations: ["read", "append"] },
+  ],
+};
 
 function connectionsFor(appId: string): IntegrationConnection[] {
   let list = mockConnections.get(appId);
@@ -398,9 +410,11 @@ export function mockResponse(path: string, init?: RequestInit): Response {
   // the dialog can offer a Connect row.
   const integrationsMatch = path.match(/^\/internal\/apps\/([^/]+)\/integrations$/);
   if (method === "GET" && integrationsMatch) {
+    const appId = decodeURIComponent(integrationsMatch[1]);
     return json({
       providers: MOCK_PROVIDERS,
-      connections: connectionsFor(decodeURIComponent(integrationsMatch[1])),
+      connections: connectionsFor(appId),
+      requirements: mockRequirements[appId] ?? [],
     });
   }
 

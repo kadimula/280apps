@@ -14,7 +14,8 @@ import { IntegrationService } from '../src/integrations/service.js';
 import { ProviderRegistry } from '../src/integrations/registry.js';
 import { GoogleWorkspaceProvider } from '../src/integrations/google/provider.js';
 import { SdkIdentityVerifier } from '../src/integrations/sdk-identity.js';
-import { newPlatform, testDeps } from './helpers/harness.js';
+import { State } from '@280/contracts';
+import { newPlatform, testDeps, testManifest } from './helpers/harness.js';
 import { newAuth, signIn, cookiePair } from './helpers/auth.js';
 
 const INT_COOKIE = '280_int_oauth';
@@ -128,6 +129,7 @@ interface World {
   session: string;
   google: GoogleState;
   integrations: IntegrationService;
+  store: Awaited<ReturnType<typeof newPlatform>>['store'];
   identityToken: (over?: Record<string, unknown>) => Promise<string>;
   advance: (secs: number) => void;
   cleanup: () => Promise<void>;
@@ -185,7 +187,7 @@ async function makeWorld(): Promise<World> {
   const identityToken = (over: Record<string, unknown> = {}): Promise<string> =>
     signer.sign({ sub: 'g-owner', email: 'owner@acme.com', name: 'Owner', aud: 'orders.280apps.run', app: 'app_orders', role: 'owner', ...over });
 
-  return { app, session, google: google.state, integrations, identityToken, advance: (s) => (clock += s), cleanup: harness.cleanup };
+  return { app, session, google: google.state, integrations, store: harness.store, identityToken, advance: (s) => (clock += s), cleanup: harness.cleanup };
 }
 
 async function connect(w: World): Promise<string> {
@@ -310,6 +312,38 @@ describe('integrations end to end', () => {
     const after = await sdk(w, 'append', await w.identityToken(), { resource: 'orders', range: 'Orders!A:D', values: [['x']] });
     expect(after.status).toBe(404);
     expect((await after.json()) as { error: string }).toMatchObject({ error: 'not_connected' });
+  });
+
+  it('surfaces declared required aliases and their readiness for the handoff', async () => {
+    world = await makeWorld();
+    const w = world;
+
+    // A parked deploy declares a required alias. Its policy is not registered until
+    // it goes live, so the list must read the requirement from the deploy manifest.
+    const { manifest } = testManifest('parked worker');
+    manifest.integrations = [{ alias: 'orders', capability: 'google-sheets', operations: ['read', 'append'] }];
+    await w.store.openDeploy({ appId: 'app_orders', id: 'dep_parked', manifest, state: State.WaitingSecrets, failure: null });
+
+    const listUrl = '/internal/apps/app_orders/integrations';
+    type Catalog = {
+      connections: Array<{ id: string; resources: Array<{ capability: string; alias: string }> }>;
+      requirements: Array<{ alias: string; capability: string; operations: string[] }>;
+    };
+    const before = (await (await w.app.request(listUrl, { headers: { Cookie: w.session } })).json()) as Catalog;
+    expect(before.requirements).toEqual([
+      { alias: 'orders', capability: 'google-sheets', operations: ['read', 'append'] },
+    ]);
+    // Unbound: no connection carries a matching resource yet.
+    const bound = (cat: Catalog) =>
+      cat.connections.some((c) => c.resources.some((r) => r.capability === 'google-sheets' && r.alias === 'orders'));
+    expect(bound(before)).toBe(false);
+
+    // Binding the required alias (the connect helper connects and aliases 'orders')
+    // readies it — the same state resumeWaiting keys on to un-park the deploy.
+    await connect(w);
+    const after = (await (await w.app.request(listUrl, { headers: { Cookie: w.session } })).json()) as Catalog;
+    expect(after.requirements).toHaveLength(1);
+    expect(bound(after)).toBe(true);
   });
 
   it('refuses a token minted for another app (cross-app replay)', async () => {

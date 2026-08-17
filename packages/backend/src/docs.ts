@@ -4,6 +4,12 @@
 
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
+import {
+  CAPABILITY_CATALOG_VERSION,
+  capabilityNames,
+  capabilityOperations,
+  type CapabilityName,
+} from '@280/contracts';
 
 // Structured capabilities consumed by the current landing page docs route.
 
@@ -168,10 +174,46 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
   ],
 };
 
+// Every SDK capability and its operations, derived from the single @280/contracts
+// catalog so docs, the styled matrix, and runtime validation cannot drift. Adding a
+// capability or operation to the catalog is the only edit; everything here follows.
+export interface CapabilityDoc {
+  slug: CapabilityName;
+  title: string;
+  operations: string[];
+}
+
+function titleFromSlug(slug: string): string {
+  return slug
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+export function capabilityDocs(): CapabilityDoc[] {
+  return capabilityNames().map((slug) => ({
+    slug,
+    title: titleFromSlug(slug),
+    operations: [...capabilityOperations(slug)],
+  }));
+}
+
+// The catalog rendered as a matrix group: one supported row per capability, its
+// operations spelled out. Generated, never hand-edited.
+export const SDK_CAPABILITIES: CapabilityGroup = {
+  name: 'SDK capabilities (@two80/sdk)',
+  features: capabilityDocs().map((c) => ({
+    name: c.title,
+    status: 'supported',
+    note: `Operations: ${c.operations.join(', ')}`,
+  })),
+};
+
 // The full structured matrix consumed by the JSON docs endpoint.
 export const SUPPORT_MATRIX: CapabilityGroup[] = [
   ...DEPLOY_STACKS,
   RUNTIME_LIMITS,
+  SDK_CAPABILITIES,
   PLATFORM_FEATURES,
 ];
 
@@ -190,6 +232,75 @@ export function docsCapabilities(): DocsCapabilities {
   return { matrix: SUPPORT_MATRIX, requirement: CAPABILITY_REQUIREMENT };
 }
 
+function stackRows(): string {
+  return DEPLOY_STACKS.flatMap((group) =>
+    group.features.map((f) => `| ${group.name} | ${f.name}${f.note ? ` — ${f.note}` : ''} |`),
+  ).join('\n');
+}
+
+function unsupportedRows(): string {
+  return RUNTIME_LIMITS.features
+    .filter((f) => f.status === 'unsupported')
+    .map((f) => `| ${f.name} | ${f.note ?? ''} |`)
+    .join('\n');
+}
+
+// The capability reference agents read before pushing. The capability/operation
+// section is generated from the @280/contracts catalog: a capability or operation
+// missing from the catalog cannot appear here, and a new one appears automatically.
+export function capabilitiesMarkdown(): string {
+  const capabilityTable = capabilityDocs()
+    .map((c) => `| ${c.title} | \`${c.slug}\` | ${c.operations.map((op) => `\`${op}\``).join(', ')} |`)
+    .join('\n');
+
+  return `# 280 capability reference
+
+Generated from the \`@280/contracts\` capability catalog (version ${CAPABILITY_CATALOG_VERSION}). This is the authoritative list of what a 280 app may do; \`setup.md\` links here. If a required operation is not listed as supported, stop and report it rather than working around the network boundary.
+
+## Supported stacks
+
+${CAPABILITY_REQUIREMENT}
+
+| Stack | Notes |
+| --- | --- |
+${stackRows()}
+
+## SDK capabilities
+
+Every external integration goes through \`@two80/sdk\`. The container reaches only the 280 API, which authorizes each call for the current app and user; the app holds no provider credentials. Each capability below is a factory that takes the incoming request and returns a typed client.
+
+| Capability | Slug | Operations |
+| --- | --- | --- |
+${capabilityTable}
+
+Declare every capability the app uses in \`280.json\` so push can gate the deploy until it is connected:
+
+    { "integrations": [${capabilityDocs().map((c) => `"${c.slug}"`).join(', ')}] }
+
+### Framework example: Google Sheets
+
+    import { googleSheets } from "@two80/sdk";
+
+    // In a Next.js route handler or Server Action, pass the incoming request.
+    const sheets = googleSheets(request);
+    await sheets.read({ resource, range });            // -> { range, majorDimension, values }
+    await sheets.append({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+    await sheets.update({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+
+\`resource\` is the spreadsheet id, \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. See the \`@two80/sdk\` README for request-scoping details.
+
+## Explicitly unsupported
+
+The container runs full Node 20, so native modules, child processes, and local disk writes all work. What the boundary forbids:
+
+| Not supported | Do this instead |
+| --- | --- |
+${unsupportedRows()}
+
+Provider SDKs, raw API calls, connection strings, and any app-managed credential are unsupported by design: route the need through an \`@two80/sdk\` capability, or report it as missing.
+`;
+}
+
 const SETUP_MARKDOWN = readFileSync(new URL('./docs/setup.md', import.meta.url), 'utf8');
 
 const MARKDOWN_HEADERS = {
@@ -205,6 +316,7 @@ export function docsRoutes(): Hono {
   const docs = new Hono();
 
   docs.get('/setup.md', (c) => c.body(SETUP_MARKDOWN, 200, MARKDOWN_HEADERS));
+  docs.get('/capabilities.md', (c) => c.body(capabilitiesMarkdown(), 200, MARKDOWN_HEADERS));
   docs.get('/capabilities', (c) =>
     c.json(docsCapabilities(), 200, {
       'Cache-Control': 'public, max-age=300',

@@ -1,6 +1,8 @@
 import type { App } from "@/lib/apps";
 import type { DocsCapabilities } from "@/lib/docs";
 import type { AppAccess } from "@/lib/grants";
+import type { IntegrationConnection } from "@/lib/integrations";
+import { MOCK_SHEETS } from "@/lib/mock-sheets";
 import type { SessionUser } from "@/lib/session";
 
 // The stand-in backend. When MOCK_BACKEND is on, apiFetch routes every call here
@@ -153,6 +155,25 @@ function accessFor(appId: string): MockAccess {
   }
   return state;
 }
+
+// The integration catalog and per-app connections the Integrations dialog reads,
+// held in memory so connect, alias, remove, and disconnect round-trips survive
+// the dialog's load-after-mutate reloads. One provider today; capabilities and
+// connection views are shaped exactly like the real service returns them.
+const MOCK_PROVIDERS = [{ provider: "google", capabilities: ["google-sheets"] }];
+const mockConnections = new Map<string, IntegrationConnection[]>();
+let mockIntSeq = 0;
+
+function connectionsFor(appId: string): IntegrationConnection[] {
+  let list = mockConnections.get(appId);
+  if (!list) {
+    list = [];
+    mockConnections.set(appId, list);
+  }
+  return list;
+}
+
+const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -370,6 +391,121 @@ export function mockResponse(path: string, init?: RequestInit): Response {
         app.url.replace(/^https:\/\//, ""),
       )}&who=${encodeURIComponent(who)}&g=${grant}`,
     });
+  }
+
+  // Integrations. The catalog plus this app's connections, shaped like the real
+  // GET .../integrations. An empty connection list still returns the catalog so
+  // the dialog can offer a Connect row.
+  const integrationsMatch = path.match(/^\/internal\/apps\/([^/]+)\/integrations$/);
+  if (method === "GET" && integrationsMatch) {
+    return json({
+      providers: MOCK_PROVIDERS,
+      connections: connectionsFor(decodeURIComponent(integrationsMatch[1])),
+    });
+  }
+
+  // The mock stand-in for a completed OAuth consent. Upserts one connection per
+  // provider (reconnect resets an expired one to active, keeping its resources),
+  // the way the real callback upserts on (app, provider).
+  const connectMatch = path.match(
+    /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)\/connect$/,
+  );
+  if (method === "POST" && connectMatch) {
+    const list = connectionsFor(decodeURIComponent(connectMatch[1]));
+    const provider = decodeURIComponent(connectMatch[2]);
+    const existing = list.find((c) => c.provider === provider);
+    if (existing) {
+      existing.status = "active";
+      existing.updatedAt = Math.floor(Date.now() / 1000);
+    } else {
+      list.push({
+        id: `int_${(mockIntSeq++).toString(36)}`,
+        provider,
+        status: "active",
+        account: MOCK_USER.email,
+        updatedAt: Math.floor(Date.now() / 1000),
+        resources: [],
+      });
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  // A Picker session. The real route returns a live Google token plus the picker
+  // developer key and app id; the mock returns inert values, since the dialog's
+  // mock path shows a canned picker instead of loading Google.
+  const selectorMatch = path.match(
+    /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)\/selector-session$/,
+  );
+  if (method === "POST" && selectorMatch) {
+    return json({
+      accessToken: "mock-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+  }
+
+  // Alias a picked spreadsheet. Enforces the same alias grammar and per-alias
+  // uniqueness the real service does, and resolves the display name from the
+  // picked file id the way the backend resolves it from Drive.
+  const resourceAddMatch = path.match(
+    /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)\/resources$/,
+  );
+  if (method === "POST" && resourceAddMatch) {
+    const list = connectionsFor(decodeURIComponent(resourceAddMatch[1]));
+    const conn = list.find((c) => c.id === decodeURIComponent(resourceAddMatch[2]));
+    if (!conn) return json({ error: "That connection does not exist." }, 404);
+    const { capability, alias, externalId } = readBody(init);
+    if (typeof alias !== "string" || !ALIAS_PATTERN.test(alias)) {
+      return json(
+        { error: "Alias must be 1-64 letters, numbers, dot, dash, or underscore." },
+        422,
+      );
+    }
+    if (conn.resources.some((r) => r.alias === alias)) {
+      return json({ error: "That alias is already in use." }, 422);
+    }
+    const displayName =
+      MOCK_SHEETS.find((s) => s.id === externalId)?.name ?? alias;
+    conn.resources.push({
+      id: `int_${(mockIntSeq++).toString(36)}`,
+      capability: typeof capability === "string" ? capability : "google-sheets",
+      alias,
+      displayName,
+    });
+    return json({ alias, capability, displayName });
+  }
+
+  // Remove a resource by id. App-scoped, not connection-scoped, exactly like the
+  // real POST .../integrations/resources/delete.
+  if (
+    method === "POST" &&
+    /^\/internal\/apps\/([^/]+)\/integrations\/resources\/delete$/.test(path)
+  ) {
+    const appId = decodeURIComponent(
+      path.match(/^\/internal\/apps\/([^/]+)\//)![1],
+    );
+    const { resourceId } = readBody(init);
+    for (const conn of connectionsFor(appId)) {
+      conn.resources = conn.resources.filter((r) => r.id !== resourceId);
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  // Disconnect. Drops the connection and its resources, so the next list omits it
+  // and the dialog falls back to the Connect row.
+  const disconnectMatch = path.match(
+    /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)$/,
+  );
+  if (method === "DELETE" && disconnectMatch) {
+    const appId = decodeURIComponent(disconnectMatch[1]);
+    mockConnections.set(
+      appId,
+      connectionsFor(appId).filter(
+        (c) => c.id !== decodeURIComponent(disconnectMatch[2]),
+      ),
+    );
+    return new Response(null, { status: 204 });
   }
 
   // Device approval succeeds with 204, the code the /activate flow keys on.

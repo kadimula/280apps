@@ -9,3 +9,4 @@ Each app here should demonstrate correct 280 SDK usage and platform conventions 
 ## Apps
 
 - `1-nextjs-with-sdk` — Next.js reference app built on the 280 SDK.
+- `2-google-sheets-with-sdk` — Next.js Google Sheets todo app using the credential-free `googleSheets` capability.

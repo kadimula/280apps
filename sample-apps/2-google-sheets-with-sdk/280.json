@@ -1,0 +1,10 @@
+{
+  "name": "google-sheets-sdk-sample",
+  "access": "invited",
+  "integrations": {
+    "todos": {
+      "capability": "google-sheets",
+      "operations": ["read", "append", "update", "deleteRows"]
+    }
+  }
+}

@@ -89,6 +89,5 @@ wrangler hyperdrive create "$DEV_HYPERDRIVE_NAME" --caching-disabled \
 echo
 echo "==> Done. Now:"
 echo "  1. Copy each Hyperdrive config id into the matching wrangler file."
-echo "  2. Set secrets: wrangler secret put GOOGLE_CLIENT_ID (and GOOGLE_CLIENT_SECRET,"
-echo "     CF_ACCOUNT_ID, CF_API_TOKEN, DATABASE_URL)."
+echo "  2. Set gateway secrets with the names documented in .env.example."
 echo "  3. Deploy: wrangler deploy  (creates the APP_ACTIVATOR Durable Object, tag v1)."

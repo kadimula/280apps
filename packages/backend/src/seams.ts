@@ -26,7 +26,7 @@ export interface OAuthAccount {
   userId: string;
 }
 
-// Persists the token hash for the `SESSION_COOKIE_NAME` cookie, which defaults to `280_session`.
+// Persists the token hash for the environment-specific platform session cookie.
 export interface Session {
   tokenHash: string;
   userId: string;

@@ -10,6 +10,7 @@
 
 import { IdentityVerifier, IdentityError, type VerifiedIdentity } from '@280/contracts/identity';
 import type { RouteGate } from '@280/contracts';
+import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import { gateForPath } from './routegate.js';
 import { ID_COOKIE, PREVIEW_COOKIE, SESSION_COOKIE, VIEW_COOKIE, readCookie, serializeCookie, stampIdentity } from './cookies.js';
 import type { GatewayBinding, MintResult } from './mint.js';
@@ -38,7 +39,7 @@ const PREVIEW_COOKIE_TTL_SECS = 1800;
 // value is baked per app as TWO80_FRAME_ANCESTORS (from backend config, which
 // defaults it to the frontend origin); this constant is only the fallback for a
 // worker deployed without that var set.
-const DEFAULT_FRAME_ANCESTORS = 'https://console.280apps.com';
+const DEFAULT_FRAME_ANCESTORS = resolvePlatformTopology({}).dashboardOrigin;
 
 export interface AppWorkerEnv {
   // This app's App280Container namespace. The harness Worker (not this middleware)

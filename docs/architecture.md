@@ -29,7 +29,7 @@ never passes through it on the hot path.
 ## Identity design: mint centrally, verify locally (topology A2)
 
 The gateway is the **only** holder of three things: the private ES256 identity
-signing key (`ID_SIGNING_JWK`), the platform Postgres (grants, sessions, audit),
+signing key (`IDENTITY_SIGNING_PRIVATE_JWK`), the platform Postgres (grants, sessions, audit),
 and central OIDC (Google/Microsoft). On a cache miss or expiry, a per-app Worker
 calls the gateway over an internal service binding (`GATEWAY.mint(...)`, a
 binding-only `WorkerEntrypoint` — never HTTP-reachable). The gateway resolves the

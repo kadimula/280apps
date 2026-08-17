@@ -1,4 +1,6 @@
 import type { Server as NodeHttpServer } from 'node:http';
+import { join } from 'node:path';
+import { PLATFORM_POLICY } from '@280/contracts/platform-config';
 import { serve } from '@hono/node-server';
 import { Server } from './api.js';
 import { Platform } from './deploysvc.js';
@@ -14,7 +16,7 @@ import { EnvelopeSecretCipher, LocalKeyWrapper, type SecretCipher } from './secr
 import { KmsKeyWrapper } from './kms.js';
 
 export async function main(): Promise<void> {
-  const log = newLogger(process.env.LOG_FORMAT === 'json' ? 'json' : 'text');
+  const log = newLogger(process.stdout.isTTY ? 'text' : 'json');
   try {
     await run(log);
   } catch (err) {
@@ -45,7 +47,7 @@ async function run(log: Logger): Promise<void> {
     activator,
     appDomain: config.appDomain,
     hostSuffix: config.hostSuffix,
-    frontendOrigin: config.frontendOrigin,
+    frontendOrigin: config.dashboardOrigin,
   });
 
   const auth = buildAuth(store, config, log);
@@ -56,11 +58,11 @@ async function run(log: Logger): Promise<void> {
   const deps: RequestDeps = {
     platform,
     auth,
-    verificationUri: config.verificationUri,
+    verificationUri: config.activationUrl,
     minCliVersion: config.minCliVersion,
     machineTokenTtlSecs: config.machineTokenTtlDays * 24 * 60 * 60,
     appDomain: config.appDomain,
-    viewAsOrigin: `https://auth.${config.appDomain}`,
+    viewAsOrigin: config.authOrigin,
     secretCipher,
     integrations,
   };
@@ -107,10 +109,10 @@ function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefine
   const enc = config.secretEncryption;
   const kmsPartial = (enc.kmsKeyName === '') !== (enc.kmsCredentialsJson === '');
   if (kmsPartial) {
-    throw new Error('incomplete KMS config: set both APP_SECRETS_KMS_KEY_NAME and APP_SECRETS_KMS_CREDENTIALS_JSON');
+    throw new Error('incomplete KMS config: set both APP_SECRET_KMS_KEY_NAME and APP_SECRET_KMS_CREDENTIALS_JSON');
   }
   if (enc.kmsKeyName !== '' && enc.localKey !== '') {
-    throw new Error('set APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY, not both');
+    throw new Error('set APP_SECRET_KMS_* or APP_SECRET_LOCAL_MASTER_KEY, not both');
   }
   if (enc.kmsKeyName !== '') {
     log.info('secret encryption via Cloud KMS', { keyName: enc.kmsKeyName });
@@ -120,21 +122,20 @@ function buildSecretCipher(config: Config, log: Logger): SecretCipher | undefine
     log.info('secret encryption via local master key');
     return new EnvelopeSecretCipher(new LocalKeyWrapper(enc.localKey, enc.localKeyId));
   }
-  log.warn('secret storage is read-only until APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY is set');
+  log.warn('secret storage is read-only until APP_SECRET_KMS_* or APP_SECRET_LOCAL_MASTER_KEY is set');
   return undefined;
 }
 
 // startSweep runs the cleanup sweep on an interval, the Node stand-in for the
 // Worker's cron trigger. Unref'd so it never keeps the process alive on its own.
 function startSweep(store: Store, config: Config, log: Logger): NodeJS.Timeout {
-  const secs = num(process.env.SWEEP_INTERVAL_SECONDS, 60);
   const machineTokenTtlSecs = config.machineTokenTtlDays * 24 * 60 * 60;
   const tick = () => {
-    void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs, config.frontendOrigin).catch((err) => {
+    void sweepExpired(store, log, Math.floor(Date.now() / 1000), machineTokenTtlSecs, config.dashboardOrigin).catch((err) => {
       log.error('scheduled cleanup failed', { error: errText(err) });
     });
   };
-  const timer = setInterval(tick, secs * 1000);
+  const timer = setInterval(tick, PLATFORM_POLICY.sweepIntervalSecs * 1000);
   timer.unref();
   return timer;
 }
@@ -148,8 +149,10 @@ async function openBlobs(config: Config, log: Logger): Promise<BlobStore> {
     log.info('blobs=s3', { bucket: s3.bucket, endpoint: s3.endpoint });
     return openS3(s3);
   }
-  const dir = env('LOCAL_BLOB_DIRECTORY', 'data/blobs');
-  log.warn('blobs=filesystem: local-only and not durable across hosts; set BLOB_S3_* for R2', { dir });
+  const dir = process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'blobs')
+    : 'data/blobs';
+  log.warn('blobs=filesystem: set BLOB_S3_* for R2', { dir });
   return openFsBlobStore(dir);
 }
 
@@ -173,7 +176,7 @@ function readS3Config(): S3Config | null {
     bucket,
     accessKeyId,
     secretAccessKey,
-    region: env('BLOB_S3_REGION', 'auto'),
+    region: process.env.BLOB_S3_REGION || 'auto',
     forcePathStyle: (process.env.BLOB_S3_FORCE_PATH_STYLE ?? 'true') !== 'false',
   };
 }
@@ -183,33 +186,13 @@ interface Addr {
   port: number;
 }
 
-// listenAddr honors PORT, which is how every container host (Railway included) says
-// where to listen. LISTEN_ADDRESS stays for the local loop, where binding an interface
-// matters more than a port.
+// Railway supplies PORT. Local processes use the image's fixed port.
 function listenAddr(): Addr {
-  const p = process.env.PORT;
-  if (p) return { host: '0.0.0.0', port: Number(p) };
-  return parseAddr(env('LISTEN_ADDRESS', ':8080'));
-}
-
-function parseAddr(s: string): Addr {
-  const i = s.lastIndexOf(':');
-  const host = i > 0 ? s.slice(0, i) : '0.0.0.0';
-  const port = Number(s.slice(i + 1));
-  return { host, port };
+  return { host: '0.0.0.0', port: Number(process.env.PORT) || 8080 };
 }
 
 function display(a: Addr): string {
   return `${a.host}:${a.port}`;
-}
-
-function env(key: string, fallback: string): string {
-  const v = process.env[key];
-  return v !== undefined && v !== '' ? v : fallback;
-}
-
-function num(v: string | undefined, fallback: number): number {
-  return Number(v !== undefined && v !== '' ? v : String(fallback)) || fallback;
 }
 
 function errText(err: unknown): string {

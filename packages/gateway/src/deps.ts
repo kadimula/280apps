@@ -33,7 +33,9 @@ export function buildStatics(env: Env, log: Logger): GatewayStatics {
   const config = readConfig(env);
   const { registry, links } = buildProviders(config);
   if (links.length === 0) {
-    throw new Error('no OIDC provider configured: set GOOGLE_CLIENT_ID/SECRET and/or ENTRA_CLIENT_ID/SECRET');
+    throw new Error(
+      'no OIDC provider configured: set GOOGLE_OIDC_CLIENT_ID/SECRET and/or MICROSOFT_ENTRA_OIDC_CLIENT_ID/SECRET',
+    );
   }
   const { signer, publicJwks } = buildSigner(config);
   return { config, registry, links, signer, publicJwks, log };
@@ -69,13 +71,13 @@ export function buildSigner(config: Config): {
   publicJwks: Record<string, JsonWebKey>;
 } {
   if (config.idSigningJwk === '') {
-    throw new Error('ID_SIGNING_JWK is required: the gateway cannot mint identities without a signing key');
+    throw new Error('IDENTITY_SIGNING_PRIVATE_JWK is required: the gateway cannot mint identities without a signing key');
   }
   let privateJwk: JsonWebKey;
   try {
     privateJwk = JSON.parse(config.idSigningJwk) as JsonWebKey;
   } catch {
-    throw new Error('ID_SIGNING_JWK is not valid JSON');
+    throw new Error('IDENTITY_SIGNING_PRIVATE_JWK is not valid JSON');
   }
   const signer = new IdentitySigner({
     kid: config.idSigningKid,

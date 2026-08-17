@@ -14,7 +14,7 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
 // middleware imports IdentityVerifier (public-key verify) but never IdentitySigner.
 const FORBIDDEN = [
   'IdentitySigner',
-  'ID_SIGNING_JWK',
+  'IDENTITY_SIGNING_PRIVATE_JWK',
   'newPgStore',
   'Hyperdrive',
   '@280/backend',

@@ -4,7 +4,7 @@
 // racy transition is a conditional UPDATE whose row count names the winner, every
 // uniqueness rule an index.
 
-import type { AppAccess, AppPolicy, ConfigEntry, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
+import type { AppAccess, AppPolicy, ConfigEntry, IntegrationRequirement, Manifest, DeployError, PreviewGrant, RouteGate } from '@280/contracts';
 import {
   APP_ACCESS,
   appPolicyFromManifest,
@@ -225,11 +225,12 @@ const appReadCols = `${appCols}, created_at`;
 const grantCols =
   'app_id, principal, app_role, feature_role, data_scope, granted_by, granted_at';
 
-const policyCols = 'app_id, access, access_override, roles, routes, secrets, config, owner_tenant, updated_at';
+const policyCols =
+  'app_id, access, access_override, roles, routes, secrets, config, integrations, owner_tenant, updated_at';
 
 // The columns a live deploy (re)registers. access_override is deliberately
 // absent: the dashboard's dial survives every redeploy untouched (design D5).
-const registerPolicyCols = 'app_id, access, roles, routes, secrets, config, owner_tenant, updated_at';
+const registerPolicyCols = 'app_id, access, roles, routes, secrets, config, integrations, owner_tenant, updated_at';
 
 const connectionCols =
   'id, app_id, provider, account_label, credential_envelope, status, created_at, updated_at';
@@ -284,6 +285,24 @@ function decodeConfig(raw: string): ConfigEntry[] {
         sensitive: c.sensitive === true,
       }))
       .filter((c) => c.name !== '');
+  } catch {
+    return [];
+  }
+}
+
+function decodeIntegrations(raw: string): IntegrationRequirement[] {
+  if (raw === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object')
+      .map((r) => ({
+        alias: typeof r.alias === 'string' ? r.alias : '',
+        capability: typeof r.capability === 'string' ? r.capability : '',
+        operations: Array.isArray(r.operations) ? r.operations.filter((o): o is string => typeof o === 'string') : [],
+      }))
+      .filter((r) => r.alias !== '');
   } catch {
     return [];
   }
@@ -432,6 +451,7 @@ function rowToAppPolicy(r: Row): AppPolicy {
     routes: decodeRoutes(r.routes),
     secrets: decodeStringArray(r.secrets),
     config: decodeConfig(r.config ?? ''),
+    integrations: decodeIntegrations(r.integrations ?? ''),
     ownerTenant: r.owner_tenant,
     updatedAt: toNum(r.updated_at),
   };
@@ -1011,13 +1031,14 @@ class PgStore implements Store {
 
     await tx.query(
       `INSERT INTO ${this.t('app_policies')} (${registerPolicyCols})
-       VALUES ($1,$2,$3,$4,$5,$6,$7, ${epochNow})
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, ${epochNow})
        ON CONFLICT (app_id) DO UPDATE SET
          access       = EXCLUDED.access,
          roles        = EXCLUDED.roles,
          routes       = EXCLUDED.routes,
          secrets      = EXCLUDED.secrets,
          config       = EXCLUDED.config,
+         integrations = EXCLUDED.integrations,
          owner_tenant = CASE WHEN EXCLUDED.owner_tenant <> '' THEN EXCLUDED.owner_tenant
                              ELSE ${this.t('app_policies')}.owner_tenant END,
          updated_at   = ${epochNow}`,
@@ -1028,6 +1049,7 @@ class PgStore implements Store {
         JSON.stringify(policy.routes),
         JSON.stringify(policy.secrets),
         JSON.stringify(policy.config),
+        JSON.stringify(policy.integrations),
         ownerTenant,
       ],
     );

@@ -140,7 +140,7 @@ describe('sync + activation', () => {
       appId: res.app.id, name: 'GOOGLE_SHEET_ID', envelope: '', setBy: 'owner@test', setAt: 1, kind: 'config',
     });
     const app = await h.store.app('usr_test', res.app.id);
-    await h.platform.resumeWaitingSecrets(app!);
+    await h.platform.resumeWaiting(app!);
 
     expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
     expect(builder.rollouts).toHaveLength(1);
@@ -167,11 +167,20 @@ describe('sync + activation', () => {
     });
   });
 
-  it('rejects an unsupported integration at preflight', async () => {
+  it('rejects an unsupported integration capability at preflight', async () => {
     const { port } = await fresh();
     const { manifest } = mkBundle('worker');
-    manifest.integrations = ['google-sheet'];
-    await expect(port.sync({ identity: ident({ clientRef: 'bad-integration' }), manifest })).rejects.toMatchObject({
+    manifest.integrations = [{ alias: 'todos', capability: 'google-sheet', operations: ['read'] }];
+    await expect(port.sync({ identity: ident({ clientRef: 'bad-capability' }), manifest })).rejects.toMatchObject({
+      code: DeployCode.PreflightRejected,
+    });
+  });
+
+  it('rejects an unsupported integration operation at preflight (stale CLI cannot bypass)', async () => {
+    const { port } = await fresh();
+    const { manifest } = mkBundle('worker');
+    manifest.integrations = [{ alias: 'todos', capability: 'google-sheets', operations: ['read', 'obliterate'] }];
+    await expect(port.sync({ identity: ident({ clientRef: 'bad-op' }), manifest })).rejects.toMatchObject({
       code: DeployCode.PreflightRejected,
     });
   });
@@ -265,46 +274,84 @@ describe('push secret notice', () => {
   });
 });
 
-describe('push integration notice', () => {
-  async function liveIntegration(status?: typeof IntegrationStatus.Active | typeof IntegrationStatus.ReauthorizationRequired) {
-    const { h, port } = await fresh({ frontendOrigin: 'https://dashboard.example/' });
-    const { manifest, content } = mkBundle('worker');
-    manifest.integrations = ['google-sheets'];
-    const res = await port.sync({ identity: ident(), manifest });
-    if (status !== undefined) {
-      await h.store.putConnection(
-        {
-          id: 'int_google',
-          appId: res.app.id,
-          provider: 'google',
-          accountLabel: 'owner@example.com',
-          credentialEnvelope: 'encrypted',
-          status,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-        false,
-      );
-    }
-    await uploadAll(port, res.app.id, res.missing, content);
-    return { port, res };
+describe('integration requirement parking', () => {
+  const REQ = { alias: 'todos', capability: 'google-sheets', operations: ['read', 'append'] };
+
+  async function bind(store: Harness['store'], appId: string): Promise<void> {
+    await store.putConnection(
+      {
+        id: 'int_google',
+        appId,
+        provider: 'google',
+        accountLabel: 'owner@example.com',
+        credentialEnvelope: 'encrypted',
+        status: IntegrationStatus.Active,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      false,
+    );
+    await store.putResource({
+      id: 'res_todos',
+      connectionId: 'int_google',
+      appId,
+      capability: 'google-sheets',
+      alias: 'todos',
+      externalId: 'sheet_123',
+      displayName: 'Todos',
+      createdAt: 1,
+      updatedAt: 1,
+    });
   }
 
-  it('links a declared capability to its provider connection', async () => {
-    const missing = await liveIntegration();
-    expect((await missing.port.status(missing.res.app.id, missing.res.deployId)).integrationNotice).toBe(
-      `google-sheets is not connected. Connect it at https://dashboard.example/dashboard/${missing.res.app.id}?integrations=1`,
-    );
+  it('parks before rollout when a required alias has no binding, naming the alias', async () => {
+    const builder = new FakeBuilder();
+    const { port } = await fresh({ builder, frontendOrigin: 'https://dashboard.example/' });
+    const { manifest, content } = mkBundle('worker');
+    manifest.integrations = [REQ];
+    const res = await port.sync({ identity: ident({ clientRef: 'int-parked' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
 
-    const active = await liveIntegration(IntegrationStatus.Active);
-    expect((await active.port.status(active.res.app.id, active.res.deployId)).integrationNotice).toBe('');
+    const status = await port.status(res.app.id, res.deployId);
+    expect(status.state).toBe(State.WaitingSecrets);
+    expect(builder.rollouts).toHaveLength(0);
+    expect(status.integrationNotice).toBe(
+      `integration not connected: todos (google-sheets). Connect it at https://dashboard.example/dashboard/${res.app.id}?integrations=1`,
+    );
   });
 
-  it('asks the owner to reconnect an expired provider connection', async () => {
-    const expired = await liveIntegration(IntegrationStatus.ReauthorizationRequired);
-    expect((await expired.port.status(expired.res.app.id, expired.res.deployId)).integrationNotice).toContain(
-      'Reconnect it at',
-    );
+  it('resumes to live once the alias is bound, and is idempotent on re-push', async () => {
+    const builder = new FakeBuilder();
+    const { h, port } = await fresh({ builder });
+    const { manifest, content } = mkBundle('worker');
+    manifest.integrations = [REQ];
+    const res = await port.sync({ identity: ident({ clientRef: 'int-resume' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.WaitingSecrets);
+
+    await bind(h.store, res.app.id);
+    const app = await h.store.app('usr_test', res.app.id);
+    await h.platform.resumeWaiting(app!);
+
+    expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
+    expect(builder.rollouts).toHaveLength(1);
+
+    // A repeated push attaches to the same (now live) deploy; no duplicate, no re-roll.
+    const again = await port.sync({ identity: ident({ clientRef: 'int-resume' }), manifest });
+    expect(again.deployId).toBe(res.deployId);
+    expect(again.state).toBe(State.Live);
+    expect(builder.rollouts).toHaveLength(1);
+  });
+
+  it('does not park an app with no integrations block', async () => {
+    const builder = new FakeBuilder();
+    const { port } = await fresh({ builder });
+    const { manifest, content } = mkBundle('worker');
+    const res = await port.sync({ identity: ident({ clientRef: 'no-int' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    const status = await port.status(res.app.id, res.deployId);
+    expect(status.state).toBe(State.Live);
+    expect(status.integrationNotice).toBe('');
   });
 });
 

@@ -48,9 +48,9 @@ describe('real node server', () => {
     expect(res.headers.get(REQUEST_ID_HEADER)).toBe('smoke-id');
   });
 
-  it('completes a push and reports a missing declared integration', async () => {
+  it('completes a push and parks on a missing declared integration binding', async () => {
     const { manifest, worker, digest } = testManifest('http worker');
-    manifest.integrations = ['google-sheets'];
+    manifest.integrations = [{ alias: 'todos', capability: 'google-sheets', operations: ['read'] }];
 
     const syncRes = await fetch(`${base}/v1/sync`, {
       method: 'POST',
@@ -71,8 +71,8 @@ describe('real node server', () => {
 
     const stRes = await fetch(`${base}/v1/apps/${sync.app.id}/deploys/${sync.deployId}`, { headers: auth });
     const st = (await stRes.json()) as { state: string; url: string; integrationNotice: string };
-    expect(st.state).toBe('live');
-    expect(st.url).toBe(sync.app.url);
+    expect(st.state).toBe('waiting_secrets');
+    expect(st.integrationNotice).toContain('todos (google-sheets)');
     expect(st.integrationNotice).toContain(`/dashboard/${sync.app.id}?integrations=1`);
   });
 });

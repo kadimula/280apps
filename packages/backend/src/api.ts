@@ -635,7 +635,7 @@ export class Server {
     } catch {
       throw unavailable('could not save the secret');
     }
-    await this.deps(c).platform.resumeWaitingSecrets(app).catch(() => {
+    await this.deps(c).platform.resumeWaiting(app).catch(() => {
       throw unavailable('could not resume the waiting deploy');
     });
     return c.body(null, 204);
@@ -855,15 +855,17 @@ export class Server {
       appendReason: false,
     });
     try {
-      return c.json(
-        await svc.registerResource({
-          appId: app.id,
-          connectionId: c.req.param('id') ?? '',
-          capability: req.capability,
-          alias: req.alias,
-          externalId: req.externalId,
-        }),
-      );
+      const result = await svc.registerResource({
+        appId: app.id,
+        connectionId: c.req.param('id') ?? '',
+        capability: req.capability,
+        alias: req.alias,
+        externalId: req.externalId,
+      });
+      // Binding an alias may be the last thing a parked deploy was waiting on; resume
+      // any that are now fully satisfied. Idempotent, same path as setting a secret.
+      await this.deps(c).platform.resumeWaiting(app).catch(() => undefined);
+      return c.json(result);
     } catch (err) {
       this.mapIntegrationErr(err);
     }

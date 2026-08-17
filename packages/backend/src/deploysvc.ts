@@ -18,10 +18,10 @@ import {
   requiredConfigNames,
   stateTerminal,
   validateConfig,
-  validateIntegrations,
-  INTEGRATION_PROVIDERS,
+  validateIntegrationRequirements,
   type ConfigEntry,
   type EgressPolicy,
+  type IntegrationRequirement,
   type App as PublicApp,
   type Digest,
   type DeployError,
@@ -36,7 +36,7 @@ import {
   type BlobBody,
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
-import { IntegrationStatus, type App, type BlobStore, type Deploy, type Store } from './seams.js';
+import { type App, type BlobStore, type Deploy, type Store } from './seams.js';
 import type { ContainerDeploymentCoordinator } from './activator.js';
 
 // deployShaped duck-types a caught value into the seam's plain error fields: the
@@ -102,17 +102,16 @@ export class Platform {
     return new Service(this, userId);
   }
 
-  async resumeWaitingSecrets(app: App): Promise<void> {
-    const [open, configured] = await Promise.all([
-      this.store.openDeploys(app.id),
-      this.store.appSecretNames(app.id),
-    ]);
-    const present = new Set(configured);
+  // resumeWaiting re-activates every parked deploy whose remaining setup — required
+  // secrets/config AND required integration bindings — is now fully satisfied. Called
+  // whenever a human completes one of those (a secret is set, an alias is bound);
+  // idempotent, so a redundant trigger is a no-op.
+  async resumeWaiting(app: App): Promise<void> {
+    const open = await this.store.openDeploys(app.id);
     for (const dep of open) {
-      if (
-        dep.state === State.WaitingSecrets &&
-        requiredVariableNames(dep.manifest).every((name) => present.has(name))
-      ) {
+      if (dep.state !== State.WaitingSecrets) continue;
+      const missing = await missingRequirements(this.store, app.id, dep.manifest);
+      if (missing.secrets.length === 0 && missing.integrations.length === 0) {
         await this.activator.activate(app, dep.id);
       }
     }
@@ -122,8 +121,28 @@ export class Platform {
 // The names a human must enter before a deploy can serve: declared secrets plus
 // required config (sensitive config with no committed value). Both share the
 // app_secrets store, so one set of names drives the waiting gate and the notice.
-function requiredVariableNames(m: Manifest): string[] {
+export function requiredVariableNames(m: Manifest): string[] {
   return [...(m.secrets ?? []), ...requiredConfigNames(m.config ?? [])];
+}
+
+// missingRequirements is the single source of truth for what still blocks a deploy
+// from serving: the required variable names with no stored value, and the declared
+// integration aliases with no bound resource. Store faults fail safe (report the
+// requirement as missing), so a transient error can never let a deploy roll out
+// unverified. Shared by the activation gate, the resume trigger, and the status notices.
+export async function missingRequirements(
+  store: Store,
+  appId: string,
+  m: Manifest,
+): Promise<{ secrets: string[]; integrations: IntegrationRequirement[] }> {
+  const present = new Set(await store.appSecretNames(appId).catch(() => [] as string[]));
+  const secrets = requiredVariableNames(m).filter((name) => !present.has(name));
+  const integrations: IntegrationRequirement[] = [];
+  for (const r of m.integrations ?? []) {
+    const bound = await store.resourceByAlias(appId, r.capability, r.alias).catch(() => null);
+    if (bound === null) integrations.push(r);
+  }
+  return { secrets, integrations };
 }
 
 // Service implements the deploy Port for one authenticated user.
@@ -383,12 +402,13 @@ export class Service implements Port {
     if (app === null) throw notFound(appId, deployId);
     const dep = await this.wrapInternal('read deploy', () => this.p.store.deploy(appId, deployId));
     if (dep === null) throw notFound(appId, deployId);
+    const missing = await missingRequirements(this.p.store, appId, dep.manifest);
     const st: DeployStatus = {
       state: dep.state,
       url: dep.state === State.Live ? app.url : '',
       notice: dep.state === State.Live ? await this.accessOverrideNotice(appId, dep.manifest) : '',
-      secretNotice: await this.secretNotice(appId, dep.manifest),
-      integrationNotice: dep.state === State.Live ? await this.integrationNotice(appId, dep.manifest) : '',
+      secretNotice: this.secretNotice(appId, missing.secrets),
+      integrationNotice: this.integrationNotice(appId, missing.integrations),
       failure: dep.failure ?? undefined,
     };
     return st;
@@ -405,31 +425,17 @@ export class Service implements Port {
     return `access is "${policy.access}" (set in the dashboard, which overrides 280.json's "${declared}")`;
   }
 
-  private async secretNotice(appId: string, m: Manifest): Promise<string> {
-    const configured = await this.p.store.appSecretNames(appId).catch(() => null);
-    if (configured === null) return '';
-    const present = new Set(configured);
-    const missing = requiredVariableNames(m).filter((name) => !present.has(name));
+  private secretNotice(appId: string, missing: string[]): string {
     if (missing.length === 0) return '';
     const single = missing.length === 1;
     return `declared ${single ? 'variable is' : 'variables are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?variables=1`;
   }
 
-  private async integrationNotice(appId: string, m: Manifest): Promise<string> {
-    const declared = m.integrations ?? [];
-    if (declared.length === 0) return '';
-    const connections = await this.p.store.connectionsByApp(appId).catch(() => null);
-    if (connections === null) return '';
-    const active = new Set(
-      connections.filter((connection) => connection.status === IntegrationStatus.Active).map((connection) => connection.provider),
-    );
-    const missing = declared.filter((capability) => !active.has(INTEGRATION_PROVIDERS[capability] ?? ''));
+  private integrationNotice(appId: string, missing: IntegrationRequirement[]): string {
     if (missing.length === 0) return '';
-    const reconnect = connections.some((connection) =>
-      missing.some((capability) => INTEGRATION_PROVIDERS[capability] === connection.provider),
-    );
-    const action = reconnect ? 'Reconnect' : 'Connect';
-    return `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not connected. ${action} ${missing.length === 1 ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?integrations=1`;
+    const single = missing.length === 1;
+    const names = missing.map((r) => `${r.alias} (${r.capability})`).join(', ');
+    return `${single ? 'integration' : 'integrations'} not connected: ${names}. Connect ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?integrations=1`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,
@@ -492,7 +498,7 @@ export function preflight(m: Manifest): void {
   // home) must fail closed here too, not just at the CLI. Same gate the CLI runs.
   preflightConfig(m.config ?? [], m.secrets ?? [], reject);
   try {
-    validateIntegrations(m.integrations ?? []);
+    validateIntegrationRequirements(m.integrations ?? []);
   } catch (err) {
     const d = deployShaped(err);
     reject(d?.message ?? errText(err));

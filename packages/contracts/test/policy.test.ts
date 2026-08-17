@@ -12,6 +12,8 @@ import {
   pathMatches,
   resolveRouteGate,
   routeGateSatisfied,
+  validateIntegrationRequirements,
+  type IntegrationRequirement,
   type Manifest,
   type RouteGate,
 } from '../src/types.js';
@@ -116,14 +118,55 @@ describe('canonicalDigest folds the policy', () => {
     expect(canonicalDigest(manifest({ roles: ['manager'] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ routes: [gate('/x', { appRole: 'admin' })] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ secrets: ['K'] }))).not.toBe(base);
-    expect(canonicalDigest(manifest({ integrations: ['google-sheets'] }))).not.toBe(base);
+    expect(
+      canonicalDigest(manifest({ integrations: [{ alias: 'todos', capability: 'google-sheets', operations: ['read'] }] })),
+    ).not.toBe(base);
+    // A change to the operations a requirement declares also re-derives the id.
+    expect(
+      canonicalDigest(manifest({ integrations: [{ alias: 'todos', capability: 'google-sheets', operations: ['read', 'append'] }] })),
+    ).not.toBe(
+      canonicalDigest(manifest({ integrations: [{ alias: 'todos', capability: 'google-sheets', operations: ['read'] }] })),
+    );
   });
 
   it('is order-independent for roles, secrets, and integrations', () => {
     expect(canonicalDigest(manifest({ roles: ['a', 'b'] }))).toBe(canonicalDigest(manifest({ roles: ['b', 'a'] })));
-    expect(canonicalDigest(manifest({ integrations: ['b', 'a'] }))).toBe(
-      canonicalDigest(manifest({ integrations: ['a', 'b'] })),
-    );
+    const a = { alias: 'a', capability: 'google-sheets', operations: ['read'] };
+    const b = { alias: 'b', capability: 'google-sheets', operations: ['read'] };
+    expect(canonicalDigest(manifest({ integrations: [b, a] }))).toBe(canonicalDigest(manifest({ integrations: [a, b] })));
+  });
+});
+
+describe('validateIntegrationRequirements', () => {
+  const ok = (r: Partial<IntegrationRequirement>): IntegrationRequirement => ({
+    alias: 'todos',
+    capability: 'google-sheets',
+    operations: ['read'],
+    ...r,
+  });
+
+  it('accepts supported capability + operations', () => {
+    expect(() => validateIntegrationRequirements([ok({ operations: ['read', 'append', 'update', 'deleteRows'] })])).not.toThrow();
+  });
+
+  it('rejects an unknown capability', () => {
+    expect(() => validateIntegrationRequirements([ok({ capability: 'dropbox' })])).toThrow(/unsupported capability/);
+  });
+
+  it('rejects an unsupported operation (validated against the catalog)', () => {
+    expect(() => validateIntegrationRequirements([ok({ operations: ['read', 'purge'] })])).toThrow(/does not support/);
+  });
+
+  it('rejects an empty operations list', () => {
+    expect(() => validateIntegrationRequirements([ok({ operations: [] })])).toThrow(/no operations/);
+  });
+
+  it('rejects a malformed alias', () => {
+    expect(() => validateIntegrationRequirements([ok({ alias: 'has space' })])).toThrow(/alias .* is invalid/);
+  });
+
+  it('rejects a duplicate alias', () => {
+    expect(() => validateIntegrationRequirements([ok({}), ok({ operations: ['append'] })])).toThrow(/twice/);
   });
 });
 

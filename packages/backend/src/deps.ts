@@ -13,6 +13,7 @@ import type { Logger } from './observe.js';
 import type { Config } from './config.js';
 import type { SecretCipher } from './secrets.js';
 import { ControlPlaneConfigDelivery } from './config-delivery.js';
+import { missingRequirements } from './deploysvc.js';
 
 export interface ContainerServices {
   builder: ContainerBuilder;
@@ -147,10 +148,17 @@ export async function sweepExpired(
   const waiting = await store.waitingDeploysBefore(now - WAITING_SECRETS_TTL_SECS);
   let waitingSecrets = 0;
   for (const dep of waiting) {
-    const link = `${frontendOrigin.replace(/\/$/, '')}/dashboard/${encodeURIComponent(dep.appId)}?variables=1`;
+    // Point the deep link at whatever the deploy is actually blocked on: a missing
+    // secret/config value (?variables=1) or an unbound integration alias
+    // (?integrations=1). Secrets take precedence when both are outstanding.
+    const missing = await missingRequirements(store, dep.appId, dep.manifest);
+    const onSecrets = missing.secrets.length > 0 || missing.integrations.length === 0;
+    const tab = onSecrets ? 'variables' : 'integrations';
+    const waitingFor = onSecrets ? 'app secrets' : 'integration connections';
+    const link = `${frontendOrigin.replace(/\/$/, '')}/dashboard/${encodeURIComponent(dep.appId)}?${tab}=1`;
     const failure: DeployError = {
       code: DeployCode.Unavailable,
-      message: 'deployment expired while waiting for app secrets',
+      message: `deployment expired while waiting for ${waitingFor}`,
       fix: `set them at ${link}, then run two80 push again`,
       retryable: false,
       candidates: [],

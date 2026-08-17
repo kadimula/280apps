@@ -188,6 +188,11 @@ export function migrations(schema: string): string[] {
     // of {name,value,sensitive}. Lets the store prune stale dashboard-entered config
     // values and the dashboard know which config names to prompt for. Defaults ''.
     `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS config TEXT NOT NULL DEFAULT ''`,
+    // The live deploy's declared integration requirements: a JSON array of
+    // {alias,capability,operations}. The enforced-slice home for the aliases a human
+    // must bind to a resource, parallel to secrets/config; the dashboard reads it to
+    // know which aliases to offer for binding. Defaults ''.
+    `ALTER TABLE ${t('app_policies')} ADD COLUMN IF NOT EXISTS integrations TEXT NOT NULL DEFAULT ''`,
 
     `CREATE TABLE IF NOT EXISTS ${t('app_secrets')} (
        app_id   TEXT NOT NULL,

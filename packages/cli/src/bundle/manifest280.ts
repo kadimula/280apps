@@ -8,9 +8,10 @@ import {
   isAppAccess,
   resolveRouteGate,
   validateConfig,
-  validateIntegrations,
+  validateIntegrationRequirements,
   type ConfigEntry,
   type EgressPolicy,
+  type IntegrationRequirement,
   type RouteGate,
 } from '@280/contracts';
 import { fail, fileExists } from './walk.js';
@@ -21,7 +22,7 @@ export interface Policy280 {
   routes: RouteGate[];
   secrets: string[];
   config: ConfigEntry[];
-  integrations: string[];
+  integrations: IntegrationRequirement[];
 }
 const EMPTY: Policy280 = {
   egress: { allowedHosts: [], credentials: [] },
@@ -63,19 +64,36 @@ export function read280(root: string): Policy280 {
     integrations: parseIntegrations(o.integrations),
   };
 }
-function parseIntegrations(v: unknown): string[] {
+const INTEGRATIONS_EXAMPLE =
+  'e.g. "integrations": { "todos": { "capability": "google-sheets", "operations": ["read", "append"] } }';
+function parseIntegrations(v: unknown): IntegrationRequirement[] {
   if (v === undefined || v === null) return [];
-  if (!Array.isArray(v) || v.some((capability) => typeof capability !== 'string')) {
-    fail('280.json "integrations" must be a list of integration names', 'e.g. "integrations": ["google-sheets"]');
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    fail('280.json "integrations" must be an object mapping an alias to its capability', INTEGRATIONS_EXAMPLE);
   }
+  const reqs = Object.entries(v as Record<string, unknown>).map(([alias, raw]) => parseIntegrationEntry(alias, raw));
+  reqs.sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0));
   try {
-    validateIntegrations(v as string[]);
+    validateIntegrationRequirements(reqs);
   } catch (err) {
     const d = asDeployError(err);
     if (d) fail(d.message, d.fix, d.code);
     throw err;
   }
-  return [...(v as string[])];
+  return reqs;
+}
+function parseIntegrationEntry(alias: string, raw: unknown): IntegrationRequirement {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    fail(`280.json integration "${alias}" must be an object`, INTEGRATIONS_EXAMPLE);
+  }
+  const o = raw as Record<string, unknown>;
+  if (typeof o.capability !== 'string' || o.capability === '') {
+    fail(`280.json integration "${alias}" needs a "capability"`, INTEGRATIONS_EXAMPLE);
+  }
+  if (!Array.isArray(o.operations) || o.operations.some((op) => typeof op !== 'string')) {
+    fail(`280.json integration "${alias}" needs an "operations" list`, INTEGRATIONS_EXAMPLE);
+  }
+  return { alias, capability: o.capability, operations: [...(o.operations as string[])] };
 }
 function parseConfig(v: unknown, secrets: string[]): ConfigEntry[] {
   if (v === undefined || v === null) return [];

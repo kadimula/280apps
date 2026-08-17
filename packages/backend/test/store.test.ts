@@ -413,6 +413,21 @@ describe.skipIf(!hasDatabase())('store', () => {
     expect((await store.appPolicy(a.id))?.config).toEqual([{ name: 'SHEET_ID', value: '', sensitive: true }]);
   });
 
+  it('finishLive records the manifest integration requirements in the policy', async () => {
+    const a = appFixture({ slug: 'keeps-integrations' });
+    await store.createApp(a);
+    const manifest = {
+      ...manifestFor('f'.repeat(64)),
+      integrations: [{ alias: 'todos', capability: 'google-sheets', operations: ['read', 'append'] }],
+    };
+    await store.openDeploy({ appId: a.id, id: 'dep_int', manifest, state: State.Uploading, failure: null });
+    await store.finishLive(a.id, 'dep_int');
+
+    expect((await store.appPolicy(a.id))?.integrations).toEqual([
+      { alias: 'todos', capability: 'google-sheets', operations: ['read', 'append'] },
+    ]);
+  });
+
   it('finishLive erases secrets the live manifest no longer declares', async () => {
     const a = appFixture({ slug: 'erases-secrets' });
     await store.createApp(a);

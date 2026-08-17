@@ -8,7 +8,7 @@ import {
   type Manifest,
 } from '@280/contracts';
 import type { Bundle } from './static.js';
-import type { ConfigEntry } from '@280/contracts';
+import type { ConfigEntry, IntegrationRequirement } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { fail, fileExists, walkContext } from './walk.js';
@@ -188,8 +188,17 @@ function assemble(
     extra.push(`access: ${policy.access}`);
   }
   extra.push(...configDisclosure(policy.config));
+  extra.push(...integrationDisclosure(policy.integrations));
   const diff = routeGateDiff(discoverNextRoutes(files.map((f) => f.path)), policy.routes);
   return { manifest, content, notes: [...notes, ...extra, ...diff] };
+}
+export function integrationDisclosure(integrations: IntegrationRequirement[]): string[] {
+  if (integrations.length === 0) return [];
+  const lines = ['integrations the app needs (bound to a resource in the dashboard; deploy waits until bound):'];
+  for (const r of integrations) {
+    lines.push(`  ${r.alias}  →  ${r.capability} [${r.operations.join(', ')}]`);
+  }
+  return lines;
 }
 export function configDisclosure(config: ConfigEntry[]): string[] {
   if (config.length === 0) return [];

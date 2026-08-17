@@ -29,12 +29,18 @@ class IntegrationWaitFake extends Fake {
 
   async status(appId: string, deployId: string): Promise<DeployStatus> {
     const status = await super.status(appId, deployId);
-    if (this.connected || status.state !== 'live') return status;
+    if (this.connected) return status;
+    // A required integration with no bound resource parks the deploy (never live)
+    // until the alias is bound in the dashboard, exactly like a missing secret.
     return {
-      ...status,
+      state: 'waiting_secrets',
+      url: '',
+      notice: '',
+      secretNotice: '',
       integrationNotice:
-        `google-sheets is not connected. Connect it at ` +
+        `integration not connected: todos (google-sheets). Connect it at ` +
         `https://console.280apps.com/dashboard/${appId}?integrations=1`,
+      failure: undefined,
     };
   }
 }
@@ -112,7 +118,9 @@ describe('fake push (real bundler + real Fake, through app.run)', () => {
     const root = tmpProject({
       'package.json': JSON.stringify({ name: 'demo' }),
       'index.html': '<h1>hi</h1>',
-      '280.json': JSON.stringify({ integrations: ['google-sheets'] }),
+      '280.json': JSON.stringify({
+        integrations: { todos: { capability: 'google-sheets', operations: ['read', 'append'] } },
+      }),
     });
     const fake = new IntegrationWaitFake();
 
@@ -120,7 +128,7 @@ describe('fake push (real bundler + real Fake, through app.run)', () => {
 
     expect(waiting.code).toBe(1);
     expect(parseToon(waiting.out).error).toBe('credentials_required');
-    expect(waiting.out).toContain('google-sheets is not connected');
+    expect(waiting.out).toContain('todos (google-sheets)');
     expect(waiting.out).toContain('https://console.280apps.com/dashboard/app_000001?integrations=1');
     expect(waiting.out).toContain('ask your user to connect the integration');
     const appId = config.load(root).cfg.appId;

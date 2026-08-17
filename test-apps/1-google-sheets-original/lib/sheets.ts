@@ -1,80 +1,45 @@
-import { google } from "googleapis";
+import { headers } from "next/headers";
+import { googleSheets, type GoogleSheetsClient } from "@two80/sdk";
 
 export type Todo = { id: string; text: string; done: boolean };
 
+// The 280.json alias the platform binds to a connected spreadsheet.
+const RESOURCE = "todos";
 // Data lives on the first sheet, one row per todo: [id, text, done].
 const RANGE = "A:C";
 
-const spreadsheetId = process.env.GOOGLE_SHEET_ID!;
-
-function client() {
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      // Env vars store newlines escaped; restore them for the PEM key.
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    },
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return google.sheets({ version: "v4", auth });
-}
-
-async function firstSheetId(sheets: ReturnType<typeof client>): Promise<number> {
-  const meta = await sheets.spreadsheets.get({ spreadsheetId });
-  return meta.data.sheets![0].properties!.sheetId!;
+async function client(): Promise<GoogleSheetsClient> {
+  return googleSheets(await headers());
 }
 
 export async function getTodos(): Promise<Todo[]> {
-  const sheets = client();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: RANGE });
-  const rows = res.data.values ?? [];
-  return rows.map((r) => ({ id: r[0], text: r[1], done: r[2] === "TRUE" }));
+  const sheets = await client();
+  const res = await sheets.read({ resource: RESOURCE, range: RANGE });
+  return (res.values ?? []).map((r) => ({ id: String(r[0]), text: String(r[1]), done: r[2] === "TRUE" }));
 }
 
 export async function addTodo(text: string): Promise<void> {
-  const sheets = client();
+  const sheets = await client();
   const id = Date.now().toString();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: RANGE,
-    valueInputOption: "RAW",
-    requestBody: { values: [[id, text, "FALSE"]] },
-  });
+  await sheets.append({ resource: RESOURCE, range: RANGE, values: [[id, text, "FALSE"]] });
 }
 
 // Returns the 0-based row index of the todo, or -1 if not found.
-async function rowIndexOf(sheets: ReturnType<typeof client>, id: string): Promise<number> {
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: "A:A" });
-  return (res.data.values ?? []).findIndex((r) => r[0] === id);
+async function rowIndexOf(sheets: GoogleSheetsClient, id: string): Promise<number> {
+  const res = await sheets.read({ resource: RESOURCE, range: "A:A" });
+  return (res.values ?? []).findIndex((r) => r[0] === id);
 }
 
 export async function toggleTodo(id: string, done: boolean): Promise<void> {
-  const sheets = client();
+  const sheets = await client();
   const i = await rowIndexOf(sheets, id);
   if (i < 0) return;
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `C${i + 1}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [[done ? "TRUE" : "FALSE"]] },
-  });
+  await sheets.update({ resource: RESOURCE, range: `C${i + 1}`, values: [[done ? "TRUE" : "FALSE"]] });
 }
 
 export async function deleteTodo(id: string): Promise<void> {
-  const sheets = client();
+  const sheets = await client();
   const i = await rowIndexOf(sheets, id);
   if (i < 0) return;
-  const sheetId = await firstSheetId(sheets);
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [
-        {
-          deleteDimension: {
-            range: { sheetId, dimension: "ROWS", startIndex: i, endIndex: i + 1 },
-          },
-        },
-      ],
-    },
-  });
+  await sheets.deleteRows({ resource: RESOURCE, startRow: i + 1, rowCount: 1 });
 }

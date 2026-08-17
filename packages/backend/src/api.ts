@@ -803,12 +803,11 @@ export class Server {
   }
 
   private async handleIntegrationStart(c: Context<HonoEnv>): Promise<Response> {
-    const { user, app } = await this.ownedApp(c);
+    const { app } = await this.ownedApp(c);
     const svc = this.integrations(c);
     try {
       const { authUrl, stateCookie } = await svc.startConnection({
         appId: app.id,
-        userId: user.id,
         provider: c.req.param('provider') ?? '',
         returnPath: c.req.query('redirect') ?? '',
       });

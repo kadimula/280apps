@@ -1,10 +1,3 @@
-// The integration core: app-ownership-scoped connection lifecycle, encrypted
-// credential persistence, one-time OAuth state, refresh coordination, resource
-// registration, and capability dispatch. It knows no provider URLs — those live in
-// the adapters behind ProviderRegistry — and no Hono context or SQL, which live in
-// the route modules and the store. Two surfaces call it: owner-managed dashboard
-// routes and the gateway-identity-bound SDK capability routes.
-
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { VerifiedIdentity } from '@280/contracts/identity';
 import { IntegrationStatus, type IntegrationConnection, type Store } from '../seams.js';
@@ -23,8 +16,6 @@ const OAUTH_ATTEMPT_TTL_SECS = 10 * 60;
 const REFRESH_MARGIN_SECS = 60;
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
-// Per-capability operation allowlists and value bounds. A capability the map does
-// not name, or an operation it does not list, never reaches an adapter.
 const OPERATIONS: Record<string, Set<string>> = {
   'google-sheets': new Set(['read', 'append', 'update']),
 };
@@ -34,7 +25,6 @@ const MAX_CELLS = 10_000;
 
 export type IntegrationErrorKind = 'bad_request' | 'not_found' | 'conflict' | 'unavailable';
 
-// The management-surface error. api.ts maps its kind onto a DeployErr code.
 export class IntegrationError extends Error {
   constructor(
     readonly kind: IntegrationErrorKind,
@@ -45,8 +35,6 @@ export class IntegrationError extends Error {
   }
 }
 
-// The capability-surface error, carrying the stable code and HTTP status the SDK
-// routes return as JSON.
 export class SdkError extends Error {
   constructor(
     readonly code: string,
@@ -64,7 +52,6 @@ export interface ConnectionView {
   provider: string;
   status: IntegrationStatus;
   account: string;
-  scopes: string[];
   updatedAt: number;
   resources: Array<{ id: string; capability: string; alias: string; displayName: string }>;
 }
@@ -102,8 +89,6 @@ export class IntegrationService {
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly randomState: () => string;
-  // One in-process refresh per connection: concurrent callers share the same promise
-  // so a live-app burst issues a single token refresh, not one per request.
   private readonly refreshLocks = new Map<string, Promise<CredentialPayload>>();
 
   constructor(deps: IntegrationServiceDeps) {
@@ -129,7 +114,6 @@ export class IntegrationService {
         provider: c.provider,
         status: c.status,
         account: c.accountLabel,
-        scopes: c.scopes,
         updatedAt: c.updatedAt,
         resources: (await this.store.resourcesByConnection(c.id)).map((r) => ({
           id: r.id,
@@ -143,7 +127,6 @@ export class IntegrationService {
 
   async startConnection(input: {
     appId: string;
-    userId: string;
     provider: string;
     returnPath: string;
   }): Promise<{ authUrl: string; stateCookie: string }> {
@@ -156,7 +139,6 @@ export class IntegrationService {
     await this.store.createOAuthAttempt({
       stateHash: hash(state),
       appId: input.appId,
-      userId: input.userId,
       provider: provider.name,
       payloadEnvelope,
       expiresAt: this.now() + OAUTH_ATTEMPT_TTL_SECS,
@@ -195,26 +177,18 @@ export class IntegrationService {
       throw this.asManagementError(err);
     }
 
-    let credential = exchanged.credential;
+    const credential = exchanged.credential;
     if (credential.refreshToken === '') {
-      if (existing !== null && existing.accountId === exchanged.account.id) {
-        credential = { ...credential, refreshToken: (await this.revealCredential(existing)).refreshToken };
-      } else {
-        throw new IntegrationError('bad_request', 'Google did not return offline access; reconnect and approve the request');
-      }
+      throw new IntegrationError('bad_request', 'Google did not return offline access; reconnect and approve the request');
     }
-
     const envelope = await this.cipher.protect(attempt.appId, credName(provider.name), JSON.stringify(credential));
     await this.store.putConnection(
       {
         id: existing?.id ?? this.randomId(),
         appId: attempt.appId,
         provider: provider.name,
-        accountId: exchanged.account.id || existing?.accountId || '',
         accountLabel: exchanged.account.label || existing?.accountLabel || '',
         credentialEnvelope: envelope,
-        credentialVersion: 1,
-        scopes: credential.grantedScopes,
         status: IntegrationStatus.Active,
         createdAt: 0,
         updatedAt: 0,
@@ -276,7 +250,6 @@ export class IntegrationService {
       alias,
       externalId: validated.externalId,
       displayName: validated.displayName,
-      metadata: validated.metadata,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -293,8 +266,7 @@ export class IntegrationService {
     try {
       await this.provider(removed.provider).revoke(await this.revealCredential(removed));
     } catch {
-      // Best-effort: local deletion has already happened; a failed revoke does not
-      // block disconnect (Google expires the grant, and the token is gone locally).
+      // Revocation is best effort.
     }
     return true;
   }
@@ -303,8 +275,6 @@ export class IntegrationService {
     return this.identityVerifier.verify(token);
   }
 
-  // The capability path: verify the signed identity, resolve the app's connection and
-  // resource, enforce bounds, and dispatch to the adapter with a live access token.
   async execute(input: { token: string; capability: string; operation: string; body: Record<string, unknown> }): Promise<Record<string, unknown>> {
     let identity: VerifiedIdentity;
     try {
@@ -330,7 +300,7 @@ export class IntegrationService {
     }
 
     const conn = await this.store.connectionByProvider(appId, provider.name);
-    if (conn === null || conn.status === IntegrationStatus.Revoked) {
+    if (conn === null) {
       throw new SdkError('not_connected', `no ${input.capability} connection is configured for this app`, 404);
     }
     if (conn.status === IntegrationStatus.ReauthorizationRequired) {
@@ -412,20 +382,8 @@ export class IntegrationService {
       throw err;
     }
     if (next.refreshToken === '') next = { ...next, refreshToken: cred.refreshToken };
-
     const envelope = await this.cipher.protect(conn.appId, credName(conn.provider), JSON.stringify(next));
-    const swapped = await this.store.swapConnectionCredential(conn.id, conn.credentialVersion, {
-      envelope,
-      accountId: conn.accountId,
-      accountLabel: conn.accountLabel,
-      scopes: next.grantedScopes.length > 0 ? next.grantedScopes : conn.scopes,
-      status: IntegrationStatus.Active,
-    });
-    if (!swapped) {
-      // A replica refreshed first; adopt the newer stored token rather than racing it.
-      const latest = await this.store.connectionById(conn.appId, conn.id);
-      if (latest !== null) return this.revealCredential(latest);
-    }
+    await this.store.updateConnectionCredential(conn.id, envelope);
     return next;
   }
 
@@ -490,15 +448,9 @@ function decodeCredentialJson(raw: string): CredentialPayload {
     refreshToken: str(parsed.refreshToken),
     accessToken: str(parsed.accessToken),
     accessTokenExpiresAt: typeof parsed.accessTokenExpiresAt === 'number' ? parsed.accessTokenExpiresAt : 0,
-    tokenType: str(parsed.tokenType) || 'Bearer',
-    grantedScopes: Array.isArray(parsed.grantedScopes)
-      ? parsed.grantedScopes.filter((s): s is string => typeof s === 'string')
-      : [],
   };
 }
 
-// boundOperation validates and clamps the request body for a Sheets operation before
-// it can reach the provider: one range, and a bounded value grid on writes.
 function boundOperation(operation: string, body: Record<string, unknown>): Record<string, unknown> {
   const range = str(body.range);
   if (range === '' || range.length > MAX_RANGE_LEN) {

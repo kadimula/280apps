@@ -1,9 +1,3 @@
-// The Google Workspace adapter: OAuth authorization-code flow with PKCE, refresh and
-// revocation, account identity from the id_token, Drive resource validation, and the
-// Sheets capability operations. It speaks only Google's protocols; it holds no store,
-// Hono, or SQL dependency, and every operation runs against a live access token the
-// core resolved.
-
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ProviderRequestError,
@@ -29,8 +23,6 @@ const DRIVE_FILE = 'https://www.googleapis.com/drive/v3/files';
 const SHEETS_CAPABILITY = 'google-sheets';
 const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';
 
-// drive.file grants access only to files the user selected through the Picker, the
-// narrowest scope that still lets the app read and write those spreadsheets.
 const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/drive.file'];
 
 export interface GoogleProviderOptions {
@@ -61,7 +53,6 @@ export class GoogleWorkspaceProvider implements Provider {
       response_type: 'code',
       scope: SCOPES.join(' '),
       state,
-      // offline + consent guarantees a refresh token even on a re-consent.
       access_type: 'offline',
       prompt: 'consent',
       include_granted_scopes: 'true',
@@ -90,7 +81,6 @@ export class GoogleWorkspaceProvider implements Provider {
   async refresh(cred: CredentialPayload): Promise<CredentialPayload> {
     if (cred.refreshToken === '') throw new ReauthorizationRequiredError();
     const body = await this.token({ grant_type: 'refresh_token', refresh_token: cred.refreshToken });
-    // Google usually omits refresh_token on refresh; the core preserves the stored one.
     return credentialFrom(body, strClaim(body.refresh_token));
   }
 
@@ -102,7 +92,6 @@ export class GoogleWorkspaceProvider implements Provider {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token }).toString(),
     });
-    // A 400 means the token was already invalid; that is a successful revocation.
     if (res.status >= 500) throw new ProviderRequestError('revocation failed', true);
   }
 
@@ -124,7 +113,6 @@ export class GoogleWorkspaceProvider implements Provider {
     return {
       externalId: strClaim(body.id) || externalId,
       displayName: strClaim(body.name),
-      metadata: { mimeType: SPREADSHEET_MIME },
     };
   }
 
@@ -171,20 +159,17 @@ function credentialFrom(body: Record<string, unknown>, refreshToken: string): Cr
     refreshToken,
     accessToken,
     accessTokenExpiresAt: expiresIn > 0 ? Math.floor(Date.now() / 1000) + expiresIn : 0,
-    tokenType: strClaim(body.token_type) || 'Bearer',
-    grantedScopes: strClaim(body.scope) === '' ? [] : strClaim(body.scope).split(' '),
   };
 }
 
-function accountFromIdToken(idToken: string): { id: string; label: string } {
-  if (idToken === '') return { id: '', label: '' };
-  const parts = idToken.split('.');
-  if (parts.length !== 3) return { id: '', label: '' };
+function accountFromIdToken(idToken: string): { label: string } {
+  const payload = idToken.split('.')[1];
+  if (payload === undefined) return { label: '' };
   try {
-    const claims = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<string, unknown>;
-    return { id: strClaim(claims.sub), label: strClaim(claims.email) };
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+    return { label: strClaim(claims.email) };
   } catch {
-    return { id: '', label: '' };
+    return { label: '' };
   }
 }
 
@@ -199,5 +184,5 @@ function strClaim(v: unknown): string {
 }
 
 function base64url(buf: Buffer): string {
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return buf.toString('base64url');
 }

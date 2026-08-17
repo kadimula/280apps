@@ -1,15 +1,8 @@
-// The runtime capability surface: POST /v1/sdk/integrations/:capability/:operation.
-// Mounted under the shared deps middleware, so it reads the request-scoped service off
-// the context. It verifies the gateway-signed identity, enforces the body-size bound,
-// and returns the service's stable JSON error shape — never a raw provider response.
-
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { ID_HEADER } from '@280/contracts/identity';
 import type { HonoEnv } from './../observe.js';
 import { SdkError } from './service.js';
-
-const MAX_SDK_BODY = 512 << 10;
 
 export function sdkIntegrationRoutes(): Hono<HonoEnv> {
   const app = new Hono<HonoEnv>();
@@ -21,7 +14,9 @@ export function sdkIntegrationRoutes(): Hono<HonoEnv> {
     const token = bearer(c) || (c.req.header(ID_HEADER) ?? '');
     let body: Record<string, unknown>;
     try {
-      body = await readJsonBody(c);
+      const parsed: unknown = await c.req.json();
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+      body = parsed as Record<string, unknown>;
     } catch {
       return errorJson(c, 'invalid_request', 'the request body must be a JSON object', 400);
     }
@@ -54,13 +49,4 @@ function errorJson(c: Context<HonoEnv>, error: string, message: string, status: 
 function bearer(c: Context<HonoEnv>): string {
   const header = c.req.header('Authorization') ?? '';
   return header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
-}
-
-async function readJsonBody(c: Context<HonoEnv>): Promise<Record<string, unknown>> {
-  const buf = await c.req.arrayBuffer();
-  if (buf.byteLength > MAX_SDK_BODY) throw new Error('body too large');
-  if (buf.byteLength === 0) return {};
-  const parsed: unknown = JSON.parse(Buffer.from(buf).toString('utf8'));
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
-  return parsed as Record<string, unknown>;
 }

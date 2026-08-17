@@ -232,10 +232,10 @@ const policyCols = 'app_id, access, access_override, roles, routes, secrets, con
 const registerPolicyCols = 'app_id, access, roles, routes, secrets, config, owner_tenant, updated_at';
 
 const connectionCols =
-  'id, app_id, provider, account_id, account_label, credential_envelope, credential_version, scopes, status, created_at, updated_at';
+  'id, app_id, provider, account_label, credential_envelope, status, created_at, updated_at';
 
 const resourceCols =
-  'id, connection_id, app_id, capability, alias, external_id, display_name, metadata, created_at, updated_at';
+  'id, connection_id, app_id, capability, alias, external_id, display_name, created_at, updated_at';
 
 // Seconds since the epoch, for columns the store writes rather than defaults (it
 // holds no clock of its own). Mirrors migrations' epochDefault.
@@ -448,28 +448,13 @@ function rowToAppSecret(r: Row): AppSecret {
   };
 }
 
-function decodeMetadata(raw: string): Record<string, unknown> {
-  if (raw === '') return {};
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 function rowToConnection(r: Row): IntegrationConnection {
   return {
     id: r.id,
     appId: r.app_id,
     provider: r.provider,
-    accountId: r.account_id,
     accountLabel: r.account_label,
     credentialEnvelope: r.credential_envelope,
-    credentialVersion: toNum(r.credential_version),
-    scopes: decodeStringArray(r.scopes),
     status: r.status as IntegrationStatus,
     createdAt: toNum(r.created_at),
     updatedAt: toNum(r.updated_at),
@@ -485,7 +470,6 @@ function rowToResource(r: Row): IntegrationResource {
     alias: r.alias,
     externalId: r.external_id,
     displayName: r.display_name,
-    metadata: decodeMetadata(r.metadata),
     createdAt: toNum(r.created_at),
     updatedAt: toNum(r.updated_at),
   };
@@ -495,7 +479,6 @@ function rowToOAuthAttempt(r: Row): IntegrationOAuthAttempt {
   return {
     stateHash: r.state_hash,
     appId: r.app_id,
-    userId: r.user_id,
     provider: r.provider,
     payloadEnvelope: r.payload_envelope,
     expiresAt: toNum(r.expires_at),
@@ -1263,8 +1246,8 @@ class PgStore implements Store {
   async createOAuthAttempt(a: IntegrationOAuthAttempt): Promise<void> {
     await this.db.query(
       `INSERT INTO ${this.t('integration_oauth_attempts')}
-         (state_hash, app_id, user_id, provider, payload_envelope, expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [a.stateHash, a.appId, a.userId, a.provider, a.payloadEnvelope, a.expiresAt],
+         (state_hash, app_id, provider, payload_envelope, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+      [a.stateHash, a.appId, a.provider, a.payloadEnvelope, a.expiresAt],
     );
   }
 
@@ -1274,7 +1257,7 @@ class PgStore implements Store {
     const res = await this.db.query(
       `UPDATE ${this.t('integration_oauth_attempts')} SET consumed_at = $2
        WHERE state_hash = $1 AND consumed_at = 0 AND expires_at > $2
-       RETURNING state_hash, app_id, user_id, provider, payload_envelope, expires_at, consumed_at`,
+       RETURNING state_hash, app_id, provider, payload_envelope, expires_at, consumed_at`,
       [stateHash, now],
     );
     return res.rows.length ? rowToOAuthAttempt(res.rows[0]) : null;
@@ -1284,27 +1267,14 @@ class PgStore implements Store {
     await this.inTx(async (tx) => {
       await tx.query(
         `INSERT INTO ${this.t('integration_connections')}
-           (id, app_id, provider, account_id, account_label, credential_envelope, credential_version, scopes, status, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, ${epochNow})
+           (id, app_id, provider, account_label, credential_envelope, status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6, ${epochNow})
          ON CONFLICT (app_id, provider) DO UPDATE SET
-           account_id          = EXCLUDED.account_id,
            account_label       = EXCLUDED.account_label,
            credential_envelope = EXCLUDED.credential_envelope,
-           credential_version  = ${this.t('integration_connections')}.credential_version + 1,
-           scopes              = EXCLUDED.scopes,
            status              = EXCLUDED.status,
            updated_at          = ${epochNow}`,
-        [
-          c.id,
-          c.appId,
-          c.provider,
-          c.accountId,
-          c.accountLabel,
-          c.credentialEnvelope,
-          c.credentialVersion,
-          JSON.stringify(c.scopes),
-          c.status,
-        ],
+        [c.id, c.appId, c.provider, c.accountLabel, c.credentialEnvelope, c.status],
       );
       await this.insertAppEvent(
         tx,
@@ -1340,24 +1310,12 @@ class PgStore implements Store {
     return res.rows.map(rowToConnection);
   }
 
-  async swapConnectionCredential(
-    id: string,
-    expectedVersion: number,
-    next: { envelope: string; accountId: string; accountLabel: string; scopes: string[]; status: IntegrationStatus },
-  ): Promise<boolean> {
-    const res = await this.db.query(
-      `UPDATE ${this.t('integration_connections')} SET
-         credential_envelope = $3,
-         account_id          = $4,
-         account_label       = $5,
-         scopes              = $6,
-         status              = $7,
-         credential_version  = credential_version + 1,
-         updated_at          = ${epochNow}
-       WHERE id = $1 AND credential_version = $2`,
-      [id, expectedVersion, next.envelope, next.accountId, next.accountLabel, JSON.stringify(next.scopes), next.status],
+  async updateConnectionCredential(id: string, envelope: string): Promise<void> {
+    await this.db.query(
+      `UPDATE ${this.t('integration_connections')}
+       SET credential_envelope = $2, updated_at = ${epochNow} WHERE id = $1`,
+      [id, envelope],
     );
-    return res.rowCount === 1;
   }
 
   async setConnectionStatus(id: string, status: IntegrationStatus): Promise<void> {
@@ -1392,24 +1350,14 @@ class PgStore implements Store {
     await this.inTx(async (tx) => {
       await tx.query(
         `INSERT INTO ${this.t('integration_resources')}
-           (id, connection_id, app_id, capability, alias, external_id, display_name, metadata, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, ${epochNow})
+           (id, connection_id, app_id, capability, alias, external_id, display_name, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, ${epochNow})
          ON CONFLICT (app_id, capability, alias) DO UPDATE SET
            connection_id = EXCLUDED.connection_id,
            external_id   = EXCLUDED.external_id,
            display_name  = EXCLUDED.display_name,
-           metadata      = EXCLUDED.metadata,
            updated_at    = ${epochNow}`,
-        [
-          r.id,
-          r.connectionId,
-          r.appId,
-          r.capability,
-          r.alias,
-          r.externalId,
-          r.displayName,
-          JSON.stringify(r.metadata),
-        ],
+        [r.id, r.connectionId, r.appId, r.capability, r.alias, r.externalId, r.displayName],
       );
       await this.insertAppEvent(
         tx,

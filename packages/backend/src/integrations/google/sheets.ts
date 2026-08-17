@@ -1,7 +1,3 @@
-// Bounded read, append, and update against a server-resolved spreadsheet id. The
-// caller (the Google provider) has already resolved the alias to a spreadsheet id
-// and holds a live access token; this file only speaks the Sheets values API.
-
 import { ProviderRequestError, ResourceValidationError } from '../provider.js';
 import { httpRequest, parseJson } from './http.js';
 
@@ -15,8 +11,6 @@ function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
 }
 
-// A Sheets error status the resource-unavailable path recognizes (deleted sheet or
-// access removed) versus a transient one worth retrying.
 function raiseFor(status: number, context: string): never {
   if (status === 401 || status === 403) throw new ResourceValidationError(`${context}: access was refused`);
   if (status === 404) throw new ResourceValidationError(`${context}: the spreadsheet is unavailable`);

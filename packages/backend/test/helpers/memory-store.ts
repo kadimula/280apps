@@ -598,9 +598,7 @@ export class MemoryStore implements Store {
 
   async putConnection(c: IntegrationConnection, reconnect: boolean): Promise<void> {
     const existing = this.connByProvider(c.appId, c.provider);
-    const stored: IntegrationConnection = existing
-      ? { ...c, id: existing.id, credentialVersion: existing.credentialVersion + 1, scopes: [...c.scopes] }
-      : { ...c, scopes: [...c.scopes] };
+    const stored = existing ? { ...c, id: existing.id } : { ...c };
     this.connections.set(stored.id, stored);
     this.record({
       userId: this.userIdFor(c.appId),
@@ -634,20 +632,9 @@ export class MemoryStore implements Store {
       .map(cloneConnection);
   }
 
-  async swapConnectionCredential(
-    id: string,
-    expectedVersion: number,
-    next: { envelope: string; accountId: string; accountLabel: string; scopes: string[]; status: IntegrationStatus },
-  ): Promise<boolean> {
+  async updateConnectionCredential(id: string, envelope: string): Promise<void> {
     const c = this.connections.get(id);
-    if (!c || c.credentialVersion !== expectedVersion) return false;
-    c.credentialEnvelope = next.envelope;
-    c.accountId = next.accountId;
-    c.accountLabel = next.accountLabel;
-    c.scopes = [...next.scopes];
-    c.status = next.status;
-    c.credentialVersion += 1;
-    return true;
+    if (c) c.credentialEnvelope = envelope;
   }
 
   async setConnectionStatus(id: string, status: IntegrationStatus): Promise<void> {
@@ -673,9 +660,7 @@ export class MemoryStore implements Store {
 
   async putResource(r: IntegrationResource): Promise<void> {
     const existing = this.resByAlias(r.appId, r.capability, r.alias);
-    const stored: IntegrationResource = existing
-      ? { ...r, id: existing.id, metadata: { ...r.metadata } }
-      : { ...r, metadata: { ...r.metadata } };
+    const stored = existing ? { ...r, id: existing.id } : { ...r };
     this.resources.set(stored.id, stored);
     this.record({
       userId: this.userIdFor(r.appId),
@@ -719,11 +704,11 @@ export class MemoryStore implements Store {
 }
 
 function cloneConnection(c: IntegrationConnection): IntegrationConnection {
-  return { ...c, scopes: [...c.scopes] };
+  return { ...c };
 }
 
 function cloneResource(r: IntegrationResource): IntegrationResource {
-  return { ...r, metadata: { ...r.metadata } };
+  return { ...r };
 }
 
 interface StoredApp extends App {

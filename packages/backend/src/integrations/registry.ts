@@ -1,6 +1,3 @@
-// Maps stable provider and capability keys to configured adapters, rejecting
-// unknown keys at the boundary so no request reaches an adapter that was never wired.
-
 import type { Provider } from './provider.js';
 
 export class UnknownProviderError extends Error {

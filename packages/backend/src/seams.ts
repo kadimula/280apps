@@ -149,29 +149,20 @@ export interface Grant {
 export const IntegrationStatus = {
   Active: 'active',
   ReauthorizationRequired: 'reauthorization_required',
-  Revoked: 'revoked',
 } as const;
 export type IntegrationStatus = (typeof IntegrationStatus)[keyof typeof IntegrationStatus];
 
-// One external account authorization belonging to one 280 app. The credential
-// envelope is provider-opaque JSON encrypted by SecretCipher; only the provider
-// adapter interprets its plaintext. credentialVersion backs the refresh compare-and-swap.
 export interface IntegrationConnection {
   id: string;
   appId: string;
   provider: string;
-  accountId: string;
   accountLabel: string;
   credentialEnvelope: string;
-  credentialVersion: number;
-  scopes: string[];
   status: IntegrationStatus;
   createdAt: number;
   updatedAt: number;
 }
 
-// Binds an app-friendly alias (e.g. "orders") to one provider resource (e.g. a
-// spreadsheet id). externalId is server-resolved: app code never sends it.
 export interface IntegrationResource {
   id: string;
   connectionId: string;
@@ -180,7 +171,6 @@ export interface IntegrationResource {
   alias: string;
   externalId: string;
   displayName: string;
-  metadata: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
 }
@@ -190,7 +180,6 @@ export interface IntegrationResource {
 export interface IntegrationOAuthAttempt {
   stateHash: string;
   appId: string;
-  userId: string;
   provider: string;
   payloadEnvelope: string;
   expiresAt: number;
@@ -281,13 +270,7 @@ export interface Store {
   connectionById(appId: string, id: string): Promise<IntegrationConnection | null>;
   connectionByProvider(appId: string, provider: string): Promise<IntegrationConnection | null>;
   connectionsByApp(appId: string): Promise<IntegrationConnection[]>;
-  // Compare-and-swap on credentialVersion so a replica cannot overwrite newer token
-  // material. Returns false when the expected version no longer matches.
-  swapConnectionCredential(
-    id: string,
-    expectedVersion: number,
-    next: { envelope: string; accountId: string; accountLabel: string; scopes: string[]; status: IntegrationStatus },
-  ): Promise<boolean>;
+  updateConnectionCredential(id: string, envelope: string): Promise<void>;
   setConnectionStatus(id: string, status: IntegrationStatus): Promise<void>;
   // Removes the connection and its resources, returning the removed row so the
   // caller can best-effort revoke the provider token before it is gone.

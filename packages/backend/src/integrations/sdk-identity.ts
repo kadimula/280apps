@@ -1,9 +1,3 @@
-// Verifies the gateway-signed X-280-Identity token at the public SDK boundary. The
-// backend is reached directly by app containers (not through the gateway), so it
-// cannot trust the header: it fetches the gateway's JWKS, caches it, and re-fetches
-// once on an unknown key id (a rotation the cache has not seen yet). ES256, issuer,
-// expiry, and audience are all checked by the shared IdentityVerifier.
-
 import type { JsonWebKey } from 'node:crypto';
 import { IdentityError, IdentityVerifier, type VerifiedIdentity } from '@280/contracts/identity';
 
@@ -13,7 +7,6 @@ export interface SdkIdentityOptions {
   jwksUri: string;
   issuer?: string;
   cacheTtlSecs?: number;
-  // Injectable so tests serve the JWKS in-process without a network.
   fetch?: typeof fetch;
   now?: () => number;
 }

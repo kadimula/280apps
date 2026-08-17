@@ -8,7 +8,7 @@ The SDK reads the platform-supplied `TWO80_API` origin from the environment. Nev
 
 ## Request scoping
 
-Everything is request-scoped: pass the incoming request so the SDK forwards the caller's identity. Nothing is global or cached across requests.
+Everything is request-scoped: pass the incoming request so the SDK forwards the caller's identity. Nothing is global or cached across requests. "The request" is anything that exposes its headers: a Fetch `Request` (`identity(request)`) or Next's `headers()` result (`identity(await headers())`).
 
 ```ts
 import { identity } from "@two80/sdk";
@@ -35,7 +35,7 @@ if (identity.anonymous) return new Response("Sign in required", { status: 401 })
 
 ## Integrations
 
-Each integration is a factory that takes the incoming request and returns a typed client. The 280 API authorizes every call for the current app and user; your app never sees provider credentials. A failed call throws `IntegrationRequestError` with `{ code, message, status, retryable }`.
+Each integration is a factory that takes the incoming request (same shapes as `identity`: a Fetch `Request` or `await headers()`) and returns a typed client. The 280 API authorizes every call for the current app and user; your app never sees provider credentials. A failed call throws `IntegrationRequestError` with `{ code, message, status, retryable }`.
 
 Declare each integration the app uses in `280.json` so `push` gates the deploy until the owner connects it:
 

@@ -109,6 +109,14 @@ describe('capability docs track the catalog', () => {
     }
   });
 
+  it('capabilities.md is self-sufficient on request scoping (no unlinked README deferral)', () => {
+    const md = capabilitiesMarkdown();
+    expect(md).toContain('### Request scoping');
+    expect(md).toContain('identity(');
+    expect(md).toContain('await headers()');
+    expect(md).not.toContain('README');
+  });
+
   it('capabilities.md table rows map one-to-one onto the catalog', () => {
     const md = capabilitiesMarkdown();
     const rows = md

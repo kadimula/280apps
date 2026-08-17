@@ -37,51 +37,40 @@ Any other stack ships a repo root Dockerfile that listens on port 8080. Next.js 
 
 ## 2. Use the 280 SDK for platform capabilities
 
-The container has a fixed network boundary. It can reach the 280 API and no other host. Do not call provider APIs directly and do not add an `egress` block to `280.json`.
-
-Install the SDK:
+The container has a fixed network boundary: it reaches the 280 API and no other host. Get database, file, integration, and config access through the SDK instead of external providers or app-managed credentials.
 
     npm install @two80/sdk
 
-Use SDK capabilities for database, file, and integration access as they become available. The SDK reads the platform supplied `TWO80_API` origin. Never override that environment variable.
+The SDK reads the platform supplied `TWO80_API` origin; never override that environment variable. Remove API keys, access tokens, service account files, connection strings, provider SDK authentication, and code that builds authorization headers from the app. Do not call provider APIs directly. If a required capability is missing from `@two80/sdk`, report it as unsupported rather than weakening the network boundary.
 
 The SDK is an application API, not the security boundary. Cloudflare enforces the one host network rule, and the 280 API authorizes every operation for the current app and user.
 
-## 3. Remove credentials from the app
+### Integrations
 
-Remove API keys, access tokens, service account files, connection strings, provider SDK authentication, and code that builds authorization headers. Do not put credentials in `280.json`, source files, environment files, Docker build arguments, or application logs.
+Each integration is a factory that takes the incoming request and returns a typed client. Pass the request so the SDK forwards the caller's identity; the 280 API authorizes every call for the current app and user. A failed call throws `IntegrationRequestError` with `{ code, message, status, retryable }`.
 
-If a required provider capability does not exist in `@two80/sdk`, report it as unsupported rather than weakening the network boundary.
+**Google Sheets** — `googleSheets(request)`
 
-## 4. Declare config the app reads
+    import { googleSheets } from "@two80/sdk";
 
-Config is a value the app reads with `process.env` to function, such as a resource id, region, public client id, feature flag, or internal display setting. It must never be a credential. Declare config as a map from environment variable name to value:
+    const sheets = googleSheets(request);
+    await sheets.read({ resource, range });            // -> { range, majorDimension, values }
+    await sheets.append({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+    await sheets.update({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
 
-    {
-      "config": {
-        "REGION": "us-east-1",
-        "SHEET_ID": { "sensitive": true }
-      }
-    }
+`resource` is the spreadsheet id, `range` is A1 notation (e.g. `Sheet1!A1:C10`), and `values` is a 2D array of cell values.
 
-Two forms:
+Declare every integration the app uses in `280.json` so push can gate the deploy until it is connected:
 
-1. `"NAME": "value"`: a committed public value. It lives in `280.json`, so editing it redeploys.
-2. `"NAME": { "sensitive": true }`: a value the user enters in the dashboard. It is stored encrypted, kept out of logs, and the deploy waits until it is set. The running app can read it, so it is config rather than a credential.
+    { "integrations": ["google-sheets"] }
 
-Each declared name arrives as an environment variable in the container:
-
-    const sheetId = process.env.SHEET_ID;
-
-Names must be valid environment identifiers. `PORT`, `HOSTNAME`, `NODE_ENV`, `NODE_EXTRA_CA_CERTS`, `TWO80_API`, and the `TWO80_` prefix are reserved.
-
-## 5. Install the CLI and push
+## 3. Install the CLI and push
 
     npx -y two80@latest push
 
 This initializes new projects automatically. It is safe to run again because every step resumes without duplication.
 
-## 6. Login in the user's browser
+## 4. Login in the user's browser
 
 When push prints a login link, relay it and wait. Never open it yourself.
 
@@ -89,13 +78,19 @@ When push prints a login link, relay it and wait. Never open it yourself.
 
 After the user confirms, push again.
 
-## 7. Config values in the user's browser
+## 5. Config values in the user's browser
 
 When push exits reporting missing values, relay the link and ask the user to enter them. Never ask for the values yourself.
 
 Push does not wait. Once the user confirms that values are saved, run `two80 push` again to resume.
 
-## 8. Verify, then hand over the link
+## 6. Connect integrations in the user's browser
+
+When push exits reporting an unconnected integration, relay the link and ask the user to authorize it in the dashboard. The app owner connects each declared integration once; never authorize it yourself.
+
+Push does not wait. Once the user confirms the integration is connected, run `two80 push` again to resume.
+
+## 7. Verify, then hand over the link
 
 Push exits with the live URL. The edge can lag up to a minute.
 

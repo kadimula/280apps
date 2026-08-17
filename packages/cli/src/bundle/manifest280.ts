@@ -8,6 +8,7 @@ import {
   isAppAccess,
   resolveRouteGate,
   validateConfig,
+  validateIntegrations,
   type ConfigEntry,
   type EgressPolicy,
   type RouteGate,
@@ -20,6 +21,7 @@ export interface Policy280 {
   routes: RouteGate[];
   secrets: string[];
   config: ConfigEntry[];
+  integrations: string[];
 }
 const EMPTY: Policy280 = {
   egress: { allowedHosts: [], credentials: [] },
@@ -28,6 +30,7 @@ const EMPTY: Policy280 = {
   routes: [],
   secrets: [],
   config: [],
+  integrations: [],
 };
 export function read280(root: string): Policy280 {
   const path = join(root, '280.json');
@@ -57,7 +60,22 @@ export function read280(root: string): Policy280 {
     routes: parseRoutes(o.routes, roles),
     secrets,
     config: parseConfig(o.config, secrets),
+    integrations: parseIntegrations(o.integrations),
   };
+}
+function parseIntegrations(v: unknown): string[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.some((capability) => typeof capability !== 'string')) {
+    fail('280.json "integrations" must be a list of integration names', 'e.g. "integrations": ["google-sheets"]');
+  }
+  try {
+    validateIntegrations(v as string[]);
+  } catch (err) {
+    const d = asDeployError(err);
+    if (d) fail(d.message, d.fix, d.code);
+    throw err;
+  }
+  return [...(v as string[])];
 }
 function parseConfig(v: unknown, secrets: string[]): ConfigEntry[] {
   if (v === undefined || v === null) return [];

@@ -14,6 +14,7 @@ import {
 } from '@280/contracts';
 import { DeployErr, bodyOf, bytesOf, newPlatform, portFor, type Harness } from './helpers/harness.js';
 import { sanitizeSlug, type Service } from '../src/deploysvc.js';
+import { IntegrationStatus } from '../src/seams.js';
 import { FakeBuilder } from '../src/runtime/container/index.js';
 
 describe('sanitizeSlug', () => {
@@ -166,6 +167,15 @@ describe('sync + activation', () => {
     });
   });
 
+  it('rejects an unsupported integration at preflight', async () => {
+    const { port } = await fresh();
+    const { manifest } = mkBundle('worker');
+    manifest.integrations = ['google-sheet'];
+    await expect(port.sync({ identity: ident({ clientRef: 'bad-integration' }), manifest })).rejects.toMatchObject({
+      code: DeployCode.PreflightRejected,
+    });
+  });
+
   it('goes live when every blob has landed', async () => {
     const { h, port } = await fresh();
     const { manifest, content } = mkBundle('worker', { 'app/a.txt': 'A' });
@@ -251,6 +261,49 @@ describe('push secret notice', () => {
 
     expect((await port.status(res.app.id, res.deployId)).secretNotice).toBe(
       `declared variable is not configured: SUPABASE_SERVICE_ROLE_KEY. Configure it at https://console.280apps.com/dashboard/${res.app.id}?variables=1`,
+    );
+  });
+});
+
+describe('push integration notice', () => {
+  async function liveIntegration(status?: typeof IntegrationStatus.Active | typeof IntegrationStatus.ReauthorizationRequired) {
+    const { h, port } = await fresh({ frontendOrigin: 'https://dashboard.example/' });
+    const { manifest, content } = mkBundle('worker');
+    manifest.integrations = ['google-sheets'];
+    const res = await port.sync({ identity: ident(), manifest });
+    if (status !== undefined) {
+      await h.store.putConnection(
+        {
+          id: 'int_google',
+          appId: res.app.id,
+          provider: 'google',
+          accountLabel: 'owner@example.com',
+          credentialEnvelope: 'encrypted',
+          status,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        false,
+      );
+    }
+    await uploadAll(port, res.app.id, res.missing, content);
+    return { port, res };
+  }
+
+  it('links a declared capability to its provider connection', async () => {
+    const missing = await liveIntegration();
+    expect((await missing.port.status(missing.res.app.id, missing.res.deployId)).integrationNotice).toBe(
+      `google-sheets is not connected. Connect it at https://dashboard.example/dashboard/${missing.res.app.id}?integrations=1`,
+    );
+
+    const active = await liveIntegration(IntegrationStatus.Active);
+    expect((await active.port.status(active.res.app.id, active.res.deployId)).integrationNotice).toBe('');
+  });
+
+  it('asks the owner to reconnect an expired provider connection', async () => {
+    const expired = await liveIntegration(IntegrationStatus.ReauthorizationRequired);
+    expect((await expired.port.status(expired.res.app.id, expired.res.deployId)).integrationNotice).toContain(
+      'Reconnect it at',
     );
   });
 });

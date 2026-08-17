@@ -24,6 +24,21 @@ function staticSite(): string {
   return tmpProject({ 'package.json': JSON.stringify({ name: 'demo' }), 'index.html': '<h1>hi</h1>' });
 }
 
+class IntegrationWaitFake extends Fake {
+  connected = false;
+
+  async status(appId: string, deployId: string): Promise<DeployStatus> {
+    const status = await super.status(appId, deployId);
+    if (this.connected || status.state !== 'live') return status;
+    return {
+      ...status,
+      integrationNotice:
+        `google-sheets is not connected. Connect it at ` +
+        `https://console.280apps.com/dashboard/${appId}?integrations=1`,
+    };
+  }
+}
+
 class CredentialWaitFake extends Fake {
   configured = false;
   statusCalls = 0;
@@ -85,6 +100,32 @@ describe('fake push (real bundler + real Fake, through app.run)', () => {
     const appId = config.load(root).cfg.appId;
 
     fake.configured = true;
+    const resumed = await runCli(['push'], { root, port: fake, deps: realBundle });
+
+    expect(resumed.code).toBe(0);
+    expect(parseToon(resumed.out).appId).toBe(appId);
+    expect(parseToon(resumed.out).url).toContain('280apps.run');
+    expect(fake.appCount()).toBe(1);
+  });
+
+  it('returns an integration action and hands over the live URL after connection', async () => {
+    const root = tmpProject({
+      'package.json': JSON.stringify({ name: 'demo' }),
+      'index.html': '<h1>hi</h1>',
+      '280.json': JSON.stringify({ integrations: ['google-sheets'] }),
+    });
+    const fake = new IntegrationWaitFake();
+
+    const waiting = await runCli(['push'], { root, port: fake, deps: realBundle });
+
+    expect(waiting.code).toBe(1);
+    expect(parseToon(waiting.out).error).toBe('credentials_required');
+    expect(waiting.out).toContain('google-sheets is not connected');
+    expect(waiting.out).toContain('https://console.280apps.com/dashboard/app_000001?integrations=1');
+    expect(waiting.out).toContain('ask your user to connect the integration');
+    const appId = config.load(root).cfg.appId;
+
+    fake.connected = true;
     const resumed = await runCli(['push'], { root, port: fake, deps: realBundle });
 
     expect(resumed.code).toBe(0);

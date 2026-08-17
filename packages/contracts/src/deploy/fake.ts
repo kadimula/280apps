@@ -310,7 +310,14 @@ export class Fake implements Port {
         fix: 'run two80 push again',
       });
     }
-    const st: DeployStatus = { state: d.state, url: '', notice: '', secretNotice: '', failure: errObj(d.failure) };
+    const st: DeployStatus = {
+      state: d.state,
+      url: '',
+      notice: '',
+      secretNotice: '',
+      integrationNotice: '',
+      failure: errObj(d.failure),
+    };
     if (d.state === State.Live) {
       st.url = this.apps.get(appId)!.url;
     }

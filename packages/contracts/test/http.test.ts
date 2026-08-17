@@ -60,16 +60,19 @@ describe('HTTP Client', () => {
     expect(h['Accept']).toBe('application/json');
   });
 
-  it('parses the secret notice and defaults it for older servers', async () => {
+  it('parses setup notices and defaults them for older servers', async () => {
     const reply = (body: Record<string, unknown>) =>
       mockFetch(() => new Response(JSON.stringify({ state: 'live', url: 'https://app.example', ...body }), { status: 200 }));
     const current = new Client('https://api', {
-      fetch: reply({ secretNotice: 'configure STRIPE_KEY' }).fetch,
+      fetch: reply({ secretNotice: 'configure STRIPE_KEY', integrationNotice: 'connect google-sheets' }).fetch,
     });
     const older = new Client('https://api', { fetch: reply({}).fetch });
 
-    expect((await current.status('app_1', 'dep_1')).secretNotice).toBe('configure STRIPE_KEY');
+    const status = await current.status('app_1', 'dep_1');
+    expect(status.secretNotice).toBe('configure STRIPE_KEY');
+    expect(status.integrationNotice).toBe('connect google-sheets');
     expect((await older.status('app_1', 'dep_1')).secretNotice).toBe('');
+    expect((await older.status('app_1', 'dep_1')).integrationNotice).toBe('');
   });
 
   it('sends the CLI version header only when set', async () => {

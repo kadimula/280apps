@@ -267,7 +267,7 @@ ${stackRows()}
 
 ## SDK capabilities
 
-Every external integration goes through \`@two80/sdk\`. The container reaches only the 280 API, which authorizes each call for the current app and user; the app holds no provider credentials. Each capability below is a factory that takes the incoming request and returns a typed client.
+Every external integration goes through \`@two80/sdk\`. The container reaches only the 280 API, which authorizes each call for the current app and user; the app holds no provider credentials.
 
 | Capability | Slug | Operations |
 | --- | --- | --- |
@@ -277,17 +277,37 @@ Declare every capability the app uses in \`280.json\` so push can gate the deplo
 
     { "integrations": [${capabilityDocs().map((c) => `"${c.slug}"`).join(', ')}] }
 
+### Request scoping
+
+Every capability is a factory that takes the **incoming request** and returns a typed client scoped to the current caller. Nothing is global or cached across requests: the SDK reads the gateway-stamped identity header off the request you pass and forwards it, so the 280 API can authorize the call for this app and this user. Pass whatever exposes the request headers where you handle the request:
+
+- a Fetch \`Request\` (its \`.headers\` are read for you): \`googleSheets(request)\`
+- Next's \`headers()\` result: \`googleSheets(await headers())\`
+
+Read identity from the same request the same way, via \`identity()\`:
+
+    import { identity } from "@two80/sdk";
+
+    export async function GET(request: Request) {
+      const { user, can, anonymous } = await identity(request);
+      user.email;             // resolved by the gateway, never by app code
+      can("approvals.edit");  // true when the viewer holds that feature role
+      anonymous;              // true for a public app's no-session visitor
+    }
+
 ### Framework example: Google Sheets
 
     import { googleSheets } from "@two80/sdk";
 
     // In a Next.js route handler or Server Action, pass the incoming request.
-    const sheets = googleSheets(request);
-    await sheets.read({ resource, range });            // -> { range, majorDimension, values }
-    await sheets.append({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
-    await sheets.update({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+    export async function POST(request: Request) {
+      const sheets = googleSheets(request);
+      await sheets.read({ resource, range });            // -> { range, majorDimension, values }
+      await sheets.append({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+      await sheets.update({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+    }
 
-\`resource\` is the spreadsheet id, \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. See the \`@two80/sdk\` README for request-scoping details.
+\`resource\` is the spreadsheet id, \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
 
 ## Explicitly unsupported
 

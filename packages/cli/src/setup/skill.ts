@@ -66,6 +66,7 @@ export function committedPath(): string {
       const name = JSON.parse(fs.readFileSync(pkg, 'utf8')).name;
       if (name === 'two80') return path.join(dir, 'skill', 'SKILL.md');
     } catch {
+      // Continue searching for the package root.
     }
     const parent = path.dirname(dir);
     if (parent === dir) throw new Error('could not locate the two80 package root for --check');

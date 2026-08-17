@@ -44,9 +44,11 @@ export function load(): LoadedCreds {
 }
 export function save(c: Creds): void {
   const p = pathOf();
+  const dir = path.dirname(p);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const obj: Record<string, unknown> = { token: c.token };
   if (c.api) obj.api = c.api;
   if (c.pending) obj.pending = c.pending;
   writeJsonAtomic(p, obj, 0o600);
-  fs.chmodSync(path.dirname(p), 0o700);
 }

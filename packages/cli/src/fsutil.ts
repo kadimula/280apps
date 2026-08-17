@@ -11,13 +11,17 @@ export function readOptional(file: string): string | undefined {
 }
 export function writeAtomic(file: string, body: string, mode?: number): void {
   const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true, mode });
+  fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.280-${randomBytes(8).toString('hex')}.tmp`);
   try {
     fs.writeFileSync(tmp, body, mode === undefined ? undefined : { mode });
     fs.renameSync(tmp, file);
   } catch (e) {
-    try { fs.rmSync(tmp, { force: true }); } catch { }
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // Preserve the original write error.
+    }
     throw e;
   }
 }

@@ -86,14 +86,41 @@ describe('read280', () => {
     );
   });
 
-  it('parses supported integrations', () => {
-    expect(read280(projectWith({ integrations: ['google-sheets'] })).integrations).toEqual(['google-sheets']);
+  it('parses supported integration requirements, alias-sorted', () => {
+    expect(
+      read280(
+        projectWith({
+          integrations: {
+            todos: { capability: 'google-sheets', operations: ['read', 'append'] },
+            audit: { capability: 'google-sheets', operations: ['read'] },
+          },
+        }),
+      ).integrations,
+    ).toEqual([
+      { alias: 'audit', capability: 'google-sheets', operations: ['read'] },
+      { alias: 'todos', capability: 'google-sheets', operations: ['read', 'append'] },
+    ]);
   });
 
-  it('rejects malformed, unknown, and duplicate integrations', () => {
-    expect(() => read280(projectWith({ integrations: 'google-sheets' }))).toThrow(/must be a list/);
-    expect(() => read280(projectWith({ integrations: ['google-sheet'] }))).toThrow(/not supported/);
-    expect(() => read280(projectWith({ integrations: ['google-sheets', 'google-sheets'] }))).toThrow(/twice/);
+  it('rejects malformed, unknown-capability, unsupported-operation, and bad-alias integrations', () => {
+    expect(() => read280(projectWith({ integrations: ['google-sheets'] }))).toThrow(/must be an object/);
+    expect(() => read280(projectWith({ integrations: { todos: 'google-sheets' } }))).toThrow(/must be an object/);
+    expect(() => read280(projectWith({ integrations: { todos: { operations: ['read'] } } }))).toThrow(/needs a "capability"/);
+    expect(() => read280(projectWith({ integrations: { todos: { capability: 'google-sheets' } } }))).toThrow(
+      /needs an "operations"/,
+    );
+    expect(() =>
+      read280(projectWith({ integrations: { todos: { capability: 'google-sheet', operations: ['read'] } } })),
+    ).toThrow(/unsupported capability/);
+    expect(() =>
+      read280(projectWith({ integrations: { todos: { capability: 'google-sheets', operations: ['obliterate'] } } })),
+    ).toThrow(/does not support/);
+    expect(() =>
+      read280(projectWith({ integrations: { todos: { capability: 'google-sheets', operations: [] } } })),
+    ).toThrow(/declares no operations/);
+    expect(() =>
+      read280(projectWith({ integrations: { 'bad alias': { capability: 'google-sheets', operations: ['read'] } } })),
+    ).toThrow(/alias .* is invalid/);
   });
 });
 

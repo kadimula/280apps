@@ -132,7 +132,13 @@ async function poll(
 ): Promise<DeployStatus> {
   for (let attempt = 0; ; attempt++) {
     const status = await retry(opts, () => port.status(app.id, deployId));
-    if (status.state === State.WaitingSecrets) throw credentialsRequired(status.secretNotice);
+    if (status.state === State.WaitingSecrets) {
+      // A parked deploy is waiting on a missing secret/config value or an unbound
+      // integration alias. Report whichever is outstanding; the secret gate takes
+      // precedence when both are, matching the backend's deep-link choice.
+      if (status.secretNotice !== '') throw credentialsRequired(status.secretNotice);
+      throw integrationRequired(status.integrationNotice);
+    }
     if (stateTerminal(status.state)) {
       if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
       if (status.state === State.Live && status.integrationNotice !== '') {

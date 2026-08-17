@@ -435,6 +435,7 @@ export class MemoryStore implements Store {
       routes: policy.routes,
       secrets: policy.secrets,
       config: policy.config,
+      integrations: policy.integrations,
       ownerTenant: ownerTenant !== '' ? ownerTenant : (existing?.ownerTenant ?? ''),
       updatedAt: 0,
     });
@@ -484,6 +485,7 @@ export class MemoryStore implements Store {
       routes: [...p.routes],
       secrets: [...p.secrets],
       config: [...p.config],
+      integrations: [...p.integrations],
     };
   }
 

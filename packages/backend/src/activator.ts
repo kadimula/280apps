@@ -6,6 +6,7 @@ import {
   requiredConfigNames,
   stateTerminal,
   type DeployError,
+  type Manifest,
 } from '@280/contracts';
 import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, Store } from './seams.js';
 import type { ContainerBuilder, RolloutJob } from './runtime/container/container.js';
@@ -105,11 +106,15 @@ export class ContainerDeploymentCoordinator {
     const job = rolloutJob(this.deps, app, dep);
     if (state === State.Activating) await this.prepare(job);
 
+    // One readiness gate for what a human must still supply before the app can serve:
+    // required config values (sensitive, no committed value) and bound integration
+    // aliases. When anything is missing the deploy parks (no rollout, no spin, no
+    // credential request); a re-check after parking closes the race with a
+    // just-completed setup.
     const config = dep.manifest.config ?? [];
-    const required = requiredConfigNames(config);
-    if (required.length > 0 && (await this.secretsUnconfigured(app.id, required))) {
+    if (await this.setupPending(app.id, dep.manifest)) {
       await this.deps.store.parkActivation(app.id, dep.id, (this.deps.now ?? nowSecs)());
-      if (await this.secretsUnconfigured(app.id, required)) return;
+      if (await this.setupPending(app.id, dep.manifest)) return;
       state = State.WaitingSecrets;
     }
 
@@ -136,7 +141,22 @@ export class ContainerDeploymentCoordinator {
     }
   }
 
-  private async secretsUnconfigured(appId: string, names: string[]): Promise<boolean> {
+  // The park gate mirrors the original secret discipline: only required CONFIG
+  // (sensitive, no committed value) blocks serving, not declared secrets — those are
+  // backend-held and delivered separately, so declaring one never waits. Integration
+  // aliases with no bound resource block the same way. A store fault fails safe
+  // (treated as pending), so a transient error can never let a deploy roll out.
+  private async setupPending(appId: string, manifest: Manifest): Promise<boolean> {
+    const requiredCfg = requiredConfigNames(manifest.config ?? []);
+    if (requiredCfg.length > 0 && (await this.namesUnconfigured(appId, requiredCfg))) return true;
+    for (const r of manifest.integrations ?? []) {
+      const bound = await this.deps.store.resourceByAlias(appId, r.capability, r.alias).catch(() => null);
+      if (bound === null) return true;
+    }
+    return false;
+  }
+
+  private async namesUnconfigured(appId: string, names: string[]): Promise<boolean> {
     try {
       const present = new Set(await this.deps.store.appSecretNames(appId));
       return names.some((name) => !present.has(name));

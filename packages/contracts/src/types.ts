@@ -7,6 +7,13 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { DeployCode, errorSchema } from './errors.js';
 import { DeployErr } from './deploy/error.js';
+import {
+  capabilityNames,
+  capabilityOperations,
+  isCapabilitySupported,
+  isOperationSupported,
+  type CapabilityName,
+} from './capabilities.js';
 
 // MaxBuildContextBytes caps the total size of an uploaded container build
 // context, the coarse guard preflight applies before any state changes.
@@ -488,29 +495,77 @@ export function requiredConfigNames(config: readonly ConfigEntry[]): string[] {
   return config.filter((c) => c.sensitive && c.value === '').map((c) => c.name);
 }
 
+// The provider each capability is fulfilled by. Capability support is owned by the
+// versioned CAPABILITY_CATALOG (capabilities.ts); this is only the routing from a
+// declared capability to the connection provider that serves it.
 export const INTEGRATION_PROVIDERS: Readonly<Record<string, string>> = {
   'google-sheets': 'google',
 };
 
-export function validateIntegrations(integrations: readonly string[]): void {
+export function providerForCapability(capability: string): string {
+  return INTEGRATION_PROVIDERS[capability] ?? '';
+}
+
+// A valid resource alias: 1-64 letters, digits, dot, dash, or underscore. The app
+// names the alias; the dashboard binds it to a human-chosen resource. Kept in sync
+// with the store's ALIAS_PATTERN so the CLI, backend preflight, and binding agree.
+export const INTEGRATION_ALIAS_RE = /^[a-zA-Z0-9_.-]{1,64}$/;
+
+// IntegrationRequirement is one declared, unbound integration need: a stable resource
+// alias, the capability it fulfills, and the operations the app's code calls. It never
+// carries a resource id or credential — the dashboard binds the alias to a resource in
+// a later step. The human 280.json nests these under an alias-keyed object; the CLI
+// flattens to this wire shape (mirroring route gates).
+export const integrationRequirementSchema = z
+  .object({
+    alias: str(),
+    capability: str(),
+    operations: arr(z.string()),
+  })
+  .passthrough();
+export type IntegrationRequirement = z.infer<typeof integrationRequirementSchema>;
+
+// validateIntegrationRequirements is the strict semantic gate the CLI runs at authoring
+// time and the backend preflight runs as a backstop. Capability and operation support
+// is validated ONLY against the versioned CAPABILITY_CATALOG, so a stale CLI cannot
+// smuggle an unsupported operation past the server. Throws PreflightRejected.
+export function validateIntegrationRequirements(reqs: readonly IntegrationRequirement[]): void {
   const seen = new Set<string>();
-  for (const capability of integrations) {
-    if (capability === '' || INTEGRATION_PROVIDERS[capability] === undefined) {
-      throw new DeployErr({
-        code: DeployCode.PreflightRejected,
-        message: `integration ${JSON.stringify(capability)} is not supported`,
-        fix: `use one of ${Object.keys(INTEGRATION_PROVIDERS).join(', ')}`,
-      });
+  for (const r of reqs) {
+    const alias = r.alias.trim();
+    if (!INTEGRATION_ALIAS_RE.test(alias)) {
+      rejectIntegration(
+        `integration alias ${JSON.stringify(r.alias)} is invalid`,
+        'use 1-64 letters, digits, dot, dash, or underscore',
+      );
     }
-    if (seen.has(capability)) {
-      throw new DeployErr({
-        code: DeployCode.PreflightRejected,
-        message: `280.json declares integration ${JSON.stringify(capability)} twice`,
-        fix: 'remove the duplicate integration',
-      });
+    if (seen.has(alias)) {
+      rejectIntegration(`280.json declares integration alias ${JSON.stringify(alias)} twice`, 'give each integration a unique alias');
     }
-    seen.add(capability);
+    seen.add(alias);
+    if (!isCapabilitySupported(r.capability)) {
+      rejectIntegration(
+        `integration ${JSON.stringify(alias)} names unsupported capability ${JSON.stringify(r.capability)}`,
+        `use one of ${capabilityNames().join(', ')}`,
+      );
+    }
+    const ops = r.operations ?? [];
+    if (ops.length === 0) {
+      rejectIntegration(`integration ${JSON.stringify(alias)} declares no operations`, 'list the operations the app calls, e.g. ["read", "append"]');
+    }
+    for (const op of ops) {
+      if (!isOperationSupported(r.capability, op)) {
+        rejectIntegration(
+          `integration ${JSON.stringify(alias)} requests operation ${JSON.stringify(op)}, which ${r.capability} does not support`,
+          `${r.capability} supports: ${capabilityOperations(r.capability as CapabilityName).join(', ')}`,
+        );
+      }
+    }
   }
+}
+
+function rejectIntegration(message: string, fix: string): never {
+  throw new DeployErr({ code: DeployCode.PreflightRejected, message, fix });
 }
 
 // validateConfig is the strict semantic gate for the config block, run by the CLI
@@ -573,7 +628,7 @@ export const manifestSchema = z
     routes: arr(routeGateSchema),
     secrets: arr(z.string()),
     config: arr(configEntrySchema),
-    integrations: arr(z.string()),
+    integrations: arr(integrationRequirementSchema),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
@@ -590,6 +645,7 @@ export interface AppPolicy {
   routes: RouteGate[];
   secrets: string[];
   config: ConfigEntry[]; // declared non-secret env vars (names + committed values + sensitive flag)
+  integrations: IntegrationRequirement[]; // declared alias -> capability/operations the app needs bound
   ownerTenant: string; // '' until the owner is known; anyone-at-tenant fails closed while empty
   updatedAt: number;
 }
@@ -605,6 +661,7 @@ export function appPolicyFromManifest(
     routes: [...(m.routes ?? [])],
     secrets: [...(m.secrets ?? [])],
     config: [...(m.config ?? [])],
+    integrations: [...(m.integrations ?? [])],
   };
 }
 
@@ -871,8 +928,15 @@ export function canonicalDigest(m: Manifest): Digest {
   for (const c of [...(m.config ?? [])].sort((a, b) => byteCompare(a.name, b.name))) {
     h.update(`config:${c.name}:${c.value}:${c.sensitive ? '1' : '0'}\n`);
   }
-  for (const capability of [...(m.integrations ?? [])].sort(byteCompare)) {
-    h.update(`integration:${capability}\n`);
+  // Integration requirements are part of the trust boundary: declaring or changing a
+  // required alias/capability/operation must redeploy and re-register. Emitted only
+  // when present (sorted by alias, operations sorted), so a manifest with no
+  // integrations hashes byte-identically to a pre-integration one.
+  for (const r of [...(m.integrations ?? [])].sort((a, b) => byteCompare(a.alias, b.alias))) {
+    h.update(`integration:${r.alias}:${r.capability}\n`);
+    for (const op of [...(r.operations ?? [])].sort(byteCompare)) {
+      h.update(`integration-op:${r.alias}:${op}\n`);
+    }
   }
   return h.digest('hex');
 }

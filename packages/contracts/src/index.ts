@@ -6,6 +6,7 @@ export * from './types.js';
 export * from './port.js';
 export * from './identity.js';
 export * as version from './version.js';
+export * from './capabilities.js';
 
 // Runtime carriers and executable contract layered on the frozen wire types
 // above, shared so consumers use one throwable error type and one conformance suite.

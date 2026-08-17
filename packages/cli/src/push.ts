@@ -135,13 +135,16 @@ async function poll(
     if (status.state === State.WaitingSecrets) throw credentialsRequired(status.secretNotice);
     if (stateTerminal(status.state)) {
       if (status.secretNotice !== '') ev.onSecretNotice?.(status.secretNotice);
+      if (status.state === State.Live && status.integrationNotice !== '') {
+        throw integrationRequired(status.integrationNotice);
+      }
       return status;
     }
     await sleep(backoffFor(opts, attempt));
   }
 }
 function credentialsRequired(notice: string): DeployError {
-  const dashboardUrl = notice.match(/https?:\/\/\S+/)?.[0].replace(/[.,;:!?]+$/, '');
+  const dashboardUrl = noticeUrl(notice);
   return {
     code: DeployCode.CredentialsRequired,
     message: notice || 'deployment is waiting for credentials before it can go live',
@@ -151,6 +154,21 @@ function credentialsRequired(notice: string): DeployError {
     retryable: false,
     candidates: [],
   };
+}
+function integrationRequired(notice: string): DeployError {
+  const dashboardUrl = noticeUrl(notice);
+  return {
+    code: DeployCode.CredentialsRequired,
+    message: notice,
+    fix: dashboardUrl
+      ? `ask your user to connect the integration at ${dashboardUrl}, then run \`two80 push\` again`
+      : 'ask your user to connect the integration in the 280 dashboard, then run `two80 push` again',
+    retryable: false,
+    candidates: [],
+  };
+}
+function noticeUrl(notice: string): string | undefined {
+  return notice.match(/https?:\/\/\S+/)?.[0].replace(/[.,;:!?]+$/, '');
 }
 async function retry<T>(opts: Options, fn: () => Promise<T>): Promise<T> {
   let last: unknown;

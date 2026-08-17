@@ -19,6 +19,7 @@ const EMPTY_POLICY: Policy280 = {
   routes: [],
   secrets: [],
   config: [],
+  integrations: [],
 };
 export const APP_PORT = 8080;
 const CA_PATH = '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
@@ -180,6 +181,7 @@ function assemble(
     routes: policy.routes,
     secrets: policy.secrets,
     config: policy.config,
+    integrations: policy.integrations,
   };
   const extra: string[] = [];
   if (policy.access !== 'invited') {

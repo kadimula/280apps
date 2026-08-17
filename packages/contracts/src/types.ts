@@ -488,6 +488,31 @@ export function requiredConfigNames(config: readonly ConfigEntry[]): string[] {
   return config.filter((c) => c.sensitive && c.value === '').map((c) => c.name);
 }
 
+export const INTEGRATION_PROVIDERS: Readonly<Record<string, string>> = {
+  'google-sheets': 'google',
+};
+
+export function validateIntegrations(integrations: readonly string[]): void {
+  const seen = new Set<string>();
+  for (const capability of integrations) {
+    if (capability === '' || INTEGRATION_PROVIDERS[capability] === undefined) {
+      throw new DeployErr({
+        code: DeployCode.PreflightRejected,
+        message: `integration ${JSON.stringify(capability)} is not supported`,
+        fix: `use one of ${Object.keys(INTEGRATION_PROVIDERS).join(', ')}`,
+      });
+    }
+    if (seen.has(capability)) {
+      throw new DeployErr({
+        code: DeployCode.PreflightRejected,
+        message: `280.json declares integration ${JSON.stringify(capability)} twice`,
+        fix: 'remove the duplicate integration',
+      });
+    }
+    seen.add(capability);
+  }
+}
+
 // validateConfig is the strict semantic gate for the config block, run by the CLI
 // at authoring time and the backend preflight as a backstop. It rejects invalid
 // identifiers, duplicates, reserved container/platform names, a name that is also a
@@ -548,6 +573,7 @@ export const manifestSchema = z
     routes: arr(routeGateSchema),
     secrets: arr(z.string()),
     config: arr(configEntrySchema),
+    integrations: arr(z.string()),
   })
   .passthrough();
 export type Manifest = z.infer<typeof manifestSchema>;
@@ -749,6 +775,7 @@ export const deployStatusSchema = z
     // access override diverging from 280.json). Empty means nothing to say.
     notice: str(''),
     secretNotice: str(''),
+    integrationNotice: str(''),
     failure: errorSchema.nullish().transform((v) => v ?? undefined),
   })
   .passthrough();
@@ -843,6 +870,9 @@ export function canonicalDigest(m: Manifest): Digest {
   // value rides as value '', so entering it in the dashboard does not change the id.
   for (const c of [...(m.config ?? [])].sort((a, b) => byteCompare(a.name, b.name))) {
     h.update(`config:${c.name}:${c.value}:${c.sensitive ? '1' : '0'}\n`);
+  }
+  for (const capability of [...(m.integrations ?? [])].sort(byteCompare)) {
+    h.update(`integration:${capability}\n`);
   }
   return h.digest('hex');
 }

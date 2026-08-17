@@ -1108,6 +1108,7 @@ function encodeStatus(s: DeployStatus): Record<string, unknown> {
   if (s.url) out.url = s.url;
   if (s.notice) out.notice = s.notice;
   if (s.secretNotice) out.secretNotice = s.secretNotice;
+  if (s.integrationNotice) out.integrationNotice = s.integrationNotice;
   if (s.failure) out.failure = encodeError(s.failure as DeployError);
   return out;
 }

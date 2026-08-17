@@ -116,10 +116,14 @@ describe('canonicalDigest folds the policy', () => {
     expect(canonicalDigest(manifest({ roles: ['manager'] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ routes: [gate('/x', { appRole: 'admin' })] }))).not.toBe(base);
     expect(canonicalDigest(manifest({ secrets: ['K'] }))).not.toBe(base);
+    expect(canonicalDigest(manifest({ integrations: ['google-sheets'] }))).not.toBe(base);
   });
 
-  it('is order-independent for roles and secrets', () => {
+  it('is order-independent for roles, secrets, and integrations', () => {
     expect(canonicalDigest(manifest({ roles: ['a', 'b'] }))).toBe(canonicalDigest(manifest({ roles: ['b', 'a'] })));
+    expect(canonicalDigest(manifest({ integrations: ['b', 'a'] }))).toBe(
+      canonicalDigest(manifest({ integrations: ['a', 'b'] })),
+    );
   });
 });
 

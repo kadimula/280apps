@@ -86,6 +86,15 @@ describe('read280', () => {
     );
   });
 
+  it('parses supported integrations', () => {
+    expect(read280(projectWith({ integrations: ['google-sheets'] })).integrations).toEqual(['google-sheets']);
+  });
+
+  it('rejects malformed, unknown, and duplicate integrations', () => {
+    expect(() => read280(projectWith({ integrations: 'google-sheets' }))).toThrow(/must be a list/);
+    expect(() => read280(projectWith({ integrations: ['google-sheet'] }))).toThrow(/not supported/);
+    expect(() => read280(projectWith({ integrations: ['google-sheets', 'google-sheets'] }))).toThrow(/twice/);
+  });
 });
 
 describe('read280 config', () => {

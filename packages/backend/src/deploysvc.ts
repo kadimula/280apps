@@ -18,6 +18,8 @@ import {
   requiredConfigNames,
   stateTerminal,
   validateConfig,
+  validateIntegrations,
+  INTEGRATION_PROVIDERS,
   type ConfigEntry,
   type EgressPolicy,
   type App as PublicApp,
@@ -34,7 +36,7 @@ import {
   type BlobBody,
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
-import type { App, BlobStore, Deploy, Store } from './seams.js';
+import { IntegrationStatus, type App, type BlobStore, type Deploy, type Store } from './seams.js';
 import type { ContainerDeploymentCoordinator } from './activator.js';
 
 // deployShaped duck-types a caught value into the seam's plain error fields: the
@@ -386,6 +388,7 @@ export class Service implements Port {
       url: dep.state === State.Live ? app.url : '',
       notice: dep.state === State.Live ? await this.accessOverrideNotice(appId, dep.manifest) : '',
       secretNotice: await this.secretNotice(appId, dep.manifest),
+      integrationNotice: dep.state === State.Live ? await this.integrationNotice(appId, dep.manifest) : '',
       failure: dep.failure ?? undefined,
     };
     return st;
@@ -410,6 +413,23 @@ export class Service implements Port {
     if (missing.length === 0) return '';
     const single = missing.length === 1;
     return `declared ${single ? 'variable is' : 'variables are'} not configured: ${missing.join(', ')}. Configure ${single ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?variables=1`;
+  }
+
+  private async integrationNotice(appId: string, m: Manifest): Promise<string> {
+    const declared = m.integrations ?? [];
+    if (declared.length === 0) return '';
+    const connections = await this.p.store.connectionsByApp(appId).catch(() => null);
+    if (connections === null) return '';
+    const active = new Set(
+      connections.filter((connection) => connection.status === IntegrationStatus.Active).map((connection) => connection.provider),
+    );
+    const missing = declared.filter((capability) => !active.has(INTEGRATION_PROVIDERS[capability] ?? ''));
+    if (missing.length === 0) return '';
+    const reconnect = connections.some((connection) =>
+      missing.some((capability) => INTEGRATION_PROVIDERS[capability] === connection.provider),
+    );
+    const action = reconnect ? 'Reconnect' : 'Connect';
+    return `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not connected. ${action} ${missing.length === 1 ? 'it' : 'them'} at ${this.p.frontendOrigin}/dashboard/${encodeURIComponent(appId)}?integrations=1`;
   }
 
   // wrapInternal launders a store/blob fault into the seam's retryable error,
@@ -471,6 +491,12 @@ export function preflight(m: Manifest): void {
   // identifier, secret/config overlap, reserved name, or a required value with no
   // home) must fail closed here too, not just at the CLI. Same gate the CLI runs.
   preflightConfig(m.config ?? [], m.secrets ?? [], reject);
+  try {
+    validateIntegrations(m.integrations ?? []);
+  } catch (err) {
+    const d = deployShaped(err);
+    reject(d?.message ?? errText(err));
+  }
 }
 
 function preflightConfig(config: ConfigEntry[], secrets: string[], reject: (why: string) => never): void {

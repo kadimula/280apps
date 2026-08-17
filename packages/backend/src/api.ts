@@ -796,7 +796,16 @@ export class Server {
     const { app } = await this.ownedApp(c);
     const svc = this.integrations(c);
     try {
-      return c.json({ providers: svc.catalog(), connections: await svc.listConnections(app.id) });
+      // requirements are the app's declared, alias-keyed integration needs, read
+      // from the newest deploy's manifest so a parked deploy (whose policy is not
+      // registered until it goes live) still surfaces what the human must bind. The
+      // dialog cross-references them against connections for each alias's readiness.
+      const latest = await this.deps(c).platform.store.latestDeploy(app.id).catch(() => null);
+      return c.json({
+        providers: svc.catalog(),
+        connections: await svc.listConnections(app.id),
+        requirements: latest?.manifest.integrations ?? [],
+      });
     } catch (err) {
       this.mapIntegrationErr(err);
     }

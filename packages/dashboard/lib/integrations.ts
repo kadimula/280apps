@@ -13,6 +13,15 @@ import { cookieHeader } from "@/lib/session";
 
 export type IntegrationProvider = { provider: string; capabilities: string[] };
 
+// A required integration the app declared in 280.json: a stable alias, the
+// capability it fulfills, and the operations the app calls. It never carries a
+// resource id — the owner binds the alias to a picked resource in this dialog.
+export type IntegrationRequirement = {
+  alias: string;
+  capability: string;
+  operations: string[];
+};
+
 export type IntegrationResource = {
   id: string;
   capability: string;
@@ -34,6 +43,7 @@ export type IntegrationConnection = {
 export type IntegrationCatalog = {
   providers: IntegrationProvider[];
   connections: IntegrationConnection[];
+  requirements: IntegrationRequirement[];
 };
 
 export type SelectorSession = {
@@ -73,7 +83,11 @@ export async function listIntegrations(
   }
   if (!res.ok) return { error: await failureMessage(res) };
   const body = (await res.json()) as Partial<IntegrationCatalog>;
-  return { providers: body.providers ?? [], connections: body.connections ?? [] };
+  return {
+    providers: body.providers ?? [],
+    connections: body.connections ?? [],
+    requirements: body.requirements ?? [],
+  };
 }
 
 // The mock stand-in for a completed OAuth consent. In a live environment the

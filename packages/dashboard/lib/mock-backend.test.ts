@@ -18,17 +18,31 @@ function post(path: string, body?: unknown) {
   });
 }
 
-async function list() {
-  const res = mockResponse(base);
-  return (await res.json()) as {
-    providers: { provider: string; capabilities: string[] }[];
-    connections: {
-      id: string;
-      provider: string;
-      status: string;
-      resources: { id: string; alias: string; displayName: string }[];
-    }[];
-  };
+type Catalog = {
+  providers: { provider: string; capabilities: string[] }[];
+  connections: {
+    id: string;
+    provider: string;
+    status: string;
+    resources: { id: string; capability: string; alias: string; displayName: string }[];
+  }[];
+  requirements: { alias: string; capability: string; operations: string[] }[];
+};
+
+async function list(appId = APP): Promise<Catalog> {
+  const res = mockResponse(`/internal/apps/${appId}/integrations`);
+  return (await res.json()) as Catalog;
+}
+
+// Mirrors the dialog's readiness check: a required alias is ready only when a
+// resource with the same capability and alias is bound under some connection.
+function requirementReady(
+  cat: Catalog,
+  req: { alias: string; capability: string },
+): boolean {
+  return cat.connections.some((c) =>
+    c.resources.some((r) => r.capability === req.capability && r.alias === req.alias),
+  );
 }
 
 describe("mock integrations backend", () => {
@@ -92,5 +106,38 @@ describe("mock integrations backend", () => {
     const disc = mockResponse(`${base}/${conn.id}`, { method: "DELETE" });
     expect(disc.status).toBe(204);
     expect((await list()).connections).toHaveLength(0);
+  });
+
+  // The parked-handoff case: an app declares a required alias, and binding a
+  // spreadsheet to that exact alias readies it — the same state the backend's
+  // resumeWaiting gate keys on to un-park and roll out the deploy.
+  it("readies a declared required alias when it is bound", async () => {
+    const REQ_APP = "app-notes";
+    const reqBase = `/internal/apps/${REQ_APP}/integrations`;
+
+    const before = await list(REQ_APP);
+    const required = before.requirements.find((r) => r.alias === "orders");
+    expect(required).toMatchObject({ capability: "google-sheets", operations: ["read", "append"] });
+    expect(requirementReady(before, required!)).toBe(false);
+
+    expect((await post(`${reqBase}/google/connect`)).status).toBe(204);
+    const conn = (await list(REQ_APP)).connections[0]!;
+
+    // Binding a different alias does NOT ready the requirement.
+    await post(`${reqBase}/${conn.id}/resources`, {
+      capability: "google-sheets",
+      alias: "inventory",
+      externalId: MOCK_SHEETS[1]!.id,
+    });
+    expect(requirementReady(await list(REQ_APP), required!)).toBe(false);
+
+    // Binding the declared alias readies it.
+    const reg = await post(`${reqBase}/${conn.id}/resources`, {
+      capability: "google-sheets",
+      alias: "orders",
+      externalId: MOCK_SHEETS[0]!.id,
+    });
+    expect(reg.status).toBe(200);
+    expect(requirementReady(await list(REQ_APP), required!)).toBe(true);
   });
 });

@@ -17,7 +17,7 @@ const REFRESH_MARGIN_SECS = 60;
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 const OPERATIONS: Record<string, Set<string>> = {
-  'google-sheets': new Set(['read', 'append', 'update']),
+  'google-sheets': new Set(['read', 'append', 'update', 'deleteRows']),
 };
 const MAX_RANGE_LEN = 256;
 const MAX_ROWS = 1000;
@@ -452,6 +452,8 @@ function decodeCredentialJson(raw: string): CredentialPayload {
 }
 
 function boundOperation(operation: string, body: Record<string, unknown>): Record<string, unknown> {
+  if (operation === 'deleteRows') return boundDelete(body);
+
   const range = str(body.range);
   if (range === '' || range.length > MAX_RANGE_LEN) {
     throw new SdkError('invalid_request', 'range must be a non-empty A1 range under 256 characters', 400);
@@ -470,6 +472,32 @@ function boundOperation(operation: string, body: Record<string, unknown>): Recor
     values.push(row);
   }
   return { range, values };
+}
+
+function boundDelete(body: Record<string, unknown>): Record<string, unknown> {
+  const startRow = body.startRow;
+  if (typeof startRow !== 'number' || !Number.isInteger(startRow) || startRow < 1) {
+    throw new SdkError('invalid_request', 'startRow must be a positive one-based row number', 400);
+  }
+  const rowCount = body.rowCount;
+  if (typeof rowCount !== 'number' || !Number.isInteger(rowCount) || rowCount < 1) {
+    throw new SdkError('invalid_request', 'rowCount must be a positive integer', 400);
+  }
+  if (rowCount > MAX_ROWS) throw new SdkError('invalid_request', `rowCount cannot exceed ${MAX_ROWS}`, 400);
+  return { sheet: normalizeSheet(body.sheet), startRow, rowCount };
+}
+
+function normalizeSheet(v: unknown): number | string {
+  if (v === undefined || v === null) return 0;
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v) || v < 0) throw new SdkError('invalid_request', 'sheet index must be a non-negative integer', 400);
+    return v;
+  }
+  if (typeof v === 'string') {
+    if (v.trim() === '') throw new SdkError('invalid_request', 'sheet title cannot be empty', 400);
+    return v;
+  }
+  throw new SdkError('invalid_request', 'sheet must be a title or a zero-based index', 400);
 }
 
 function attemptName(provider: string): string {

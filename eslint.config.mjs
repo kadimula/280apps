@@ -21,4 +21,24 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The Google Sheets vendor library and its types are fenced to the provider folder;
+    // they must not leak above the Provider seam, into service.ts, the wire, or the SDK.
+    files: ["packages/**/*.ts"],
+    ignores: ["packages/backend/src/integrations/google/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@googleapis/*", "googleapis", "googleapis/*"],
+              message:
+                "Google Sheets vendor types are fenced to packages/backend/src/integrations/google/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

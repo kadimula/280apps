@@ -25,6 +25,8 @@ export {
   type SheetsReadResult,
   type SheetsWriteInput,
   type SheetsWriteResult,
+  type SheetsDeleteRowsInput,
+  type SheetsDeleteRowsResult,
 } from './googleSheets.js';
 
 export interface User280 {

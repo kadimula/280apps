@@ -29,16 +29,35 @@ function googleIdToken(sub: string, email: string): string {
   return `${b64url({ alg: 'RS256' })}.${b64url({ sub, email })}.sig`;
 }
 
+interface DeletedDimension {
+  sheetId: number;
+  startIndex: number;
+  endIndex: number;
+}
+
 interface GoogleState {
   refreshCalls: number;
   invalidGrant: boolean;
   revoked: boolean;
   appended: unknown[][];
   updated: unknown[][];
+  deleted: DeletedDimension[];
+  sheetsMeta: Array<{ sheetId: number; index: number; title: string }>;
 }
 
 function fakeGoogle(): { state: GoogleState; fetchImpl: typeof fetch } {
-  const state: GoogleState = { refreshCalls: 0, invalidGrant: false, revoked: false, appended: [], updated: [] };
+  const state: GoogleState = {
+    refreshCalls: 0,
+    invalidGrant: false,
+    revoked: false,
+    appended: [],
+    updated: [],
+    deleted: [],
+    sheetsMeta: [
+      { sheetId: 111, index: 0, title: 'Orders' },
+      { sheetId: 222, index: 1, title: 'Archive' },
+    ],
+  };
   const json = (obj: unknown, status = 200): Response =>
     new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -77,7 +96,17 @@ function fakeGoogle(): { state: GoogleState; fetchImpl: typeof fetch } {
     }
 
     if (url.startsWith('https://sheets.googleapis.com/')) {
+      if (method === 'GET' && !url.includes('/values/')) {
+        return json({ sheets: state.sheetsMeta.map((s) => ({ properties: { sheetId: s.sheetId, index: s.index, title: s.title } })) });
+      }
       if (method === 'GET') return json({ range: 'Orders!A:D', majorDimension: 'ROWS', values: state.appended });
+      if (url.includes(':batchUpdate')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { requests?: Array<{ deleteDimension?: { range: DeletedDimension } }> };
+        for (const req of body.requests ?? []) {
+          if (req.deleteDimension) state.deleted.push(req.deleteDimension.range);
+        }
+        return json({ replies: [{}] });
+      }
       const body = JSON.parse(String(init?.body ?? '{}')) as { values?: unknown[][]; range?: string };
       const values = body.values ?? [];
       if (url.includes(':append')) {
@@ -331,5 +360,68 @@ describe('integrations end to end', () => {
     expect(noRange.status).toBe(400);
     const noResource = await sdk(world, 'append', token, { resource: '', range: 'Orders!A:D', values: [['x']] });
     expect(noResource.status).toBe(400);
+  });
+
+  it('deletes rows and resolves the sheet by index or title', async () => {
+    world = await makeWorld();
+    const w = world;
+    await connect(w);
+    const token = await w.identityToken();
+
+    // Default sheet (index 0) maps to sheetId 111; startRow is one-based, so row 3 → startIndex 2.
+    const del = await sdk(w, 'deleteRows', token, { resource: 'orders', startRow: 3, rowCount: 2 });
+    expect(del.status).toBe(200);
+    expect((await del.json()) as { sheetId: number; deletedRows: number; startRow: number }).toMatchObject({
+      sheetId: 111,
+      deletedRows: 2,
+      startRow: 3,
+    });
+    expect(w.google.deleted).toContainEqual(expect.objectContaining({ sheetId: 111, dimension: 'ROWS', startIndex: 2, endIndex: 4 }));
+
+    // Selecting by title resolves the second sheet.
+    const byTitle = await sdk(w, 'deleteRows', token, { resource: 'orders', sheet: 'Archive', startRow: 1, rowCount: 1 });
+    expect(byTitle.status).toBe(200);
+    expect((await byTitle.json()) as { sheetId: number }).toMatchObject({ sheetId: 222 });
+    expect(w.google.deleted).toContainEqual(expect.objectContaining({ sheetId: 222, startIndex: 0, endIndex: 1 }));
+  });
+
+  it('rejects invalid deleteRows bounds', async () => {
+    world = await makeWorld();
+    const w = world;
+    await connect(w);
+    const token = await w.identityToken();
+    for (const body of [
+      { resource: 'orders', startRow: 1, rowCount: 0 },
+      { resource: 'orders', startRow: 1, rowCount: -2 },
+      { resource: 'orders', startRow: 0, rowCount: 1 },
+      { resource: 'orders', startRow: 1, rowCount: 100000 },
+      { resource: 'orders', sheet: -1, startRow: 1, rowCount: 1 },
+    ]) {
+      const res = await sdk(w, 'deleteRows', token, body);
+      expect(res.status).toBe(400);
+    }
+    expect(w.google.deleted).toHaveLength(0);
+  });
+
+  it('fails deleteRows on an unresolvable sheet or missing binding', async () => {
+    world = await makeWorld();
+    const w = world;
+    await connect(w);
+    const token = await w.identityToken();
+
+    const outOfRange = await sdk(w, 'deleteRows', token, { resource: 'orders', sheet: 5, startRow: 1, rowCount: 1 });
+    expect(outOfRange.status).toBe(409);
+    expect((await outOfRange.json()) as { error: string }).toMatchObject({ error: 'resource_unavailable' });
+
+    const unregistered = await sdk(w, 'deleteRows', token, { resource: 'ghost', startRow: 1, rowCount: 1 });
+    expect(unregistered.status).toBe(404);
+    expect((await unregistered.json()) as { error: string }).toMatchObject({ error: 'resource_not_found' });
+  });
+
+  it('denies deleteRows for an unauthenticated caller', async () => {
+    world = await makeWorld();
+    await connect(world);
+    const res = await sdk(world, 'deleteRows', 'not-a-jwt', { resource: 'orders', startRow: 1, rowCount: 1 });
+    expect(res.status).toBe(401);
   });
 });

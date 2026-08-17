@@ -24,10 +24,27 @@ export interface SheetsWriteResult {
   updatedCells: number;
 }
 
+export interface SheetsDeleteRowsInput {
+  resource: string;
+  // A zero-based sheet index or a sheet title. Defaults to the first sheet.
+  sheet?: number | string;
+  // One-based row number of the first row to delete (row 1 is the first row).
+  startRow: number;
+  // Number of rows to delete; must be positive.
+  rowCount: number;
+}
+
+export interface SheetsDeleteRowsResult {
+  sheetId: number;
+  deletedRows: number;
+  startRow: number;
+}
+
 export interface GoogleSheetsClient {
   read(input: SheetsReadInput): Promise<SheetsReadResult>;
   append(input: SheetsWriteInput): Promise<SheetsWriteResult>;
   update(input: SheetsWriteInput): Promise<SheetsWriteResult>;
+  deleteRows(input: SheetsDeleteRowsInput): Promise<SheetsDeleteRowsResult>;
 }
 
 export interface GoogleSheetsOptions {
@@ -75,6 +92,7 @@ export function googleSheets(request: RequestLike, opts: GoogleSheetsOptions = {
     read: (input) => call<SheetsReadResult>('read', input),
     append: (input) => call<SheetsWriteResult>('append', input),
     update: (input) => call<SheetsWriteResult>('update', input),
+    deleteRows: (input) => call<SheetsDeleteRowsResult>('deleteRows', input),
   };
 }
 

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AppMenu } from "@/components/app-menu";
 import { CloverMark } from "@/components/clover-mark";
+import { IntegrationsDialog } from "@/components/integrations-dialog";
 import { ShareDialog } from "@/components/share-dialog";
 import { SiteHeader } from "@/components/site-header";
 import { UserMenu } from "@/components/user-menu";
@@ -11,6 +12,7 @@ import {
   type ViewAsGroup,
   ViewAsMenu,
 } from "@/components/view-as-menu";
+import { apiBase, MOCK_BACKEND } from "@/lib/api";
 import { getApp } from "@/lib/apps";
 import { listViewGrants } from "@/lib/grants";
 import { mintPreviewUrl, parseViewAs, VIEW_AS_ROLES } from "@/lib/preview";
@@ -33,18 +35,26 @@ export default async function AppPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ as?: string; variables?: string }>;
+  searchParams: Promise<{ as?: string; variables?: string; integrations?: string }>;
 }) {
   const user = await getMe();
   if (!user) {
     redirect("/login");
   }
 
-  const [{ id }, { as, variables }] = await Promise.all([params, searchParams]);
+  const [{ id }, { as, variables, integrations }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const app = await getApp(id);
   if (!app) {
     notFound();
   }
+
+  // The Integrations dialog builds a top-level OAuth link against the backend
+  // origin; in mock mode there is no backend to name, so the dialog uses its
+  // mock connect path instead and never reads this.
+  const integrationsApiBase = MOCK_BACKEND ? "" : apiBase();
 
   const host = app.url.replace(/^https:\/\//, "");
   const viewAs = parseViewAs(as);
@@ -150,6 +160,12 @@ export default async function AppPage({
           />
         )}
         <VariablesDialog app={{ id: app.id, slug: app.slug }} autoOpen={variables === "1"} />
+        <IntegrationsDialog
+          app={{ id: app.id, slug: app.slug }}
+          apiBase={integrationsApiBase}
+          mock={MOCK_BACKEND}
+          autoOpen={integrations === "1"}
+        />
         <AppMenu appId={app.id} slug={app.slug} />
         <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">
           Docs

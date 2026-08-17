@@ -1,24 +1,15 @@
-// Generates and installs the 280 Agent Skill that loads on demand in a skill-aware
-// agent. Built from the home view's static content (shared DESCRIPTION) so it
-// never drifts from the CLI; examples use `npx` since `two80` may not be on PATH.
-
 import fs from 'node:fs';
 import path from 'node:path';
+import { readOptional } from '../fsutil.js';
 import { fileURLToPath } from 'node:url';
 import { writeAtomic } from './jsonfile.js';
 import { DESCRIPTION } from '../homeview.js';
 import type { InstallResult } from './result.js';
-
 const SKILL_NAME = '280-deploy';
-
 export const INSTALL_FILE = path.join('.claude', 'skills', SKILL_NAME, 'SKILL.md');
-
 const TRIGGER =
   'Deploy and share a local web app (Next.js or static) to a live URL with one command. ' +
   'Use when the user wants to deploy, publish, ship, or share an app or prototype and get a link.';
-
-// Deterministic and state-free, so the committed file and `--check` compare byte
-// for byte. DESCRIPTION is imported from the home view (single source of truth).
 export function generate(): string {
   return `---
 name: ${SKILL_NAME}
@@ -59,23 +50,14 @@ npx -y two80@latest delete --yes <name>   # destroy the app: URL, content, data
   a hook that shows this directory's app state when a session opens.
 `;
 }
-
 export function install(root: string): InstallResult {
   const file = path.join(root, INSTALL_FILE);
   const desired = generate();
-  let current: string | null = null;
-  try {
-    current = fs.readFileSync(file, 'utf8');
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-  }
+  const current = readOptional(file) ?? null;
   if (current === desired) return { target: 'skill', action: 'unchanged', path: INSTALL_FILE };
   writeAtomic(file, desired);
   return { target: 'skill', action: current === null ? 'installed' : 'repaired', path: INSTALL_FILE };
 }
-
-// Walks up to the `two80` package root so `--check` works from source, from the
-// tsup bundle, and from an installed package.
 export function committedPath(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
@@ -84,21 +66,16 @@ export function committedPath(): string {
       const name = JSON.parse(fs.readFileSync(pkg, 'utf8')).name;
       if (name === 'two80') return path.join(dir, 'skill', 'SKILL.md');
     } catch {
-      // not the package root; keep walking up
     }
     const parent = path.dirname(dir);
     if (parent === dir) throw new Error('could not locate the two80 package root for --check');
     dir = parent;
   }
 }
-
 export interface CheckResult {
   fresh: boolean;
   path: string; // committed file path
 }
-
-// Newline-normalized so a CRLF checkout (git autocrlf on Windows CI) is not
-// mistaken for drift; content, not line endings, is what matters.
 export function check(): CheckResult {
   const p = committedPath();
   let committed = '';
@@ -109,7 +86,6 @@ export function check(): CheckResult {
   }
   return { fresh: lf(committed) === lf(generate()), path: p };
 }
-
 function lf(s: string): string {
   return s.replace(/\r\n/g, '\n');
 }

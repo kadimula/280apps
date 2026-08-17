@@ -1,19 +1,9 @@
-// detect infers a project's framework and default slug from files on disk, so the
-// agent never declares the framework by hand. Narrow by design: Next.js or plain
-// static, and an unrecognized project fails loudly rather than guessing.
-// Spec: cli/internal/detect/detect.go; Go is normative, including slug rules.
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { DeployCode } from '@280/contracts';
 import { fail } from './output.js';
-
-// Frameworks the CLI can deploy.
 const FrameworkNext = 'next';
 const FrameworkStatic = 'static';
-
-// framework detects root's framework: Next.js when package.json depends on `next`,
-// else static when an index.html or common build dir exists, else preflight_rejected.
 export function framework(root: string): string {
   if (hasNextDependency(root)) return FrameworkNext;
   if (hasStaticEntry(root)) return FrameworkStatic;
@@ -23,21 +13,16 @@ export function framework(root: string): string {
     'cd into your app directory, or pass two80 init --framework next|static',
   );
 }
-
-// slug is the default app name: package.json "name" slugified, else the project
-// directory name slugified.
 export function slug(root: string): string {
   const pkg = readPackageJSON(root);
   if (pkg && pkg.name) return slugify(pkg.name);
   return slugify(path.basename(path.resolve(root)));
 }
-
 interface PackageJSON {
   name?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 }
-
 function readPackageJSON(root: string): PackageJSON | null {
   let raw: string;
   try {
@@ -51,13 +36,11 @@ function readPackageJSON(root: string): PackageJSON | null {
     return null;
   }
 }
-
 function hasNextDependency(root: string): boolean {
   const pkg = readPackageJSON(root);
   if (!pkg) return false;
   return !!(pkg.dependencies && 'next' in pkg.dependencies) || !!(pkg.devDependencies && 'next' in pkg.devDependencies);
 }
-
 function hasStaticEntry(root: string): boolean {
   if (fileExists(path.join(root, 'index.html'))) return true;
   for (const dir of ['dist', 'build', 'public', 'out']) {
@@ -65,7 +48,6 @@ function hasStaticEntry(root: string): boolean {
   }
   return false;
 }
-
 function fileExists(p: string): boolean {
   try {
     return fs.statSync(p).isFile();
@@ -73,12 +55,7 @@ function fileExists(p: string): boolean {
     return false;
   }
 }
-
 const NON_SLUG = /[^a-z0-9]+/g;
-
-// slugify lowercases, strips an npm scope leader, replaces non-alphanumeric runs
-// with a hyphen, and trims hyphens; empty/all-symbol input becomes "app". Matches
-// detect.go Slugify byte for byte.
 export function slugify(s: string): string {
   s = s.trim().toLowerCase();
   if (s.startsWith('@')) s = s.slice(1); // npm scope leader
@@ -86,7 +63,6 @@ export function slugify(s: string): string {
   s = trim(s, '-');
   return s === '' ? 'app' : s;
 }
-
 function trim(s: string, ch: string): string {
   let start = 0;
   let end = s.length;

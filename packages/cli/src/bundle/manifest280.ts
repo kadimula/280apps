@@ -1,9 +1,3 @@
-// Parsing 280.json into the platform-enforced policy the Manifest carries, plus
-// the route→gate diff the deploy prints. The whole file is the app's trust
-// boundary (design §5.1): `access` decides who may open the app, `roles` names the
-// feature roles, `routes` gates paths, and `secrets` declares platform-held values.
-// A malformed 280.json fails here before any upload.
-
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -19,7 +13,6 @@ import {
   type RouteGate,
 } from '@280/contracts';
 import { fail, fileExists } from './walk.js';
-
 export interface Policy280 {
   egress: EgressPolicy;
   access: string;
@@ -28,7 +21,6 @@ export interface Policy280 {
   secrets: string[];
   config: ConfigEntry[];
 }
-
 const EMPTY: Policy280 = {
   egress: { allowedHosts: [], credentials: [] },
   access: APP_ACCESS.Invited,
@@ -37,9 +29,6 @@ const EMPTY: Policy280 = {
   secrets: [],
   config: [],
 };
-
-// read280 parses the whole 280.json into the enforced policy. Absent file uses
-// invited access with no roles or gates. Every malformed section fails preflight.
 export function read280(root: string): Policy280 {
   const path = join(root, '280.json');
   if (!fileExists(path)) return { ...EMPTY };
@@ -70,11 +59,6 @@ export function read280(root: string): Policy280 {
     config: parseConfig(o.config, secrets),
   };
 }
-
-// parseConfig reads the non-secret config block: a map of env-var NAME to either a
-// committed-public string, or an object ({ value }, { sensitive: true }, or both).
-// Normalized to a name-sorted ConfigEntry list and validated against the declared
-// secrets (a name is config or secret, never both) before any upload.
 function parseConfig(v: unknown, secrets: string[]): ConfigEntry[] {
   if (v === undefined || v === null) return [];
   if (typeof v !== 'object' || Array.isArray(v)) {
@@ -91,7 +75,6 @@ function parseConfig(v: unknown, secrets: string[]): ConfigEntry[] {
   }
   return entries;
 }
-
 function parseConfigEntry(name: string, raw: unknown): ConfigEntry {
   if (typeof raw === 'string') return { name, value: raw, sensitive: false };
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -113,7 +96,6 @@ function parseConfigEntry(name: string, raw: unknown): ConfigEntry {
   }
   return { name, value, sensitive };
 }
-
 function parseAccess(v: unknown): string {
   if (v === undefined || v === null || v === '') return APP_ACCESS.Invited;
   if (typeof v !== 'string' || !isAppAccess(v)) {
@@ -121,7 +103,6 @@ function parseAccess(v: unknown): string {
   }
   return v;
 }
-
 function parseRoles(v: unknown): string[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v) || v.some((r) => typeof r !== 'string' || r === '')) {
@@ -134,7 +115,6 @@ function parseRoles(v: unknown): string[] {
   }
   return [...(v as string[])];
 }
-
 function parseSecrets(v: unknown): string[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v) || v.some((s) => typeof s !== 'string' || s === '')) {
@@ -147,11 +127,6 @@ function parseSecrets(v: unknown): string[] {
   }
   return [...(v as string[])];
 }
-
-// parseRoutes normalizes the human `{ path, require: { app_role | role } }` shape
-// into the flat RouteGate the wire carries, validating each requirement so a typo
-// (an unknown app role, a role the app never declared, or both/neither set) is
-// caught before deploy, not silently gated to owner-only at runtime.
 function parseRoutes(v: unknown, roles: string[]): RouteGate[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) {
@@ -187,11 +162,6 @@ function parseRoutes(v: unknown, roles: string[]): RouteGate[] {
     return { path: r.path, appRole, role };
   });
 }
-
-// routeGateDiff renders what each of the app's routes will require after deploy,
-// resolving the app's own route files against the declared gates. The whole point
-// (design §07) is that an undeclared route shows as Owner-only so the builder sees
-// the fail-closed default and fixes the manifest before teammates hit a wall.
 export function routeGateDiff(discovered: string[], declared: RouteGate[]): string[] {
   if (discovered.length === 0) {
     if (declared.length === 0) return [];
@@ -215,7 +185,6 @@ export function routeGateDiff(discovered: string[], declared: RouteGate[]): stri
   }
   return lines;
 }
-
 function declaredLines(declared: RouteGate[]): string[] {
   return declared.map((g) => `  ${g.path}  →  ${describeGate(g, true)}`);
 }

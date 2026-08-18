@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "cli-v*"
+  # Hand-off target for tag-cli-release.yml: dispatched at a cli-v* tag ref, where
+  # GITHUB_REF_NAME is the tag, so every step below runs unchanged. A tag pushed
+  # by the default GITHUB_TOKEN does not trigger the push event above, so this is
+  # the reliable auto-trigger. Also usable to re-run a publish manually.
+  workflow_dispatch:
 
 permissions:
   contents: write # cut the GitHub Release

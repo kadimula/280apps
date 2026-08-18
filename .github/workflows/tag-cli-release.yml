@@ -1,0 +1,70 @@
+name: Tag CLI Release
+
+# Closes the "bumped but not shipped" gap: a forced version bump (CI guard
+# check-cli-version-bump.mjs) still ships nothing until a cli-v* tag exists.
+# On a push to main that raises packages/cli/package.json version, this cuts and
+# pushes cli-v<version>, then hands off to publish-cli.yml. It NEVER publishes.
+#
+# Why the dispatch hand-off: a tag pushed with the default GITHUB_TOKEN does not
+# start `on: push: tags` workflows (GitHub's rule against recursive runs), so the
+# push alone would not trigger publish-cli.yml. We push the tag (so the release
+# ref is real and immutable) and then dispatch publish-cli.yml at that tag ref,
+# where GITHUB_REF_NAME is the tag and the publish steps run unchanged. No new
+# credential is needed; publishing stays wholly inside publish-cli.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/package.json"
+
+permissions:
+  contents: write # push the cli-v* tag
+  actions: write # dispatch publish-cli.yml
+
+concurrency:
+  group: tag-cli-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + previous commit for the version-change check
+
+      - name: Cut and dispatch cli-v tag on a version increase
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cur="$(node -p "require('./packages/cli/package.json').version")"
+
+          prev=""
+          if git cat-file -e HEAD~1:packages/cli/package.json 2>/dev/null; then
+            prev="$(git show HEAD~1:packages/cli/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          fi
+
+          if [ "$cur" = "$prev" ]; then
+            echo "CLI version unchanged ($cur); nothing to tag."
+            exit 0
+          fi
+          if [ -n "$prev" ]; then
+            greatest="$(printf '%s\n%s\n' "$prev" "$cur" | sort -V | tail -1)"
+            if [ "$greatest" != "$cur" ] || [ "$greatest" = "$prev" ]; then
+              echo "CLI version did not increase ($prev -> $cur); not tagging."
+              exit 0
+            fi
+          fi
+
+          tag="cli-v${cur}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists; leaving it untouched."
+            exit 0
+          fi
+
+          git tag "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}"
+          echo "Pushed ${tag}; dispatching publish-cli.yml at that ref."
+          gh workflow run publish-cli.yml --ref "${tag}"

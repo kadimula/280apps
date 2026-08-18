@@ -27,10 +27,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Fails when the CLI's wire-manifest shape changed without a version bump, so
-      # the published CLI can never lag the deployed backend gate again (root cause
-      # of the two80@0.4.6 activation-gate skew).
-      - run: node packages/cli/scripts/check-manifest-shape-bump.mjs
+      # Fails when any file that ships in the published two80 package changed
+      # without a version bump, so the published CLI can never lag main again
+      # (root cause of the two80@0.4.6 activation-gate skew).
+      - run: node packages/cli/scripts/check-cli-version-bump.mjs
 
       - run: pnpm install --frozen-lockfile
 

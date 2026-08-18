@@ -1,0 +1,3 @@
+state: waiting_secrets
+integrationNotice: "integration not connected: todos (google-sheets). Connect it at https://console.280apps.com/dashboard/app_000001?integrations=1"
+help[1]: "ask your user to connect the integration, then run `two80 push` again"

@@ -106,6 +106,7 @@ export class Server {
     app.post('/v1/sync', this.route((c) => this.handleSync(c)));
     app.put('/v1/apps/:app/blobs/:digest', this.route((c) => this.handlePutBlob(c)));
     app.get('/v1/apps/:app/deploys/:deploy', this.route((c) => this.handleStatus(c)));
+    app.get('/v1/apps/:app/status', this.route((c) => this.handleAppStatus(c)));
     app.get('/v1/apps/:app/logs', this.route((c) => this.handleLogs(c)));
     app.post('/v1/apps/:app/delete', this.route((c) => this.handleDelete(c)));
 
@@ -216,6 +217,12 @@ export class Server {
   private async handleStatus(c: Context<HonoEnv>): Promise<Response> {
     const svc = await this.authorize(c);
     const st = await svc.status((c.req.param('app') ?? ''), (c.req.param('deploy') ?? ''));
+    return c.json(encodeStatus(st));
+  }
+
+  private async handleAppStatus(c: Context<HonoEnv>): Promise<Response> {
+    const svc = await this.authorize(c);
+    const st = await svc.appStatus((c.req.param('app') ?? ''));
     return c.json(encodeStatus(st));
   }
 

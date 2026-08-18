@@ -476,3 +476,97 @@ describe('delete', () => {
     await expectCode(() => port.status(res.app.id, res.deployId), DeployCode.NotFound);
   });
 });
+
+describe('appStatus', () => {
+  it('returns live deploy for an app that is serving', async () => {
+    const { port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    const res = await port.sync({ identity: ident(), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    const st = await port.appStatus(res.app.id);
+    expect(st.state).toBe(State.Live);
+    expect(st.url).toContain('280apps.run');
+  });
+
+  it('returns not_found for an unknown app', async () => {
+    const { port } = await fresh();
+    await expectCode(() => port.appStatus('app_missing'), DeployCode.NotFound);
+  });
+
+  it('returns waiting_secrets for a parked deploy with missing secrets', async () => {
+    const { h, port } = await fresh({ frontendOrigin: 'https://dashboard.example/' });
+    const { manifest, content } = mkBundle('worker');
+    manifest.config = [{ name: 'STRIPE_KEY', value: '', sensitive: true }];
+    const res = await port.sync({ identity: ident({ clientRef: 'parked' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    const st = await port.appStatus(res.app.id);
+    expect(st.state).toBe(State.WaitingSecrets);
+    expect(st.secretNotice).toContain('STRIPE_KEY');
+    expect(st.secretNotice).toContain('dashboard.example');
+    expect(h.builder.rollouts).toHaveLength(0);
+  });
+
+  it('returns waiting_secrets for a parked deploy missing integration bindings', async () => {
+    const { port } = await fresh({ frontendOrigin: 'https://dashboard.example/' });
+    const { manifest, content } = mkBundle('worker');
+    manifest.integrations = [{ alias: 'todos', capability: 'google-sheets', operations: ['read'] }];
+    const res = await port.sync({ identity: ident({ clientRef: 'int-parked' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    const st = await port.appStatus(res.app.id);
+    expect(st.state).toBe(State.WaitingSecrets);
+    expect(st.integrationNotice).toContain('todos');
+    expect(st.integrationNotice).toContain('google-sheets');
+  });
+
+  it('returns not_found for an app with no deploy history', async () => {
+    const { h, port } = await fresh();
+    const app: Parameters<typeof h.store.createApp>[0] = {
+      id: 'app_empty',
+      userId: 'usr_test',
+      slug: 'empty',
+      framework: 'static',
+      script: 'empty-0000000000',
+      url: 'https://empty-0000000000.280apps.run',
+      salt: '0000000000000000',
+      fingerprint: '',
+      clientRef: '',
+      activeDeploy: '',
+      createdAt: 1,
+      lastDeployAt: null,
+    };
+    await h.store.createApp(app);
+    await expectCode(() => port.appStatus('app_empty'), DeployCode.NotFound);
+  });
+
+  it('returns the active deploy over a newer open deploy', async () => {
+    const { port } = await fresh();
+    const { manifest, content } = mkBundle('worker', { 'v1.txt': 'v1' });
+    const v1 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest });
+    await uploadAll(port, v1.app.id, v1.missing, content);
+    expect((await port.status(v1.app.id, v1.deployId)).state).toBe(State.Live);
+
+    const v2 = mkBundle('worker', { 'v2.txt': 'v2' });
+    const _v2 = await port.sync({ identity: ident({ clientRef: 'r' }), manifest: v2.manifest });
+    // v2 is open but not yet complete; active deploy is still v1
+    const st = await port.appStatus(v1.app.id);
+    expect(st.state).toBe(State.Live);
+    expect(st.url).toContain('280apps.run');
+  });
+
+  it('returns a failed deploy when the latest deploy failed', async () => {
+    const { h, port } = await fresh();
+    const { manifest, content } = mkBundle('worker');
+    h.builder.failNext(
+      new DeployErr({
+        code: DeployCode.Unavailable,
+        message: 'activation failed on the platform',
+        fix: 'run two80 push again',
+      }),
+    );
+    const res = await port.sync({ identity: ident({ clientRef: 'fail' }), manifest });
+    await uploadAll(port, res.app.id, res.missing, content);
+    const st = await port.appStatus(res.app.id);
+    expect(st.state).toBe(State.Failed);
+    expect(st.failure).toBeDefined();
+  });
+});

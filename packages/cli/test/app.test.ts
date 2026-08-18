@@ -290,3 +290,51 @@ describe('bare two80 home view', () => {
     expect(r.out).toContain('help[1]: Run `two80 push`');
   });
 });
+
+describe('status', () => {
+  it('before any push: no_app error with a fix', async () => {
+    const r = await runCli(['status'], { root: tmpProject(), port: new Fake() });
+    expect(r.code).toBe(1);
+    const t = parseToon(r.out);
+    expect(t.error).toBe('no_app');
+    expect(t.fix).toContain('two80 status <app>');
+  });
+
+  it('explicit app ID wins over directory config', async () => {
+    const fake = new Fake();
+    const root = tmpProject();
+    const pushed = await runCli(['push'], { root, port: fake });
+    const appId = parseToon(pushed.out).appId;
+
+    const r = await runCli(['status', appId], { root: tmpProject(), port: fake });
+    expect(r.code).toBe(0);
+    const t = parseToon(r.out);
+    expect(t.state).toBe('live');
+    expect(t.url).toContain('280apps.run');
+  });
+
+  it('reports live state with URL after a successful push', async () => {
+    const fake = new Fake();
+    const root = tmpProject();
+    await runCli(['push'], { root, port: fake });
+
+    const r = await runCli(['status'], { root, port: fake });
+    expect(r.code).toBe(0);
+    const t = parseToon(r.out);
+    expect(t.state).toBe('live');
+    expect(t.url).toContain('280apps.run');
+  });
+
+  it('reports not_found for an explicit app that does not exist', async () => {
+    const r = await runCli(['status', 'app_missing'], { root: tmpProject(), port: new Fake() });
+    expect(r.code).toBe(1);
+    const t = parseToon(r.out);
+    expect(t.error).toBe('not_found');
+  });
+
+  it('status --help prints usage and exits 0', async () => {
+    const r = await runCli(['status', '--help'], { root: tmpProject() });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('two80 status - check your app');
+  });
+});

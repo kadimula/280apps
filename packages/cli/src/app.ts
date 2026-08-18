@@ -8,6 +8,7 @@ import { ensureInit } from './init.js';
 import { cmdInit } from './init.js';
 import { cmdDelete } from './delete.js';
 import { cmdLogs } from './logs.js';
+import { cmdStatus } from './status.js';
 import { cmdWhoami } from './whoami.js';
 import { cmdLogin } from './login.js';
 import { cmdHome } from './homeview.js';
@@ -76,6 +77,8 @@ async function dispatch(cmd: string, ctx: Ctx): Promise<number> {
       return cmdDelete(ctx);
     case 'logs':
       return cmdLogs(ctx);
+    case 'status':
+      return cmdStatus(ctx);
     case 'setup':
       return cmdSetup(ctx);
     case 'update':
@@ -173,6 +176,9 @@ Usage:
     --limit <N>               max lines (default 200, cap 1000)
     --level <lvl>             error | warn | info | all (default all)
     --digest <id>             resolve a Next.js production digest to its stack
+
+  two80 status [<app>]  check your app's platform state (live, deploying,
+                        parked, failed, or not yet deployed)
 
   two80 whoami          print auth state
   two80 login           authenticate this machine; prints a link to show your user,

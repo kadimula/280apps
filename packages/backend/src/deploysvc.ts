@@ -411,16 +411,55 @@ export class Service implements Port {
     if (app === null) throw notFound(appId, deployId);
     const dep = await this.wrapInternal('read deploy', () => this.p.store.deploy(appId, deployId));
     if (dep === null) throw notFound(appId, deployId);
-    const missing = await missingRequirements(this.p.store, appId, dep.manifest);
-    const st: DeployStatus = {
+    return this.statusFor(app, dep);
+  }
+
+  async appStatus(appId: string): Promise<DeployStatus> {
+    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
+    if (app === null) {
+      throw new DeployErr({
+        code: DeployCode.NotFound,
+        message: `app "${appId}" does not exist on this account`,
+        fix: 'run two80 push to create it',
+      });
+    }
+    let dep = null;
+    if (app.activeDeploy !== '') {
+      dep = await this.wrapInternal('read active deploy', () =>
+        this.p.store.deploy(appId, app.activeDeploy),
+      );
+    }
+    if (dep === null) {
+      const open = await this.wrapInternal('list open deploys', () =>
+        this.p.store.openDeploys(appId),
+      );
+      dep = open.length > 0 ? open[open.length - 1]! : null;
+    }
+    if (dep === null) {
+      dep = await this.wrapInternal('read latest deploy', () =>
+        this.p.store.latestDeploy(appId),
+      );
+    }
+    if (dep === null) {
+      throw new DeployErr({
+        code: DeployCode.NotFound,
+        message: `app "${appId}" has no deploy history yet`,
+        fix: 'run two80 push to deploy it',
+      });
+    }
+    return this.statusFor(app, dep);
+  }
+
+  private async statusFor(app: App, dep: Deploy): Promise<DeployStatus> {
+    const missing = await missingRequirements(this.p.store, app.id, dep.manifest);
+    return {
       state: dep.state,
       url: dep.state === State.Live ? app.url : '',
-      notice: dep.state === State.Live ? await this.accessOverrideNotice(appId, dep.manifest) : '',
-      secretNotice: this.secretNotice(appId, missing.secrets),
-      integrationNotice: this.integrationNotice(appId, missing.integrations),
+      notice: dep.state === State.Live ? await this.accessOverrideNotice(app.id, dep.manifest) : '',
+      secretNotice: this.secretNotice(app.id, missing.secrets),
+      integrationNotice: this.integrationNotice(app.id, missing.integrations),
       failure: dep.failure ?? undefined,
     };
-    return st;
   }
 
   async logs(appId: string, query: LogQuery): Promise<LogsResult> {

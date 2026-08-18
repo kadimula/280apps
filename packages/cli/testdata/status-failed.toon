@@ -1,0 +1,4 @@
+error: unavailable
+message: activation failed on the platform
+fix: run two80 push again
+retryable: false

@@ -1,14 +1,14 @@
 280apps.com securely deploys internal tools built by agents. Three tenets: application code never sees provider credentials, the agent owns deploy and debugging, and the human owns login and access.
 
-Full capability and operation reference: https://www.280apps.com/capabilities.md
+Full capability and operation reference: https://280apps.com/capabilities.md
 
 ## Deploy procedure
 
-1. **Audit against the capability reference.** Check the app against https://www.280apps.com/capabilities.md. If any required operation is unsupported, stop and report it; do not work around the network boundary.
+1. **Audit against the capability reference.** Check the app against https://280apps.com/capabilities.md. If any required operation is unsupported, stop and report it; do not work around the network boundary.
 
-2. **Route external access through `@two80/sdk`.** The container reaches only the 280 API. Run `npm install @two80/sdk`, replace every provider SDK, raw API call, and connection string with the matching SDK capability, and remove all API keys, tokens, service-account files, and authorization headers from the app. Never override `TWO80_API`. Declare each capability the app uses in `280.json`:
+2. **Route external access through `@two80/sdk`.** The container reaches only the 280 API. Run `npm install @two80/sdk`, replace every provider SDK, raw API call, and connection string with the matching SDK capability, and remove all API keys, tokens, service-account files, and authorization headers from the app. Never override `TWO80_API`. Declare each integration the app uses in `280.json` as an alias mapped to its capability and the operations it calls. The alias (`todos` below) is your app-chosen name that 280 binds to a real resource at connect time; the app never carries a raw resource id:
 
-        { "integrations": ["google-sheets"] }
+        { "integrations": { "todos": { "capability": "google-sheets", "operations": ["read", "append", "update", "deleteRows"] } } }
 
 3. **Declare non-credential config only.** Ids, regions, and flags go in the `280.json` config block and reach `process.env`. Credentials never do.
 

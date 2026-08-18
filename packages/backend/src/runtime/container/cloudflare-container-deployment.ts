@@ -246,9 +246,6 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
         },
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
-      // Capture the container's stdout/stderr into Workers Logs so `two80 logs` can
-      // read them. head_sampling_rate: 1 is deliberate: error lines are rare and
-      // precious, so they must never be sampled out.
       observability: { enabled: true, head_sampling_rate: 1 },
       vars: {
         TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),

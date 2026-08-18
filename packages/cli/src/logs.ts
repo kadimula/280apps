@@ -29,7 +29,6 @@ Examples:
 export async function cmdLogs(ctx: Ctx): Promise<number> {
   const s = ctx.env.streams;
 
-  // A leading non-flag arg is the app id; everything after is flags.
   let rest = ctx.args;
   let appArg = '';
   if (rest.length > 0 && !rest[0]!.startsWith('-')) {
@@ -101,8 +100,6 @@ function line(r: LogRecord): Record<string, unknown> {
   return out;
 }
 
-// clampLimit reads --limit, falling back to the default on a missing or unparseable
-// value and capping at the maximum the backend will honor.
 function clampLimit(raw: string): number {
   const n = Number(raw);
   if (!raw || !Number.isFinite(n) || n <= 0) return DEFAULT_LIMIT;

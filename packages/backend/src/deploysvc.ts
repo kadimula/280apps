@@ -42,8 +42,6 @@ import { type App, type BlobStore, type Deploy, type Store } from './seams.js';
 import type { ContainerDeploymentCoordinator } from './activator.js';
 import { normalizeLevel, parseDurationMs, type LogSource } from './logsource.js';
 
-// Read-side bounds for the logs endpoint: the default and hard cap on lines, so a
-// caller can never ask an unbounded query of the log source.
 const LOGS_DEFAULT_LIMIT = 200;
 const LOGS_MAX_LIMIT = 1000;
 
@@ -78,9 +76,6 @@ export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
   activator: ContainerDeploymentCoordinator;
-  // The runtime-log source (Cloudflare Workers Observability in production).
-  // Optional: a host without log credentials leaves it unset and the logs
-  // endpoint answers with a clear "not configured" error rather than failing hard.
   logs?: LogSource;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
@@ -428,11 +423,6 @@ export class Service implements Port {
     return st;
   }
 
-  // logs reads one app's server logs. Owner-scoping and tenant isolation are the
-  // same rule Status uses: the app is resolved under the caller (store.app scopes by
-  // owner), so a token can only ever read logs for an app that account owns. The log
-  // source is then queried by the app's resolved `script` — derived here, never from
-  // client input — so a query can never span scripts and cross a tenant boundary.
   async logs(appId: string, query: LogQuery): Promise<LogsResult> {
     const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
     if (app === null) {
@@ -449,12 +439,12 @@ export class Service implements Port {
         retryable: false,
       });
     }
-    const limit = clampLogLimit(query.limit);
     const records = await this.wrapInternal('query logs', () =>
       this.p.logs!.query({
+        // Tenant boundary: the script is the owner-resolved app's, never client input.
         script: app.script,
         sinceMs: Date.now() - parseDurationMs(query.since),
-        limit,
+        limit: clampLogLimit(query.limit),
         level: normalizeLevel(query.level),
         digest: query.digest !== '' ? query.digest : undefined,
       }),
@@ -622,8 +612,6 @@ function declaredSize(open: Deploy[], digest: Digest): number | null {
   return null;
 }
 
-// clampLogLimit folds a caller-supplied line count to the sane range: a
-// missing/zero/negative value is the default, and the hard cap bounds the query.
 function clampLogLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return LOGS_DEFAULT_LIMIT;
   return Math.min(Math.floor(n), LOGS_MAX_LIMIT);

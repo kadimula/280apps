@@ -219,10 +219,6 @@ export class Server {
     return c.json(encodeStatus(st));
   }
 
-  // Owner-scoped app logs, mirroring handleStatus: authorize() resolves the caller,
-  // and svc.logs resolves the app under that identity, so a token only ever reads
-  // logs for an app it owns. Logs may carry end-user PII the app chose to log, so
-  // the response is never cached (no-store).
   private async handleLogs(c: Context<HonoEnv>): Promise<Response> {
     const svc = await this.authorize(c);
     const q = c.req.query();
@@ -233,7 +229,7 @@ export class Server {
       digest: q.digest ?? '',
       follow: q.follow === '1',
     });
-    c.header('Cache-Control', 'no-store');
+    c.header('Cache-Control', 'no-store'); // logs may hold end-user PII; never cache
     return c.json(encodeLogs(res));
   }
 
@@ -1153,8 +1149,6 @@ function encodeLogs(r: LogsResult): Record<string, unknown> {
   return { records: r.records.map(encodeLogRecord) };
 }
 
-// Omitempty on the derived fields: an ordinary line carries only time/level/message,
-// a `280.error` line adds digest/stack/path.
 function encodeLogRecord(l: LogRecord): Record<string, unknown> {
   const out: Record<string, unknown> = { time: l.time, level: l.level, message: l.message };
   if (l.path) out.path = l.path;

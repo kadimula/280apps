@@ -42,9 +42,6 @@ async function run(log: Logger): Promise<void> {
     config: configDelivery,
   });
 
-  // Reads container logs from Cloudflare Workers Observability. buildContainerServices
-  // already asserted the Cloudflare deploy credentials are present, so the same pair
-  // backs the log source; unset would leave logs unconfigured (a clear endpoint error).
   const logs =
     config.cloudflare.accountId !== '' && config.cloudflare.apiToken !== ''
       ? new CloudflareLogSource({

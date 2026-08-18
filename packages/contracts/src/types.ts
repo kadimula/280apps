@@ -838,24 +838,17 @@ export const deployStatusSchema = z
   .passthrough();
 export type DeployStatus = z.infer<typeof deployStatusSchema>;
 
-// LogQuery is the read-side filter for one app's server logs. Every field is a
-// suggestion the backend clamps/normalizes; the app the logs belong to and the
-// underlying script are never client-controlled (they ride in the path and are
-// resolved owner-side). `since` is a duration window (e.g. "15m", "1h", "24h").
 export const logQuerySchema = z
   .object({
     since: str('1h'),
     limit: num(200),
-    level: str('all'), // 'error' | 'warn' | 'info' | 'all'
+    level: str('all'),
     digest: str(),
     follow: bool(),
   })
   .passthrough();
 export type LogQuery = z.infer<typeof logQuerySchema>;
 
-// LogRecord is one server log line. `time` is epoch milliseconds. A line the
-// platform-injected Next.js hook emitted carries `digest`/`stack`/`path` lifted
-// from the structured `280.error` payload; an ordinary line leaves them empty.
 export const logRecordSchema = z
   .object({
     time: num(),

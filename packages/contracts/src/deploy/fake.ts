@@ -370,9 +370,6 @@ export class Fake implements Port {
     return { app: gone, deleted: true };
   }
 
-  // The fake retains no runtime logs (they live in Cloudflare Workers Logs, out of
-  // this in-memory model), so it resolves the app for owner-scoping parity and
-  // returns an empty set. Tests that need populated logs subclass and override.
   async logs(appId: string, _query: LogQuery): Promise<LogsResult> {
     const fault = this.fault();
     if (fault) throw fault;

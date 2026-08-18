@@ -19,6 +19,7 @@ export type { IdentityClaims };
 export {
   googleSheets,
   IntegrationRequestError,
+  type NotReadyCode,
   type GoogleSheetsClient,
   type GoogleSheetsOptions,
   type SheetsReadInput,
@@ -42,6 +43,11 @@ export interface Identity280 {
   user: User280;
   can(capability: string): boolean;
   scope(name: string): unknown;
+  // False when the request carried no identity header (the platform's expected
+  // "no authenticated caller" state): every field then holds a safe empty value
+  // and can()/scope() return false/null, so an app branches on it instead of
+  // wrapping identity() in try/catch. True once a real identity was decoded.
+  present: boolean;
   role: string; // the viewer's app role: '' | owner | admin | editor | viewer
   title: string; // the viewer's feature role, '' if none
   // True on the platform-minted anonymous viewer a public app serves to visitors
@@ -77,22 +83,55 @@ export function sdkApiUrl(path: string, opts: SdkApiOptions = {}): URL {
 }
 
 // identity reads the gateway-stamped header off the request and returns the viewer.
-// Throws IdentityError when the header is absent or malformed — an app treats that as
-// "no authenticated caller". The token is not re-verified here: the gateway already
-// verified it and is the container's only ingress (see @280/contracts decodeIdentityToken).
+// An absent header is the platform's expected not-ready state: identity resolves to
+// a safe absent viewer (present: false) rather than throwing, so apps branch on
+// present instead of wrapping the call in try/catch. A malformed token is a genuine
+// failure (the gateway is the container's only ingress and signs valid tokens) and
+// still throws IdentityError. The token is not re-verified here: the gateway already
+// verified it (see @280/contracts decodeIdentityToken).
 export async function identity(request: RequestLike): Promise<Identity280> {
   const token = readHeader(request, ID_HEADER);
-  if (token === '') throw new IdentityError('no 280 identity header on the request');
+  if (token === '') return absentIdentity();
   const { user, claims } = decodeIdentityToken(token);
   const caps = new Set(claims.caps);
   return {
     user,
+    present: true,
     role: claims.role,
     title: claims.title,
     anonymous: claims.anon === true,
     claims,
     can: (capability: string) => caps.has(capability),
     scope: (name: string) => (name in claims.scope ? claims.scope[name] : null),
+  };
+}
+
+const EMPTY_CLAIMS: IdentityClaims = {
+  iss: '',
+  aud: '',
+  sub: '',
+  email: '',
+  tenant: '',
+  name: '',
+  app: '',
+  role: '',
+  title: '',
+  caps: [],
+  scope: {},
+  iat: 0,
+  exp: 0,
+};
+
+function absentIdentity(): Identity280 {
+  return {
+    user: { sub: '', email: '', tenant: '', name: '' },
+    present: false,
+    role: '',
+    title: '',
+    anonymous: false,
+    claims: EMPTY_CLAIMS,
+    can: () => false,
+    scope: () => null,
   };
 }
 

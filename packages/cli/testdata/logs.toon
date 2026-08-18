@@ -1,0 +1,10 @@
+app: app_000001
+count: 2
+logs[2]:
+  - time: 1712000000000
+    level: info
+    message: "ready on :8080"
+  - time: 1712000005000
+    level: error
+    message: boom
+    digest: "3004175247"

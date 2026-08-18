@@ -7,6 +7,7 @@ import * as push from './push.js';
 import { ensureInit } from './init.js';
 import { cmdInit } from './init.js';
 import { cmdDelete } from './delete.js';
+import { cmdLogs } from './logs.js';
 import { cmdWhoami } from './whoami.js';
 import { cmdLogin } from './login.js';
 import { cmdHome } from './homeview.js';
@@ -73,12 +74,13 @@ async function dispatch(cmd: string, ctx: Ctx): Promise<number> {
       return cmdLogin(ctx);
     case 'delete':
       return cmdDelete(ctx);
+    case 'logs':
+      return cmdLogs(ctx);
     case 'setup':
       return cmdSetup(ctx);
     case 'update':
       return cmdUpdate(ctx);
     case 'list':
-    case 'logs':
     case 'share':
     case 'open':
     case 'link':
@@ -165,6 +167,12 @@ Usage:
   two80 delete          destroy this project's app: its URL, content, and data
     --yes <name>              confirm; must name the app. Bare two80 delete prints
                               the name and deletes nothing.
+
+  two80 logs [<app>]    read your deployed app's server logs (owner only)
+    --since <dur>             look-back window, e.g. 15m, 1h, 24h (default 1h)
+    --limit <N>               max lines (default 200, cap 1000)
+    --level <lvl>             error | warn | info | all (default all)
+    --digest <id>             resolve a Next.js production digest to its stack
 
   two80 whoami          print auth state
   two80 login           authenticate this machine; prints a link to show your user,

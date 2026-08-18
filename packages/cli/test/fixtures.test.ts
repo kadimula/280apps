@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DeployStatus } from '@280/contracts';
+import type { DeployStatus, LogsResult } from '@280/contracts';
 import { Fake } from '@280/contracts/deploy/fake';
 import * as config from '../src/config.js';
 import * as credentials from '../src/credentials.js';
@@ -37,6 +37,25 @@ class CredentialWaitFake extends Fake {
         `declared secrets are not configured: STRIPE_KEY, GOOGLE_SERVICE_ACCOUNT. ` +
         `Configure them at https://console.280apps.com/dashboard/${appId}?variables=1`,
       failure: undefined,
+    };
+  }
+}
+
+// Canned server logs so the logs fixtures are stable and exercise the digest path.
+class LogsFake extends Fake {
+  async logs(): Promise<LogsResult> {
+    return {
+      records: [
+        { time: 1_712_000_000_000, level: 'info', message: 'ready on :8080', path: '', digest: '', stack: '' },
+        {
+          time: 1_712_000_005_000,
+          level: 'error',
+          message: 'boom',
+          path: '/',
+          digest: '3004175247',
+          stack: 'Error: boom\n    at Page (/app/.next/server/app/page.js:1:1)',
+        },
+      ],
     };
   }
 }
@@ -83,6 +102,40 @@ const scenarios: Scenario[] = [
     name: 'whoami-help',
     code: 0,
     run: () => runCli(['whoami', '--help'], { root: demoProject() }),
+  },
+  {
+    name: 'logs-help',
+    code: 0,
+    run: () => runCli(['logs', '--help'], { root: demoProject() }),
+  },
+  {
+    name: 'logs',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['logs'], { root, port: new LogsFake() });
+    },
+  },
+  {
+    name: 'logs-digest',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['logs', '--digest', '3004175247'], { root, port: new LogsFake() });
+    },
+  },
+  {
+    name: 'error-logs-no-app',
+    code: 1,
+    check: { error: 'no_app' },
+    run: () => {
+      freshHome();
+      return runCli(['logs'], { root: demoProject(), port: new LogsFake() });
+    },
   },
   {
     name: 'login-help',

@@ -34,10 +34,18 @@ import {
   type SyncRequest,
   type SyncResult,
   type BlobBody,
+  type LogQuery,
+  type LogsResult,
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
 import { type App, type BlobStore, type Deploy, type Store } from './seams.js';
 import type { ContainerDeploymentCoordinator } from './activator.js';
+import { normalizeLevel, parseDurationMs, type LogSource } from './logsource.js';
+
+// Read-side bounds for the logs endpoint: the default and hard cap on lines, so a
+// caller can never ask an unbounded query of the log source.
+const LOGS_DEFAULT_LIMIT = 200;
+const LOGS_MAX_LIMIT = 1000;
 
 // deployShaped duck-types a caught value into the seam's plain error fields: the
 // blob store (W4) throws its own DeployErr subclass with the same shape but a
@@ -70,6 +78,10 @@ export interface PlatformDeps {
   store: Store;
   blobs: BlobStore;
   activator: ContainerDeploymentCoordinator;
+  // The runtime-log source (Cloudflare Workers Observability in production).
+  // Optional: a host without log credentials leaves it unset and the logs
+  // endpoint answers with a clear "not configured" error rather than failing hard.
+  logs?: LogSource;
   // appDomain is the zone app URLs live on, e.g. "280apps.run".
   appDomain: string;
   // hostSuffix is appended to an app's URL host label (not its script name), so
@@ -83,6 +95,7 @@ export class Platform {
   readonly store: Store;
   readonly blobs: BlobStore;
   readonly activator: ContainerDeploymentCoordinator;
+  readonly logs?: LogSource;
   readonly appDomain: string;
   readonly hostSuffix: string;
   readonly frontendOrigin: string;
@@ -91,6 +104,7 @@ export class Platform {
     this.store = deps.store;
     this.blobs = deps.blobs;
     this.activator = deps.activator;
+    this.logs = deps.logs;
     this.appDomain = deps.appDomain;
     this.hostSuffix = deps.hostSuffix ?? '';
     this.frontendOrigin = deps.frontendOrigin.replace(/\/$/, '');
@@ -414,6 +428,40 @@ export class Service implements Port {
     return st;
   }
 
+  // logs reads one app's server logs. Owner-scoping and tenant isolation are the
+  // same rule Status uses: the app is resolved under the caller (store.app scopes by
+  // owner), so a token can only ever read logs for an app that account owns. The log
+  // source is then queried by the app's resolved `script` — derived here, never from
+  // client input — so a query can never span scripts and cross a tenant boundary.
+  async logs(appId: string, query: LogQuery): Promise<LogsResult> {
+    const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
+    if (app === null) {
+      throw new DeployErr({
+        code: DeployCode.NoSuchApp,
+        message: `app "${appId}" does not exist on this account`,
+        fix: 'run two80 push to create it',
+      });
+    }
+    if (this.p.logs === undefined) {
+      throw new DeployErr({
+        code: DeployCode.Unavailable,
+        message: 'reading app logs is not configured on this platform',
+        retryable: false,
+      });
+    }
+    const limit = clampLogLimit(query.limit);
+    const records = await this.wrapInternal('query logs', () =>
+      this.p.logs!.query({
+        script: app.script,
+        sinceMs: Date.now() - parseDurationMs(query.since),
+        limit,
+        level: normalizeLevel(query.level),
+        digest: query.digest !== '' ? query.digest : undefined,
+      }),
+    );
+    return { records };
+  }
+
   // The one-line push-output notice when the dashboard's access override diverges
   // from 280.json (design D5: the dashboard wins durably; the deploy must say so
   // rather than let the builder believe the manifest applied).
@@ -572,6 +620,13 @@ function declaredSize(open: Deploy[], digest: Digest): number | null {
     }
   }
   return null;
+}
+
+// clampLogLimit folds a caller-supplied line count to the sane range: a
+// missing/zero/negative value is the default, and the hard cap bounds the query.
+function clampLogLimit(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return LOGS_DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), LOGS_MAX_LIMIT);
 }
 
 function notFound(appId: string, deployId: string): DeployErr {

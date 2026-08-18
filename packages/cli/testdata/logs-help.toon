@@ -1,0 +1,17 @@
+two80 logs - read your deployed app's server logs
+
+Usage:
+  two80 logs [<app>] [flags]
+
+  <app>   app id to read (defaults to this directory's app via .280/config.json)
+
+Flags:
+  --since <dur>            look-back window, e.g. 15m, 1h, 24h        (default 1h)
+  --limit <N>              max lines                                  (default 200, cap 1000)
+  --level error|warn|info|all   level filter                         (default all)
+  --digest <id>            resolve a Next.js production digest to its server stack
+
+Examples:
+  two80 logs
+  two80 logs --since 24h --level error
+  two80 logs --digest 3004175247

@@ -257,6 +257,9 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     // Depot shares the same rollConfig spine: route + GATEWAY binding + baked policy.
     expect(rollConfig.routes).toEqual([{ pattern: 'demo-abc.280apps.run/*', zone_name: '280apps.run' }]);
     expect(rollConfig.services).toEqual([{ binding: 'GATEWAY', service: '280-gateway', entrypoint: 'GatewayRPC' }]);
+    // Observability is on with a 1.0 head sample so the container's stdout/stderr is
+    // captured into Workers Logs and error lines are never sampled out (two80 logs).
+    expect(rollConfig.observability).toEqual({ enabled: true, head_sampling_rate: 1 });
     expect(JSON.parse((rollConfig.vars as Record<string, string>).TWO80_ROUTE_POLICY)).toEqual({ routes });
     expect((rollConfig.vars as Record<string, string>).TWO80_FRAME_ANCESTORS).toBe('https://280apps.com');
     // A config-less roll omits TWO80_CONFIG entirely (byte-identical to pre-config).

@@ -7,6 +7,7 @@ import { Platform } from './deploysvc.js';
 import { ContainerDeploymentCoordinator } from './activator.js';
 import { buildContainerServices, buildAuth, buildIntegrations, sweepExpired } from './deps.js';
 import { resolveConfig, type Config, type RequestDeps } from './config.js';
+import { CloudflareLogSource } from './logsource.js';
 import { open as openStore } from './store/index.js';
 import { open as openFsBlobStore, openS3, type S3Config } from './blobstore/index.js';
 import { newLogger } from './logger.js';
@@ -41,10 +42,22 @@ async function run(log: Logger): Promise<void> {
     config: configDelivery,
   });
 
+  // Reads container logs from Cloudflare Workers Observability. buildContainerServices
+  // already asserted the Cloudflare deploy credentials are present, so the same pair
+  // backs the log source; unset would leave logs unconfigured (a clear endpoint error).
+  const logs =
+    config.cloudflare.accountId !== '' && config.cloudflare.apiToken !== ''
+      ? new CloudflareLogSource({
+          accountId: config.cloudflare.accountId,
+          apiToken: config.cloudflare.apiToken,
+        })
+      : undefined;
+
   const platform = new Platform({
     store,
     blobs,
     activator,
+    logs,
     appDomain: config.appDomain,
     hostSuffix: config.hostSuffix,
     frontendOrigin: config.dashboardOrigin,

@@ -16,7 +16,6 @@ export default async function HomePage() {
           <div className="eyebrow">280 SDK sample</div>
           <h1>Identity is waiting at the gateway.</h1>
           <p>Open the deployed 280 URL to receive a verified platform identity.</p>
-          <code>{viewer.message}</code>
         </section>
       </main>
     );

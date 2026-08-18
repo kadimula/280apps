@@ -25,7 +25,14 @@ export async function GET(request: Request) {
 }
 ```
 
-`identity(request)` throws `IdentityError` when no identity header is present: treat that as an unauthenticated caller. The token is not re-verified here; the gateway is the container's only ingress and already verified it.
+`identity(request)` never throws when no identity header is present: it resolves to a safe absent viewer with `present: false`, empty `user`/`role`/`title`, and `can()`/`scope()` returning `false`/`null`. Branch on `present` instead of wrapping the call in `try`/`catch`:
+
+```ts
+const viewer = await identity(request);
+if (!viewer.present) return <SignInPrompt />;
+```
+
+A malformed token is a genuine failure (the gateway signs valid tokens and is the container's only ingress) and still throws `IdentityError`. The token is not re-verified here; the gateway already verified it.
 
 Before writes or per-user rows in a public app, branch on `anonymous`:
 
@@ -35,7 +42,21 @@ if (identity.anonymous) return new Response("Sign in required", { status: 401 })
 
 ## Integrations
 
-Each integration is a factory that takes the incoming request (same shapes as `identity`: a Fetch `Request` or `await headers()`) and returns a typed client. The 280 API authorizes every call for the current app and user; your app never sees provider credentials. A failed call throws `IntegrationRequestError` with `{ code, message, status, retryable }`.
+Each integration is a factory that takes the incoming request (same shapes as `identity`: a Fetch `Request` or `await headers()`) and returns a typed client. The 280 API authorizes every call for the current app and user; your app never sees provider credentials.
+
+### Not-ready vs. genuine failure
+
+The platform has expected *not-ready* states where a human still needs to act: the integration is **not connected** yet, the bound resource was **removed**, or the owner must **re-authorize**. On these, calls do **not** throw. They resolve to a safe result carrying an optional `notReady` code, so an app that just renders the data shows an empty state instead of crashing:
+
+```ts
+const { values, notReady } = await sheets.read({ resource, range });
+values.map(...);          // [] when not-ready — renders "nothing yet"
+if (notReady) { /* optionally prompt the owner to connect Google */ }
+```
+
+Writes (`append`/`update`/`deleteRows`) return the same-shaped result with zeroed counts and `notReady` set; they never throw on a not-ready integration. `notReady` is one of `not_connected`, `resource_not_found`, or `reauthorization_required`.
+
+Every **genuine** failure still throws `IntegrationRequestError` with `{ code, message, status, retryable }`: `provider_error` (502), `provider_unavailable` (503, retryable), `invalid_request` (400), `unauthenticated` (401), `internal_error` (500).
 
 Declare each integration the app uses in `280.json` so `push` gates the deploy until the owner connects it:
 

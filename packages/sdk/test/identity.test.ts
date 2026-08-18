@@ -66,11 +66,23 @@ describe('identity()', () => {
     expect(id.can('manager')).toBe(false);
   });
 
-  it('throws when the header is absent', async () => {
-    await expect(identity(new Request('https://renewals.280apps.run/'))).rejects.toThrow(/no 280 identity header/);
+  it('resolves to a safe absent viewer when the header is absent (no throw)', async () => {
+    const id = await identity(new Request('https://renewals.280apps.run/'));
+    expect(id.present).toBe(false);
+    expect(id.user).toEqual({ sub: '', email: '', tenant: '', name: '' });
+    expect(id.role).toBe('');
+    expect(id.title).toBe('');
+    expect(id.anonymous).toBe(false);
+    expect(id.can('manager')).toBe(false);
+    expect(id.scope('region')).toBeNull();
   });
 
-  it('throws on a malformed token', async () => {
+  it('marks a decoded identity present', async () => {
+    const id = await identity(req(await sign(baseClaims())));
+    expect(id.present).toBe(true);
+  });
+
+  it('still throws on a malformed token (genuine failure, not not-ready)', async () => {
     await expect(identity(req('not.a.jwt.at.all'))).rejects.toThrow(IdentityError);
     await expect(identity(req('junk'))).rejects.toThrow(IdentityError);
   });

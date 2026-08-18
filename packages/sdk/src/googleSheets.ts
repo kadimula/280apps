@@ -12,16 +12,24 @@ export interface SheetsWriteInput {
   values: unknown[][];
 }
 
+// Set on any result the platform reported as not-ready (the integration is not
+// connected, the bound resource is gone, or the owner must re-authorize). The
+// other fields then hold safe empty values, so an app that ignores this flag
+// renders an empty state instead of crashing; branch on it to prompt a connect.
+export type NotReadyCode = 'not_connected' | 'resource_not_found' | 'reauthorization_required';
+
 export interface SheetsReadResult {
   range: string;
   majorDimension: string;
   values: unknown[][];
+  notReady?: NotReadyCode;
 }
 
 export interface SheetsWriteResult {
   updatedRange: string;
   updatedRows: number;
   updatedCells: number;
+  notReady?: NotReadyCode;
 }
 
 export interface SheetsDeleteRowsInput {
@@ -38,6 +46,7 @@ export interface SheetsDeleteRowsResult {
   sheetId: number;
   deletedRows: number;
   startRow: number;
+  notReady?: NotReadyCode;
 }
 
 export interface GoogleSheetsClient {
@@ -64,6 +73,18 @@ export class IntegrationRequestError extends Error {
   }
 }
 
+// The platform's expected not-ready states: a human still needs to connect,
+// bind, or re-authorize. These degrade to a safe result instead of throwing;
+// every other code (provider/unavailable/invalid/unauthenticated/internal) still
+// throws IntegrationRequestError so genuine failures surface.
+const NOT_READY_CODES = new Set<NotReadyCode>(['not_connected', 'resource_not_found', 'reauthorization_required']);
+
+function notReadyCode(err: unknown): NotReadyCode | null {
+  return err instanceof IntegrationRequestError && NOT_READY_CODES.has(err.code as NotReadyCode)
+    ? (err.code as NotReadyCode)
+    : null;
+}
+
 export function googleSheets(request: RequestLike, opts: GoogleSheetsOptions = {}): GoogleSheetsClient {
   const fetchImpl = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const token = readHeader(request, ID_HEADER);
@@ -88,11 +109,37 @@ export function googleSheets(request: RequestLike, opts: GoogleSheetsOptions = {
     return data as T;
   }
 
+  async function graceful<T>(run: () => Promise<T>, fallback: (code: NotReadyCode) => T): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      const code = notReadyCode(err);
+      if (code !== null) return fallback(code);
+      throw err;
+    }
+  }
+
   return {
-    read: (input) => call<SheetsReadResult>('read', input),
-    append: (input) => call<SheetsWriteResult>('append', input),
-    update: (input) => call<SheetsWriteResult>('update', input),
-    deleteRows: (input) => call<SheetsDeleteRowsResult>('deleteRows', input),
+    read: (input) =>
+      graceful(
+        () => call<SheetsReadResult>('read', input),
+        (notReady) => ({ range: input.range, majorDimension: 'ROWS', values: [], notReady }),
+      ),
+    append: (input) =>
+      graceful(
+        () => call<SheetsWriteResult>('append', input),
+        (notReady) => ({ updatedRange: '', updatedRows: 0, updatedCells: 0, notReady }),
+      ),
+    update: (input) =>
+      graceful(
+        () => call<SheetsWriteResult>('update', input),
+        (notReady) => ({ updatedRange: '', updatedRows: 0, updatedCells: 0, notReady }),
+      ),
+    deleteRows: (input) =>
+      graceful(
+        () => call<SheetsDeleteRowsResult>('deleteRows', input),
+        (notReady) => ({ sheetId: -1, deletedRows: 0, startRow: input.startRow, notReady }),
+      ),
   };
 }
 

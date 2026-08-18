@@ -10,6 +10,8 @@ import type {
   DeployStatus,
   DeleteRequest,
   DeleteResult,
+  LogQuery,
+  LogsResult,
 } from './types.js';
 
 // Streamed content of one blob, consumed as a raw stream never a buffered body
@@ -40,4 +42,6 @@ export interface Port {
   // Delete destroys an app and everything it owns. Empty confirm is a dry run.
   // Confirm must equal the app's slug. The one verb here that cannot be undone.
   delete(req: DeleteRequest): Promise<DeleteResult>;
+
+  logs(appId: string, query: LogQuery): Promise<LogsResult>;
 }

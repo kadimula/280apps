@@ -33,6 +33,13 @@ export function fileExists(p: string): boolean {
     return false;
   }
 }
+export function dirExists(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
 function byteCompare(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }

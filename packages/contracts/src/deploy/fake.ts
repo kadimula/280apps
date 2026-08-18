@@ -24,6 +24,8 @@ import {
   type DeployStatus,
   type DeleteRequest,
   type DeleteResult,
+  type LogQuery,
+  type LogsResult,
 } from '../index.js';
 import type { Port, BlobBody } from '../port.js';
 import { DeployErr } from './error.js';
@@ -366,6 +368,19 @@ export class Fake implements Port {
       if (id === app.id) this.byClientRef.delete(ref);
     }
     return { app: gone, deleted: true };
+  }
+
+  async logs(appId: string, _query: LogQuery): Promise<LogsResult> {
+    const fault = this.fault();
+    if (fault) throw fault;
+    if (!this.apps.has(appId)) {
+      throw new DeployErr({
+        code: DeployCode.NoSuchApp,
+        message: `app ${quote(appId)} does not exist on this account`,
+        fix: 'run two80 push to create it',
+      });
+    }
+    return { records: [] };
   }
 }
 

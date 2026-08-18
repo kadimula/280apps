@@ -15,6 +15,7 @@ import {
   type DeleteResult,
 } from '@280/contracts';
 import { Platform, type Service } from '../../src/deploysvc.js';
+import type { LogSource } from '../../src/logsource.js';
 import { ContainerDeploymentCoordinator } from '../../src/activator.js';
 import { Server } from '../../src/api.js';
 import type { Auth } from '../../src/authsvc.js';
@@ -42,6 +43,7 @@ export async function newPlatform(
     store?: Store;
     builder?: FakeBuilder;
     config?: ConfigDelivery;
+    logs?: LogSource;
   } = {},
 ): Promise<Harness> {
   const cleanups: Array<() => Promise<void> | void> = [];
@@ -72,6 +74,7 @@ export async function newPlatform(
     store,
     blobs,
     activator,
+    logs: opts.logs,
     appDomain: opts.appDomain ?? '280apps.run',
     hostSuffix: opts.hostSuffix ?? '',
     frontendOrigin: opts.frontendOrigin ?? 'https://console.280apps.com',
@@ -210,6 +213,15 @@ export class HttpClient {
       body: JSON.stringify({ appId, confirm }),
     });
     return (await parse(res)) as DeleteResult;
+  }
+
+  logsRaw(appId: string, qs = ''): Promise<Response> {
+    return this.app.request(`/v1/apps/${appId}/logs${qs}`, { method: 'GET', headers: this.auth() });
+  }
+
+  async logs(appId: string, qs = ''): Promise<{ records: Array<Record<string, unknown>> }> {
+    const res = await this.logsRaw(appId, qs);
+    return (await parse(res)) as { records: Array<Record<string, unknown>> };
   }
 }
 

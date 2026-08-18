@@ -838,6 +838,36 @@ export const deployStatusSchema = z
   .passthrough();
 export type DeployStatus = z.infer<typeof deployStatusSchema>;
 
+export const logQuerySchema = z
+  .object({
+    since: str('1h'),
+    limit: num(200),
+    level: str('all'),
+    digest: str(),
+    follow: bool(),
+  })
+  .passthrough();
+export type LogQuery = z.infer<typeof logQuerySchema>;
+
+export const logRecordSchema = z
+  .object({
+    time: num(),
+    level: str(),
+    message: str(),
+    path: str(),
+    digest: str(),
+    stack: str(),
+  })
+  .passthrough();
+export type LogRecord = z.infer<typeof logRecordSchema>;
+
+export const logsResultSchema = z
+  .object({
+    records: arr(logRecordSchema),
+  })
+  .passthrough();
+export type LogsResult = z.infer<typeof logsResultSchema>;
+
 export const deviceCodeResponseSchema = z
   .object({
     deviceCode: str(),

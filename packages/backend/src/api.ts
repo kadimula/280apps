@@ -29,6 +29,8 @@ import {
   type DeployStatus,
   type SyncResult,
   type DeleteResult,
+  type LogsResult,
+  type LogRecord,
   type ViewAsTarget,
 } from '@280/contracts';
 import type { Service } from './deploysvc.js';
@@ -104,6 +106,7 @@ export class Server {
     app.post('/v1/sync', this.route((c) => this.handleSync(c)));
     app.put('/v1/apps/:app/blobs/:digest', this.route((c) => this.handlePutBlob(c)));
     app.get('/v1/apps/:app/deploys/:deploy', this.route((c) => this.handleStatus(c)));
+    app.get('/v1/apps/:app/logs', this.route((c) => this.handleLogs(c)));
     app.post('/v1/apps/:app/delete', this.route((c) => this.handleDelete(c)));
 
     // The only unauthenticated deploy endpoints: how a machine gets a token.
@@ -214,6 +217,20 @@ export class Server {
     const svc = await this.authorize(c);
     const st = await svc.status((c.req.param('app') ?? ''), (c.req.param('deploy') ?? ''));
     return c.json(encodeStatus(st));
+  }
+
+  private async handleLogs(c: Context<HonoEnv>): Promise<Response> {
+    const svc = await this.authorize(c);
+    const q = c.req.query();
+    const res = await svc.logs((c.req.param('app') ?? ''), {
+      since: q.since ?? '1h',
+      limit: q.limit !== undefined ? Number(q.limit) : 0,
+      level: q.level ?? 'all',
+      digest: q.digest ?? '',
+      follow: q.follow === '1',
+    });
+    c.header('Cache-Control', 'no-store');
+    return c.json(encodeLogs(res));
   }
 
   private async handleDelete(c: Context<HonoEnv>): Promise<Response> {
@@ -1126,6 +1143,18 @@ function encodeStatus(s: DeployStatus): Record<string, unknown> {
 
 function encodeDeleteResult(r: DeleteResult): Record<string, unknown> {
   return { app: encodeApp(r.app), deleted: r.deleted };
+}
+
+function encodeLogs(r: LogsResult): Record<string, unknown> {
+  return { records: r.records.map(encodeLogRecord) };
+}
+
+function encodeLogRecord(l: LogRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = { time: l.time, level: l.level, message: l.message };
+  if (l.path) out.path = l.path;
+  if (l.digest) out.digest = l.digest;
+  if (l.stack) out.stack = l.stack;
+  return out;
 }
 
 function randomSecret(n: number): string {

@@ -1,0 +1,5 @@
+digest: "3004175247"
+message: boom
+path: /
+time: 1712000005000
+stack: "Error: boom\n    at Page (/app/.next/server/app/page.js:1:1)"

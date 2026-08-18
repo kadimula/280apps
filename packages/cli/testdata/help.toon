@@ -14,6 +14,12 @@ Usage:
     --yes <name>              confirm; must name the app. Bare two80 delete prints
                               the name and deletes nothing.
 
+  two80 logs [<app>]    read your deployed app's server logs (owner only)
+    --since <dur>             look-back window, e.g. 15m, 1h, 24h (default 1h)
+    --limit <N>               max lines (default 200, cap 1000)
+    --level <lvl>             error | warn | info | all (default all)
+    --digest <id>             resolve a Next.js production digest to its stack
+
   two80 whoami          print auth state
   two80 login           authenticate this machine; prints a link to show your user,
                       then re-run to finish. Never waits.

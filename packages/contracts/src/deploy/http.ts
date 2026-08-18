@@ -10,12 +10,15 @@ import {
   deployStatusSchema,
   deleteResultSchema,
   syncResultSchema,
+  logsResultSchema,
   type Digest,
   type SyncRequest,
   type SyncResult,
   type DeployStatus,
   type DeleteRequest,
   type DeleteResult,
+  type LogQuery,
+  type LogsResult,
 } from '../types.js';
 import type { Port, BlobBody } from '../port.js';
 import { DeployErr } from './error.js';
@@ -83,6 +86,17 @@ export class Client implements Port {
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const out = await this.doJSON('POST', `/v1/apps/${req.appId}/delete`, req);
     return deleteResultSchema.parse(out);
+  }
+
+  async logs(appId: string, query: LogQuery): Promise<LogsResult> {
+    const qs = new URLSearchParams();
+    qs.set('since', query.since);
+    qs.set('limit', String(query.limit));
+    qs.set('level', query.level);
+    if (query.digest !== '') qs.set('digest', query.digest);
+    if (query.follow) qs.set('follow', '1');
+    const out = await this.doJSON('GET', `/v1/apps/${appId}/logs?${qs.toString()}`, undefined);
+    return logsResultSchema.parse(out);
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

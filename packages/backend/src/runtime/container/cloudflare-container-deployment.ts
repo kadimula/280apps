@@ -246,6 +246,7 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
         },
       ],
       migrations: [{ tag: 'v1', new_sqlite_classes: [CONTAINER_CLASS] }],
+      observability: { enabled: true, head_sampling_rate: 1 },
       vars: {
         TWO80_ROUTE_POLICY: JSON.stringify({ routes: job.runtime.routes }),
         TWO80_SDK_API_ORIGIN: this.sdkApiOrigin,

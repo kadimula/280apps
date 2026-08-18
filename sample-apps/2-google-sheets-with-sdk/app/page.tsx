@@ -4,7 +4,23 @@ import { createAction, toggleAction, deleteAction } from "./actions";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const todos = await getTodos();
+  const result = await getTodos();
+
+  if (!result.available) {
+    return (
+      <main>
+        <h1>Google Sheets To-Dos</h1>
+        <section style={{ background: "#0f2a5a", borderRadius: 8, padding: 16 }}>
+          <p style={{ margin: "0 0 8px" }}>
+            Connect the <strong>todos</strong> Google Sheet in the 280 dashboard to start adding to-dos.
+          </p>
+          <code style={{ fontSize: 12, color: "#9fb3d9", wordBreak: "break-word" }}>{result.message}</code>
+        </section>
+      </main>
+    );
+  }
+
+  const todos = result.todos;
 
   return (
     <main>

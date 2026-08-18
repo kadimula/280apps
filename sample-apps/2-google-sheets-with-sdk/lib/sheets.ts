@@ -3,6 +3,11 @@ import { headers } from "next/headers";
 
 export type Todo = { id: string; text: string; done: boolean };
 
+// The render path degrades gracefully: until the `todos` alias is bound to a real
+// sheet in the 280 dashboard, the SDK read throws and the page shows a connect state
+// instead of a 500. Mirrors 1-nextjs-with-sdk/lib/visitor.ts.
+export type TodosResult = { available: true; todos: Todo[] } | { available: false; message: string };
+
 // The app names a stable alias declared in 280.json; 280 binds it to a real sheet.
 const RESOURCE = "todos";
 // Data lives on the first sheet, one row per todo: [id, text, done].
@@ -12,9 +17,14 @@ async function sheets(): Promise<GoogleSheetsClient> {
   return googleSheets(await headers());
 }
 
-export async function getTodos(): Promise<Todo[]> {
-  const res = await (await sheets()).read({ resource: RESOURCE, range: RANGE });
-  return res.values.map((r) => ({ id: String(r[0]), text: String(r[1] ?? ""), done: r[2] === "TRUE" }));
+export async function getTodos(): Promise<TodosResult> {
+  try {
+    const res = await (await sheets()).read({ resource: RESOURCE, range: RANGE });
+    const todos = res.values.map((r) => ({ id: String(r[0]), text: String(r[1] ?? ""), done: r[2] === "TRUE" }));
+    return { available: true, todos };
+  } catch (error) {
+    return { available: false, message: error instanceof Error ? error.message : "Google Sheets is unavailable" };
+  }
 }
 
 export async function addTodo(text: string): Promise<void> {

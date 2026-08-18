@@ -249,9 +249,12 @@ function unsupportedRows(): string {
 // section is generated from the @280/contracts catalog: a capability or operation
 // missing from the catalog cannot appear here, and a new one appears automatically.
 export function capabilitiesMarkdown(): string {
-  const capabilityTable = capabilityDocs()
+  const docs = capabilityDocs();
+  const capabilityTable = docs
     .map((c) => `| ${c.title} | \`${c.slug}\` | ${c.operations.map((op) => `\`${op}\``).join(', ')} |`)
     .join('\n');
+  const example = docs[0] ?? { slug: 'google-sheets', operations: ['read', 'append', 'update', 'deleteRows'] };
+  const exampleOps = example.operations.map((op) => `"${op}"`).join(', ');
 
   return `# 280 capability reference
 
@@ -273,9 +276,9 @@ Every external integration goes through \`@two80/sdk\`. The container reaches on
 | --- | --- | --- |
 ${capabilityTable}
 
-Declare every capability the app uses in \`280.json\` so push can gate the deploy until it is connected:
+Declare every integration the app uses in \`280.json\` as an alias mapped to its capability and the operations it calls, so push can gate the deploy until that alias is connected. The alias (\`todos\` below) is your app-chosen name; 280 binds it to a real resource at connect time.
 
-    { "integrations": [${capabilityDocs().map((c) => `"${c.slug}"`).join(', ')}] }
+    { "integrations": { "todos": { "capability": "${example.slug}", "operations": [${exampleOps}] } } }
 
 ### Request scoping
 
@@ -302,12 +305,13 @@ Read identity from the same request the same way, via \`identity()\`:
     // In a Next.js route handler or Server Action, pass the incoming request.
     export async function POST(request: Request) {
       const sheets = googleSheets(request);
-      await sheets.read({ resource, range });            // -> { range, majorDimension, values }
-      await sheets.append({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
-      await sheets.update({ resource, range, values });  // -> { updatedRange, updatedRows, updatedCells }
+      // "todos" is the alias from 280.json, not a spreadsheet id.
+      await sheets.read({ resource: "todos", range });            // -> { range, majorDimension, values }
+      await sheets.append({ resource: "todos", range, values });  // -> { updatedRange, updatedRows, updatedCells }
+      await sheets.update({ resource: "todos", range, values });  // -> { updatedRange, updatedRows, updatedCells }
     }
 
-\`resource\` is the spreadsheet id, \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
+\`resource\` is the alias you declared in \`280.json\` (e.g. \`"todos"\`), not a spreadsheet id: 280 binds that alias to a real sheet at connect time, so the app never carries a raw sheet id. \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
 
 ## Explicitly unsupported
 

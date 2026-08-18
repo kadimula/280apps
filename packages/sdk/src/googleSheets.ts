@@ -109,38 +109,43 @@ export function googleSheets(request: RequestLike, opts: GoogleSheetsOptions = {
     return data as T;
   }
 
-  async function graceful<T>(run: () => Promise<T>, fallback: (code: NotReadyCode) => T): Promise<T> {
-    try {
-      return await run();
-    } catch (err) {
-      const code = notReadyCode(err);
-      if (code !== null) return fallback(code);
-      throw err;
-    }
+  // Each command runs the backend call and, on a not-ready code, resolves to the
+  // fallback result instead of throwing; every other error still throws.
+  function command<I extends object, O>(
+    operation: string,
+    fallback: (input: I, notReady: NotReadyCode) => O,
+  ): (input: I) => Promise<O> {
+    return async (input) => {
+      try {
+        return await call<O>(operation, input);
+      } catch (err) {
+        const code = notReadyCode(err);
+        if (code !== null) return fallback(input, code);
+        throw err;
+      }
+    };
   }
 
   return {
-    read: (input) =>
-      graceful(
-        () => call<SheetsReadResult>('read', input),
-        (notReady) => ({ range: input.range, majorDimension: 'ROWS', values: [], notReady }),
-      ),
-    append: (input) =>
-      graceful(
-        () => call<SheetsWriteResult>('append', input),
-        (notReady) => ({ updatedRange: '', updatedRows: 0, updatedCells: 0, notReady }),
-      ),
-    update: (input) =>
-      graceful(
-        () => call<SheetsWriteResult>('update', input),
-        (notReady) => ({ updatedRange: '', updatedRows: 0, updatedCells: 0, notReady }),
-      ),
-    deleteRows: (input) =>
-      graceful(
-        () => call<SheetsDeleteRowsResult>('deleteRows', input),
-        (notReady) => ({ sheetId: -1, deletedRows: 0, startRow: input.startRow, notReady }),
-      ),
+    read: command<SheetsReadInput, SheetsReadResult>('read', (input, notReady) => ({
+      range: input.range,
+      majorDimension: 'ROWS',
+      values: [],
+      notReady,
+    })),
+    append: command<SheetsWriteInput, SheetsWriteResult>('append', (_input, notReady) => emptyWrite(notReady)),
+    update: command<SheetsWriteInput, SheetsWriteResult>('update', (_input, notReady) => emptyWrite(notReady)),
+    deleteRows: command<SheetsDeleteRowsInput, SheetsDeleteRowsResult>('deleteRows', (input, notReady) => ({
+      sheetId: -1,
+      deletedRows: 0,
+      startRow: input.startRow,
+      notReady,
+    })),
   };
+}
+
+function emptyWrite(notReady: NotReadyCode): SheetsWriteResult {
+  return { updatedRange: '', updatedRows: 0, updatedCells: 0, notReady };
 }
 
 function safeJson(text: string): Record<string, unknown> {

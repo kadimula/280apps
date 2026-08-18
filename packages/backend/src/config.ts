@@ -12,6 +12,7 @@ export interface ConfigVars {
   MINIMUM_SUPPORTED_CLI_VERSION?: string;
   DEPOT_BUILD_PROJECT_ID?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
+  APP_WORKER_ENTRYPOINT?: string;
 
   GOOGLE_OIDC_CLIENT_ID?: string;
   GOOGLE_OIDC_CLIENT_SECRET?: string;
@@ -99,7 +100,10 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       accountId: vars.CLOUDFLARE_ACCOUNT_ID ?? '',
       apiToken: vars.CLOUDFLARE_DEPLOY_API_TOKEN ?? '',
     },
-    workerEntry: PLATFORM_POLICY.workerEntrypoint,
+    // Absolute path to the vendored harness worker in the runtime image (Dockerfile
+    // ENV); the roll runs wrangler in a lone temp dir, so a bare basename resolves to
+    // nothing. PLATFORM_POLICY.workerEntrypoint is only a test/dev fallback.
+    workerEntry: vars.APP_WORKER_ENTRYPOINT?.trim() || PLATFORM_POLICY.workerEntrypoint,
     gatewayService: topology.gatewayService,
     idIssuer: topology.authOrigin,
     authOrigin: topology.authOrigin,

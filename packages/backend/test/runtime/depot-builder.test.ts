@@ -248,6 +248,9 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     });
     const routes = [{ path: '/reports/*', appRole: '', role: 'analyst' }];
     await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { routes }));
+    // The roll's entry-point is the injected workerEntry verbatim (an absolute vendored
+    // path in prod); wrangler resolves it, not a bare basename in the lone roll temp dir.
+    expect(rollConfig.main).toBe('harness.js');
     expect(rollConfig.containers).toEqual([
       { class_name: 'App280Container', image: 'registry.cloudflare.com/acct1/demo-abc:dep_1', instance_type: 'dev', max_instances: 1 },
     ]);

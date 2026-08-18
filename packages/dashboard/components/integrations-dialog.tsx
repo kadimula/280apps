@@ -19,14 +19,11 @@ import {
 } from "@/lib/integrations";
 import { MOCK_SHEETS, type PickedSheet } from "@/lib/mock-sheets";
 
-// AddingState carries the picked file to the alias step. capability is the
-// resource kind being bound; requiredAlias is set only when the pick is fulfilling
-// a declared requirement, in which case the alias is fixed (confirmed, not typed).
 type AddingState = {
   connectionId: string;
   file: PickedSheet;
   capability: string;
-  requiredAlias?: string;
+  requiredAlias: string;
 };
 
 // A pending destructive action awaiting confirmation because it would un-ready a
@@ -43,15 +40,6 @@ function providerLabel(provider: IntegrationProvider): string {
 function capabilityLabel(capability: string): string {
   if (capability === "google-sheets") return "Google Sheets";
   return capability;
-}
-
-function aliasFromName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-  return slug || "sheet";
 }
 
 export function IntegrationsDialog({
@@ -148,11 +136,7 @@ export function IntegrationsDialog({
     );
   }
 
-  // Open the Picker for a connection. Both paths first mint a selector session so
-  // the real drive.file token (or the mock's inert stand-in) is exercised; the
-  // real path then loads the Google Picker, the mock path reveals a canned list.
-  // target names a declared requirement when the pick is binding a required alias.
-  async function pick(connection: IntegrationConnection, target: IntegrationRequirement | null = null) {
+  async function pick(connection: IntegrationConnection, target: IntegrationRequirement) {
     bindTarget.current = target;
     setBusy(`pick:${connection.id}`);
     setError(null);
@@ -177,9 +161,6 @@ export function IntegrationsDialog({
     }
   }
 
-  // Bind a picked spreadsheet to a declared required alias. Only offered when the
-  // provider is connected; drives the same picker, then locks the alias to the
-  // requirement so registering it satisfies the parked deploy's binding gate.
   function pickForRequirement(req: IntegrationRequirement) {
     const connection = connectionForCapability(req.capability);
     if (connection) void pick(connection, req);
@@ -189,13 +170,9 @@ export function IntegrationsDialog({
     const target = bindTarget.current;
     bindTarget.current = null;
     setPicking(null);
-    if (target) {
-      setAdding({ connectionId, file, capability: target.capability, requiredAlias: target.alias });
-      setAlias(target.alias);
-    } else {
-      setAdding({ connectionId, file, capability: capabilityForConnection(connectionId) });
-      setAlias(aliasFromName(file.name));
-    }
+    if (!target) return;
+    setAdding({ connectionId, file, capability: target.capability, requiredAlias: target.alias });
+    setAlias(target.alias);
     setAliasError(null);
   }
 
@@ -261,12 +238,6 @@ export function IntegrationsDialog({
     return name ? connectionFor(name) : null;
   };
 
-  const capabilityForConnection = (connectionId: string) => {
-    const conn = data?.connections.find((c) => c.id === connectionId);
-    const provider = conn && data?.providers.find((p) => p.provider === conn.provider);
-    return provider?.capabilities[0] ?? "google-sheets";
-  };
-
   // The resource, if any, bound to a declared required alias. A requirement is
   // ready only when such a resource exists (mirrors the backend's binding gate).
   const bindingFor = (req: IntegrationRequirement): { connection: IntegrationConnection; resource: IntegrationResource } | null => {
@@ -317,10 +288,10 @@ export function IntegrationsDialog({
             <div className="mt-5 border-t border-[var(--color-line)] pt-4">
               {data === null && <p className="py-5 text-[13px] text-[var(--color-muted)]">Loading&hellip;</p>}
 
-              {requirements.length > 0 && (
-                <section className="mb-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-paper-warm)] p-4">
+              {requirements.length > 0 ? (
+                <section className="mb-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Required by your app</p>
-                  <p className="mt-1 text-[12.5px] text-[var(--color-body)]">Connect each of these so <span className="font-semibold text-[var(--color-ink)]">{app.slug}</span> can go live.</p>
+                  <p className="mt-1 text-[13px] text-[var(--color-body)]">Complete each requirement so new deployments of <span className="font-semibold text-[var(--color-ink)]">{app.slug}</span> can go live.</p>
                   <div className="mt-3 space-y-2">
                     {requirements.map((req) => (
                       <RequirementRow
@@ -335,20 +306,22 @@ export function IntegrationsDialog({
                     ))}
                   </div>
                 </section>
-              )}
-
-              {data?.providers.length === 0 && (
-                <div className="py-7 text-center">
-                  <p className="text-[14px] font-semibold text-[var(--color-ink)]">No integrations available</p>
-                  <p className="mt-1 text-[13px] text-[var(--color-muted)]">This platform has no integration providers configured.</p>
+              ) : data !== null ? (
+                <div className="rounded-xl border border-dashed border-[var(--color-line-strong)] bg-[var(--color-paper-warm)] px-5 py-8 text-center">
+                  <p className="text-[14px] font-semibold text-[var(--color-ink)]">No integrations requested</p>
+                  <p className="mx-auto mt-1 max-w-[360px] text-[13px] leading-relaxed text-[var(--color-muted)]">This app has no integration requirements in its manifest. Integrations will appear here when the app requests them.</p>
                 </div>
-              )}
+              ) : null}
 
-              {data?.providers.map((provider) => {
-                const connection = connectionFor(provider.provider);
+              {(data?.connections.length ?? 0) > 0 && (
+                <p className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Connected accounts</p>
+              )}
+              {data?.connections.map((connection) => {
+                const provider = data.providers.find((candidate) => candidate.provider === connection.provider);
+                if (!provider) return null;
                 const label = providerLabel(provider);
                 return (
-                  <div key={provider.provider} className="rounded-xl border border-[var(--color-line)] p-4">
+                  <div key={connection.id} className="rounded-xl border border-[var(--color-line)] p-4">
                     <div className="flex items-center gap-3">
                       <SheetsIcon />
                       <div className="min-w-0 flex-1">
@@ -359,16 +332,10 @@ export function IntegrationsDialog({
                           <p className="truncate text-[12.5px] text-[var(--color-muted)]">Read, append, and update spreadsheets from your app.</p>
                         )}
                       </div>
-                      {connection ? (
-                        connection.status === "reauthorization_required" ? (
-                          <span className="shrink-0 rounded-full border border-[#c98a2b] bg-[rgba(201,138,43,0.12)] px-2.5 py-0.5 text-[11px] font-semibold text-[#c98a2b]">Reconnect needed</span>
-                        ) : (
-                          <span className="shrink-0 rounded-full border border-[var(--color-line-strong)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--color-muted)]">Connected</span>
-                        )
+                      {connection.status === "reauthorization_required" ? (
+                        <span className="shrink-0 rounded-full border border-[#c98a2b] bg-[rgba(201,138,43,0.12)] px-2.5 py-0.5 text-[11px] font-semibold text-[#c98a2b]">Reconnect needed</span>
                       ) : (
-                        <button type="button" onClick={() => connect(provider.provider)} disabled={busy === `connect:${provider.provider}`} className="shrink-0 cursor-pointer rounded-lg bg-[var(--color-ink)] px-3.5 py-1.5 text-[13px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-45">
-                          {busy === `connect:${provider.provider}` ? "Connecting…" : "Connect"}
-                        </button>
+                        <span className="shrink-0 rounded-full border border-[var(--color-line-strong)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--color-muted)]">Connected</span>
                       )}
                     </div>
 
@@ -379,9 +346,8 @@ export function IntegrationsDialog({
                       </div>
                     )}
 
-                    {connection && (
-                      <div className="mt-3 border-t border-[var(--color-line)] pt-3">
-                        {connection.resources.length === 0 && picking !== connection.id && (
+                    <div className="mt-3 border-t border-[var(--color-line)] pt-3">
+                        {connection.resources.length === 0 && picking !== connection.id && adding?.connectionId !== connection.id && (
                           <p className="pb-2 text-[12.5px] text-[var(--color-muted)]">No spreadsheets added yet.</p>
                         )}
 
@@ -405,7 +371,7 @@ export function IntegrationsDialog({
 
                         {pendingConfirm?.kind === "detach" && pendingConfirm.connectionId === connection.id && (
                           <ConfirmRow
-                            message="Your app requires this spreadsheet. Removing it will take the app offline until you connect one again."
+                            message="Integration calls using this spreadsheet will fail, and future deployments will wait until you connect one again."
                             busy={busy !== null}
                             onConfirm={() => detach(connection.id, pendingConfirm.resourceId)}
                             onCancel={() => setPendingConfirm(null)}
@@ -427,26 +393,18 @@ export function IntegrationsDialog({
 
                         {adding?.connectionId === connection.id ? (
                           <form onSubmit={saveAlias} className="mt-2 rounded-lg bg-[var(--color-paper-warm)] p-3">
-                            {adding.requiredAlias ? (
-                              <p className="pb-2 text-[12.5px] text-[var(--color-body)]">Binding <span className="font-semibold text-[var(--color-ink)]">{adding.file.name}</span> to the alias <span className="font-mono font-semibold text-[var(--color-ink)]">{adding.requiredAlias}</span> your app requires.</p>
-                            ) : (
-                              <p className="pb-2 text-[12.5px] text-[var(--color-body)]">Name for <span className="font-semibold text-[var(--color-ink)]">{adding.file.name}</span>. Your app references this alias.</p>
-                            )}
+                            <p className="pb-2 text-[12.5px] text-[var(--color-body)]">Binding <span className="font-semibold text-[var(--color-ink)]">{adding.file.name}</span> to the alias <span className="font-mono font-semibold text-[var(--color-ink)]">{adding.requiredAlias}</span> your app requires.</p>
                             <label className="sr-only" htmlFor={`${headingId}-alias`}>Alias</label>
-                            <input id={`${headingId}-alias`} value={alias} onChange={(event) => { setAlias(event.target.value); setAliasError(null); }} placeholder="orders" autoFocus readOnly={!!adding.requiredAlias} disabled={busy === `alias:${connection.id}`} className="w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-2.5 font-mono text-[14px] text-[var(--color-ink)] outline-none transition-colors placeholder:font-sans placeholder:text-[var(--color-muted)] focus:border-[var(--color-gold-500)] read-only:opacity-70 disabled:opacity-60" />
+                            <input id={`${headingId}-alias`} value={alias} readOnly disabled={busy === `alias:${connection.id}`} className="w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-2.5 font-mono text-[14px] text-[var(--color-ink)] outline-none read-only:opacity-70 disabled:opacity-60" />
                             {aliasError && <p role="alert" className="mt-2 text-[12.5px] text-[#b4342b]">{aliasError}</p>}
                             <div className="mt-3 flex justify-end gap-2">
                               <button type="button" onClick={cancelAdd} className="cursor-pointer rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper)] hover:text-[var(--color-ink)]">Cancel</button>
-                              <button type="submit" disabled={!alias || busy === `alias:${connection.id}`} className="cursor-pointer rounded-lg bg-[var(--color-ink)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-45">{busy === `alias:${connection.id}` ? "Adding…" : adding.requiredAlias ? "Connect" : "Add"}</button>
+                              <button type="submit" disabled={!alias || busy === `alias:${connection.id}`} className="cursor-pointer rounded-lg bg-[var(--color-ink)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-paper)] transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-45">{busy === `alias:${connection.id}` ? "Connecting…" : "Connect"}</button>
                             </div>
                           </form>
                         ) : (
                           !picking && pendingConfirm?.connectionId !== connection.id && (
-                            <div className="mt-1 flex items-center justify-between">
-                              <button type="button" onClick={() => pick(connection)} disabled={busy === `pick:${connection.id}` || connection.status === "reauthorization_required"} className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--color-line-strong)] px-3 py-1.5 text-[13px] font-semibold text-[var(--color-ink)] transition-colors hover:border-[var(--color-ink)] disabled:cursor-default disabled:opacity-45">
-                                <PlusIcon />
-                                {busy === `pick:${connection.id}` ? "Opening…" : "Add spreadsheet"}
-                              </button>
+                            <div className="mt-1 flex justify-end">
                               <button type="button" onClick={() => onDisconnect(connection)} disabled={busy === `disconnect:${connection.id}`} className="cursor-pointer rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[#b4342b] transition-colors hover:bg-[var(--color-paper-warm)] disabled:opacity-50">{busy === `disconnect:${connection.id}` ? "Disconnecting…" : "Disconnect"}</button>
                             </div>
                           )
@@ -454,15 +412,14 @@ export function IntegrationsDialog({
 
                         {pendingConfirm?.kind === "disconnect" && pendingConfirm.connectionId === connection.id && (
                           <ConfirmRow
-                            message="Your app depends on a spreadsheet from this account. Disconnecting will take the app offline until you connect one again."
+                            message="Integration calls using this account will fail, and future deployments will wait until you reconnect and choose the required spreadsheets."
                             confirmLabel="Disconnect anyway"
                             busy={busy !== null}
                             onConfirm={() => disconnect(connection)}
                             onCancel={() => setPendingConfirm(null)}
                           />
                         )}
-                      </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
@@ -548,7 +505,6 @@ function ConfirmRow({
 
 function PlugIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[15px] w-[15px]"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v6" /></svg>; }
 function SheetsIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted)]"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M4 9h16M4 15h16M10 9v12M15 9v12" /></svg>; }
-function PlusIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-3.5 w-3.5"><path d="M12 5v14M5 12h14" /></svg>; }
 function CheckIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-3 w-3"><path d="M20 6 9 17l-5-5" /></svg>; }
 function TrashIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-4 w-4"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg>; }
 function CloseIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden className="h-4 w-4"><path d="m6 6 12 12M18 6 6 18"/></svg>; }

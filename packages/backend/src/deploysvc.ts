@@ -441,7 +441,6 @@ export class Service implements Port {
     }
     const records = await this.wrapInternal('query logs', () =>
       this.p.logs!.query({
-        // Tenant boundary: the script is the owner-resolved app's, never client input.
         script: app.script,
         sinceMs: Date.now() - parseDurationMs(query.since),
         limit: clampLogLimit(query.limit),

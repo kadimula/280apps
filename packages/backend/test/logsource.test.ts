@@ -1,7 +1,3 @@
-// CloudflareLogSource with an injected fetch and clock: the request it builds is
-// constrained to one script, and its response parser lifts the injected 280.error
-// line's digest+stack while filtering by level and digest. No Cloudflare account.
-
 import { describe, expect, it } from 'vitest';
 import { CloudflareLogSource, extract280Error, normalizeLevel, parseDurationMs } from '../src/logsource.js';
 
@@ -25,8 +21,8 @@ describe('parseDurationMs', () => {
     expect(parseDurationMs('2h')).toBe(2 * 3_600_000);
     expect(parseDurationMs('7d')).toBe(7 * 86_400_000);
     expect(parseDurationMs('30s')).toBe(30_000);
-    expect(parseDurationMs('45')).toBe(45_000); // bare number = seconds
-    expect(parseDurationMs('nonsense')).toBe(60 * 60_000); // default 1h
+    expect(parseDurationMs('45')).toBe(45_000);
+    expect(parseDurationMs('nonsense')).toBe(60 * 60_000);
   });
 });
 

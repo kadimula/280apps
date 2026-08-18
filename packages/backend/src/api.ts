@@ -229,7 +229,7 @@ export class Server {
       digest: q.digest ?? '',
       follow: q.follow === '1',
     });
-    c.header('Cache-Control', 'no-store'); // logs may hold end-user PII; never cache
+    c.header('Cache-Control', 'no-store');
     return c.json(encodeLogs(res));
   }
 

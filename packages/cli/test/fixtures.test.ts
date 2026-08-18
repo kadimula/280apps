@@ -41,7 +41,6 @@ class CredentialWaitFake extends Fake {
   }
 }
 
-// Canned server logs so the logs fixtures are stable and exercise the digest path.
 class LogsFake extends Fake {
   async logs(): Promise<LogsResult> {
     return {

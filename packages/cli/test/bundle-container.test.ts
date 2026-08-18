@@ -1,7 +1,3 @@
-// The Next.js container buildpack's instrumentation injection: 280 adds an
-// onRequestError hook so a production digest pairs with its stack, but never
-// clobbers an app that ships its own instrumentation file.
-
 import { describe, expect, it } from 'vitest';
 import { buildNextContainer } from '../src/bundle/container.js';
 import type { Bundle } from '../src/bundle/static.js';
@@ -29,7 +25,6 @@ describe('Next.js buildpack instrumentation injection', () => {
     const own = 'export function register() {}\n';
     const root = tmpProject({ 'package.json': JSON.stringify({ name: 'demo' }), 'instrumentation.ts': own });
     const bundle = buildNextContainer(root);
-    // No generated .js is added, and the user's file rides through untouched.
     expect(fileText(bundle, 'instrumentation.js')).toBeUndefined();
     expect(fileText(bundle, 'instrumentation.ts')).toBe(own);
     expect(bundle.notes.some((n) => n.includes('two80 logs'))).toBe(false);

@@ -215,8 +215,6 @@ export class HttpClient {
     return (await parse(res)) as DeleteResult;
   }
 
-  // Returns the raw Response so a case can assert both the body and the headers
-  // (Cache-Control: no-store).
   logsRaw(appId: string, qs = ''): Promise<Response> {
     return this.app.request(`/v1/apps/${appId}/logs${qs}`, { method: 'GET', headers: this.auth() });
   }

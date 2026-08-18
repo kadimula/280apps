@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + history for the manifest-shape publish-skew guard
 
       - uses: pnpm/action-setup@v4
 
@@ -24,6 +26,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # Fails when the CLI's wire-manifest shape changed without a version bump, so
+      # the published CLI can never lag the deployed backend gate again (root cause
+      # of the two80@0.4.6 activation-gate skew).
+      - run: node packages/cli/scripts/check-manifest-shape-bump.mjs
 
       - run: pnpm install --frozen-lockfile
 

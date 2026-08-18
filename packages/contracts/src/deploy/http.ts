@@ -82,6 +82,11 @@ export class Client implements Port {
     return deployStatusSchema.parse(out);
   }
 
+  async appStatus(appId: string): Promise<DeployStatus> {
+    const out = await this.doJSON('GET', `/v1/apps/${appId}/status`, undefined);
+    return deployStatusSchema.parse(out);
+  }
+
   // POST, not HTTP DELETE: the dry run is the common case and destroys nothing.
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const out = await this.doJSON('POST', `/v1/apps/${req.appId}/delete`, req);

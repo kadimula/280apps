@@ -39,6 +39,11 @@ export interface Port {
   // URL appear together. Unknown deploy ids fail not_found.
   status(appId: string, deployId: string): Promise<DeployStatus>;
 
+  // appStatus resolves the app's most-useful current deploy and reports its
+  // platform state: the active deploy if live, the newest open deploy, or the
+  // latest deploy (including failed). No deploy history returns a 404.
+  appStatus(appId: string): Promise<DeployStatus>;
+
   // Delete destroys an app and everything it owns. Empty confirm is a dry run.
   // Confirm must equal the app's slug. The one verb here that cannot be undone.
   delete(req: DeleteRequest): Promise<DeleteResult>;

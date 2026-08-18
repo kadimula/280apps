@@ -522,4 +522,22 @@ export const cases: ConformanceCase[] = [
       );
     },
   },
+  {
+    name: 'AppStatusReturnsLiveDeploy',
+    async run(mk) {
+      const p = mk();
+      const b = mkContext({ 'public/a.js': bytes('a') });
+      const res = await pushToLive(p, identity('demo', 'git@github.com:x/demo.git'), b);
+      const st = await p.appStatus(res.app.id);
+      assert(st.state === State.Live, `want live, got ${q(st.state)}`);
+      assert(st.url !== '', 'live app must have a URL');
+    },
+  },
+  {
+    name: 'AppStatusNoSuchApp',
+    async run(mk) {
+      const p = mk();
+      await wantCode(() => p.appStatus('app_does_not_exist'), DeployCode.NotFound);
+    },
+  },
 ];

@@ -59,6 +59,33 @@ class LogsFake extends Fake {
   }
 }
 
+class IntegrationWaitFake extends Fake {
+  async appStatus(appId: string): Promise<DeployStatus> {
+    return {
+      state: 'waiting_secrets',
+      url: '',
+      notice: '',
+      secretNotice: '',
+      integrationNotice:
+        `integration not connected: todos (google-sheets). Connect it at https://console.280apps.com/dashboard/${appId}?integrations=1`,
+      failure: undefined,
+    };
+  }
+}
+
+class FailedFake extends Fake {
+  async appStatus(_appId: string): Promise<DeployStatus> {
+    return {
+      state: 'failed',
+      url: '',
+      notice: '',
+      secretNotice: '',
+      integrationNotice: '',
+      failure: { code: 'unavailable', message: 'activation failed on the platform', fix: 'run two80 push again', retryable: false, candidates: [] },
+    };
+  }
+}
+
 // normalize replaces the release version so fixtures survive a version bump.
 function normalize(s: string): string {
   return s.split(VERSION).join(VERSION_TOKEN);
@@ -273,6 +300,52 @@ const scenarios: Scenario[] = [
     code: 2,
     check: { error: 'removed_flag' },
     run: () => runCli(['push', '--json'], { root: demoProject(), port: new Fake() }),
+  },
+  {
+    name: 'status-help',
+    code: 0,
+    run: () => runCli(['status', '--help'], { root: demoProject() }),
+  },
+  {
+    name: 'status-live',
+    code: 0,
+    run: async () => {
+      freshHome();
+      const root = demoProject();
+      const fake = new Fake();
+      await runCli(['push'], { root, port: fake });
+      return runCli(['status'], { root, port: fake });
+    },
+  },
+  {
+    name: 'status-no-app',
+    code: 1,
+    check: { error: 'no_app' },
+    run: () => {
+      freshHome();
+      return runCli(['status'], { root: demoProject(), port: new Fake() });
+    },
+  },
+  {
+    name: 'status-integration-wait',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: new IntegrationWaitFake() });
+    },
+  },
+  {
+    name: 'status-failed',
+    code: 1,
+    check: { error: 'unavailable' },
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: new FailedFake() });
+    },
   },
 ];
 

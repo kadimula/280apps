@@ -20,6 +20,9 @@ Usage:
     --level <lvl>             error | warn | info | all (default all)
     --digest <id>             resolve a Next.js production digest to its stack
 
+  two80 status [<app>]  check your app's platform state (live, deploying,
+                        parked, failed, or not yet deployed)
+
   two80 whoami          print auth state
   two80 login           authenticate this machine; prints a link to show your user,
                       then re-run to finish. Never waits.

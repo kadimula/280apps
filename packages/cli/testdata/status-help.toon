@@ -1,0 +1,10 @@
+two80 status - check your app's platform state
+
+Usage:
+  two80 status [<app>] [flags]
+
+  <app>   app id to check (defaults to this directory's app via .280/config.json)
+
+Examples:
+  two80 status
+  two80 status app_000001

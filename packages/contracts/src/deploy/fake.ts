@@ -326,6 +326,43 @@ export class Fake implements Port {
     return st;
   }
 
+  async appStatus(appId: string): Promise<DeployStatus> {
+    const fault = this.fault();
+    if (fault) throw fault;
+    if (!this.apps.has(appId)) {
+      throw new DeployErr({
+        code: DeployCode.NotFound,
+        message: `app ${quote(appId)} does not exist on this account`,
+        fix: 'run two80 push to create it',
+      });
+    }
+    const active = this.active.get(appId);
+    if (active !== undefined) {
+      return this.status(appId, active);
+    }
+    let newest: FakeDeploy | null = null;
+    for (const d of this.deploys.values()) {
+      if (d.appId !== appId) continue;
+      if (!stateTerminal(d.state) && (newest === null || d.id > newest.id)) {
+        newest = d;
+      }
+    }
+    if (newest === null) {
+      for (const d of this.deploys.values()) {
+        if (d.appId !== appId) continue;
+        if (newest === null || d.id > newest.id) newest = d;
+      }
+    }
+    if (newest === null) {
+      throw new DeployErr({
+        code: DeployCode.NotFound,
+        message: `app ${quote(appId)} has no deploy history yet`,
+        fix: 'run two80 push to deploy it',
+      });
+    }
+    return this.status(appId, newest.id);
+  }
+
   async delete(req: DeleteRequest): Promise<DeleteResult> {
     const fault = this.fault();
     if (fault) throw fault;

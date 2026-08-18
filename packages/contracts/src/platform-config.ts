@@ -1,5 +1,7 @@
 export const PLATFORM_POLICY = {
   databaseSchema: 'platform',
+  // Test/dev fallback only. The live roll must use the absolute vendored path from
+  // APP_WORKER_ENTRYPOINT (config.ts); this bare basename does not resolve in the roll temp dir.
   workerEntrypoint: 'worker.js',
   sessionTtlDays: 30,
   machineTokenTtlDays: 90,

@@ -37,6 +37,22 @@ describe('backend runtime configuration', () => {
     expect(config.oauthCookieName).toBe('280_oauth_development');
   });
 
+  it('sources the roll worker entry from APP_WORKER_ENTRYPOINT, not the bare basename', () => {
+    // Regression guard for PR #85: the roll runs wrangler in a lone temp dir, so
+    // workerEntry must be the absolute vendored path the Dockerfile exports, never
+    // the 'worker.js' basename that resolves to nothing there.
+    const config = resolveConfig(
+      { APP_WORKER_ENTRYPOINT: '/app/appcontainer/src/worker.js' },
+      'postgres://database',
+    );
+    expect(config.workerEntry).toBe('/app/appcontainer/src/worker.js');
+  });
+
+  it('falls back to the platform-policy basename only when APP_WORKER_ENTRYPOINT is unset or blank', () => {
+    expect(resolveConfig({}, 'postgres://database').workerEntry).toBe('worker.js');
+    expect(resolveConfig({ APP_WORKER_ENTRYPOINT: '  ' }, 'postgres://database').workerEntry).toBe('worker.js');
+  });
+
   it('reads only purpose-specific credential names', () => {
     const config = resolveConfig(
       {

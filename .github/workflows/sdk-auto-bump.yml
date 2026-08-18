@@ -1,0 +1,55 @@
+name: SDK Auto-bump
+
+# Closes the version-skew gap PR #106 hit: an @two80/sdk source change merged
+# to main without a package.json bump, so the tag-gated publish workflow had
+# nothing new to publish and the fix silently never reached npm (root cause of
+# the google-sheets sample app 500ing when Sheets is unconnected). Unlike the
+# CLI's check-cli-version-bump.mjs (which fails CI and makes a human edit the
+# version), this auto-bumps the patch version itself on every push to main
+# that touches SDK-shipping files without an accompanying bump, so an SDK
+# release can never again depend on someone remembering to run one.
+#
+# The bump commit's own push re-triggers this workflow; the `bumped=false`
+# no-op (auto-bump-sdk-version.mjs sees the version already ahead of the last
+# tag) on that second run is what stops the loop. tag-sdk-release.yml reacts to
+# any resulting version-bump push (bot or human) and cuts the release tag.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/sdk/**"
+
+permissions:
+  contents: write # commit + push the auto-bumped package.json
+
+concurrency:
+  group: sdk-auto-bump
+  cancel-in-progress: false
+
+jobs:
+  auto-bump:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[sdk-auto-bump]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + history for the version-bump diff
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Auto-bump SDK version if shipping files changed without one
+        id: bump
+        run: node packages/sdk/scripts/auto-bump-sdk-version.mjs
+
+      - name: Commit and push the bump
+        if: steps.bump.outputs.bumped == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/sdk/package.json
+          git commit -m "chore(sdk): auto-bump version to ${{ steps.bump.outputs.version }} [sdk-auto-bump]"
+          git push origin HEAD:main

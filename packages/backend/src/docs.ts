@@ -313,6 +313,24 @@ Read identity from the same request the same way, via \`identity()\`:
 
 \`resource\` is the alias you declared in \`280.json\` (e.g. \`"todos"\`), not a spreadsheet id: 280 binds that alias to a real sheet at connect time, so the app never carries a raw sheet id. \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
 
+### Framework example: Supabase Tables
+
+Declare the table integration in \`280.json\`, then read and write rows through the alias:
+
+    { "integrations": { "tasks": { "capability": "supabase-tables", "operations": ["select", "insert", "update", "delete"] } } }
+
+    import { supabaseTables } from "@two80/sdk";
+
+    // In a Next.js route handler or Server Action, pass the incoming request.
+    export async function POST(request: Request) {
+      const tasks = supabaseTables(request);
+      // "tasks" is the alias from 280.json, not a table name.
+      await tasks.select({ resource: "tasks", filters: [{ column: "done", op: "eq", value: false }], limit: 20 });
+      await tasks.insert({ resource: "tasks", rows: [{ title, done: false }] });
+    }
+
+The alias binds one table, chosen by the app owner in the dashboard at connect time, so the app carries no table name or connection string. Filter ops are \`eq\`, \`neq\`, \`gt\`, \`gte\`, \`lt\`, \`lte\`, \`like\`, \`ilike\`, \`in\`, \`is\`; \`update\` (\`{ resource, values, filters }\`) and \`delete\` (\`{ resource, filters }\`) require at least one filter. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`.
+
 ## Explicitly unsupported
 
 The container runs full Node 20, so native modules, child processes, and local disk writes all work. What the boundary forbids:

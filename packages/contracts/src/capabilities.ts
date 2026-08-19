@@ -2,10 +2,11 @@
 // supports. Single source of truth for docs generation, the CLI preflight, and
 // manifest validation; carries no provider credentials or provider runtime detail.
 
-export const CAPABILITY_CATALOG_VERSION = '1.0.0';
+export const CAPABILITY_CATALOG_VERSION = '1.1.0';
 
 export const CAPABILITY_CATALOG = {
   'google-sheets': ['read', 'append', 'update', 'deleteRows'],
+  'supabase-tables': ['select', 'insert', 'update', 'delete'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type CapabilityName = keyof typeof CAPABILITY_CATALOG;

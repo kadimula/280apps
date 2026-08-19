@@ -151,6 +151,7 @@ export class Server {
     app.get('/internal/apps/:app/integrations', this.route((c) => this.handleIntegrationsList(c)));
     app.get('/internal/apps/:app/integrations/:provider/start', this.route((c) => this.handleIntegrationStart(c)));
     app.post('/internal/apps/:app/integrations/:id/selector-session', this.route((c) => this.handleIntegrationSelector(c)));
+    app.post('/internal/apps/:app/integrations/:id/browse', this.route((c) => this.handleIntegrationBrowse(c)));
     app.post('/internal/apps/:app/integrations/:id/resources', this.route((c) => this.handleIntegrationResourceAdd(c)));
     app.post('/internal/apps/:app/integrations/resources/delete', this.route((c) => this.handleIntegrationResourceDelete(c)));
     app.delete('/internal/apps/:app/integrations/:id', this.route((c) => this.handleIntegrationDisconnect(c)));
@@ -900,6 +901,31 @@ export class Server {
     }
   }
 
+  private async handleIntegrationBrowse(c: Context<HonoEnv>): Promise<Response> {
+    const { app } = await this.ownedApp(c);
+    const svc = this.integrations(c);
+    const req = await readJson(c, SMALL_LIMIT, integrationBrowseSchema, {
+      code: DeployCode.PreflightRejected,
+      message: 'could not read the browse request',
+      appendReason: false,
+    });
+    try {
+      c.header('Cache-Control', 'no-store');
+      const params: Record<string, string> = { kind: req.kind };
+      if (req.project !== undefined) params.project = req.project;
+      return c.json(
+        await svc.browseResources({
+          appId: app.id,
+          connectionId: c.req.param('id') ?? '',
+          capability: req.capability,
+          params,
+        }),
+      );
+    } catch (err) {
+      this.mapIntegrationErr(err);
+    }
+  }
+
   private async handleIntegrationResourceAdd(c: Context<HonoEnv>): Promise<Response> {
     const { app } = await this.ownedApp(c);
     const svc = this.integrations(c);
@@ -1314,6 +1340,15 @@ const integrationResourceSchema = {
   parse(u: unknown): { capability: string; alias: string; externalId: string } {
     const o = asObject(u);
     return { capability: str(o.capability), alias: str(o.alias), externalId: str(o.externalId) };
+  },
+};
+
+const integrationBrowseSchema = {
+  parse(u: unknown): { capability: string; kind: string; project?: string } {
+    const o = asObject(u);
+    if (typeof o.capability !== 'string' || o.capability === '') throw new Error('capability must be a non-empty string');
+    if (typeof o.kind !== 'string' || o.kind === '') throw new Error('kind must be a non-empty string');
+    return { capability: o.capability, kind: o.kind, project: typeof o.project === 'string' ? o.project : undefined };
   },
 };
 

@@ -20,6 +20,8 @@ export interface ConfigVars {
   GOOGLE_INTEGRATION_CLIENT_SECRET?: string;
   GOOGLE_PICKER_API_KEY?: string;
   GOOGLE_PROJECT_NUMBER?: string;
+  SUPABASE_INTEGRATION_CLIENT_ID?: string;
+  SUPABASE_INTEGRATION_CLIENT_SECRET?: string;
   DEPOT_API_TOKEN?: string;
   CLOUDFLARE_DEPLOY_API_TOKEN?: string;
   DATABASE_URL?: string;
@@ -49,6 +51,7 @@ export interface Config {
   // A dedicated OAuth client for third-party data integrations, separate from the
   // dashboard login client above so their consent scopes never mix.
   googleIntegration: { clientId: string; clientSecret: string; pickerApiKey: string; projectNumber: string };
+  supabaseIntegration: { clientId: string; clientSecret: string };
   depot: { token: string; projectId: string };
   cloudflare: { accountId: string; apiToken: string };
   workerEntry: string;
@@ -94,6 +97,10 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
       clientSecret: vars.GOOGLE_INTEGRATION_CLIENT_SECRET ?? '',
       pickerApiKey: vars.GOOGLE_PICKER_API_KEY ?? '',
       projectNumber: vars.GOOGLE_PROJECT_NUMBER ?? '',
+    },
+    supabaseIntegration: {
+      clientId: vars.SUPABASE_INTEGRATION_CLIENT_ID ?? '',
+      clientSecret: vars.SUPABASE_INTEGRATION_CLIENT_SECRET ?? '',
     },
     depot: { token: vars.DEPOT_API_TOKEN ?? '', projectId: vars.DEPOT_BUILD_PROJECT_ID ?? '' },
     cloudflare: {

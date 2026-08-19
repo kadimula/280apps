@@ -6,6 +6,7 @@ import {
   ProviderRequestError,
   ReauthorizationRequiredError,
   ResourceValidationError,
+  type BrowseItem,
   type CredentialPayload,
   type Provider,
 } from './provider.js';
@@ -18,10 +19,21 @@ const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 const OPERATIONS: Record<string, Set<string>> = {
   'google-sheets': new Set(['read', 'append', 'update', 'deleteRows']),
+  'supabase-tables': new Set(['select', 'insert', 'update', 'delete']),
 };
 const MAX_RANGE_LEN = 256;
 const MAX_ROWS = 1000;
 const MAX_CELLS = 10_000;
+
+const SUPABASE_COLUMN_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
+const SUPABASE_FILTER_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in', 'is']);
+const MAX_FILTERS = 16;
+const MAX_IN_VALUES = 100;
+const MAX_COLUMNS = 64;
+const SELECT_DEFAULT_LIMIT = 100;
+const SELECT_MAX_LIMIT = 1000;
+const MAX_BROWSE_PARAMS = 8;
+const MAX_BROWSE_VALUE_LEN = 128;
 
 export type IntegrationErrorKind = 'bad_request' | 'not_found' | 'conflict' | 'unavailable';
 
@@ -186,7 +198,7 @@ export class IntegrationService {
 
     const credential = exchanged.credential;
     if (credential.refreshToken === '') {
-      throw new IntegrationError('bad_request', 'Google did not return offline access; reconnect and approve the request');
+      throw new IntegrationError('bad_request', 'the provider did not return offline access; reconnect and approve the request');
     }
     const envelope = await this.cipher.protect(attempt.appId, credName(provider.name), JSON.stringify(credential));
     await this.store.putConnection(
@@ -207,6 +219,9 @@ export class IntegrationService {
 
   async selectorSession(appId: string, connectionId: string): Promise<SelectorSessionView> {
     const conn = await this.connectionOr(appId, connectionId);
+    if (this.provider(conn.provider).browse !== undefined) {
+      throw new IntegrationError('bad_request', 'this provider selects resources on the server');
+    }
     let cred: CredentialPayload;
     try {
       cred = await this.liveCredential(conn);
@@ -219,6 +234,26 @@ export class IntegrationService {
       pickerApiKey: this.config.picker.apiKey,
       projectNumber: this.config.picker.projectNumber,
     };
+  }
+
+  async browseResources(input: {
+    appId: string;
+    connectionId: string;
+    capability: string;
+    params: Record<string, string>;
+  }): Promise<{ items: BrowseItem[] }> {
+    const conn = await this.connectionOr(input.appId, input.connectionId);
+    const provider = this.provider(conn.provider);
+    if (!provider.capabilities.includes(input.capability) || provider.browse === undefined) {
+      throw new IntegrationError('bad_request', 'this connection does not support browsing resources');
+    }
+    const params = boundBrowseParams(input.params);
+    try {
+      const cred = await this.liveCredential(conn);
+      return await provider.browse(input.capability, cred.accessToken, params);
+    } catch (err) {
+      throw this.asManagementError(err);
+    }
   }
 
   async registerResource(input: {
@@ -321,7 +356,7 @@ export class IntegrationService {
       throw new SdkError('resource_not_found', `no resource is registered under "${alias}"`, 404);
     }
 
-    const bounded = boundOperation(input.operation, input.body);
+    const bounded = boundOperation(input.capability, input.operation, input.body);
 
     let cred: CredentialPayload;
     try {
@@ -458,7 +493,12 @@ function decodeCredentialJson(raw: string): CredentialPayload {
   };
 }
 
-function boundOperation(operation: string, body: Record<string, unknown>): Record<string, unknown> {
+function boundOperation(capability: string, operation: string, body: Record<string, unknown>): Record<string, unknown> {
+  if (capability === 'supabase-tables') return boundSupabase(operation, body);
+  return boundSheets(operation, body);
+}
+
+function boundSheets(operation: string, body: Record<string, unknown>): Record<string, unknown> {
   if (operation === 'deleteRows') return boundDelete(body);
 
   const range = str(body.range);
@@ -505,6 +545,139 @@ function normalizeSheet(v: unknown): number | string {
     return v;
   }
   throw new SdkError('invalid_request', 'sheet must be a title or a zero-based index', 400);
+}
+
+interface SupabaseFilter {
+  column: string;
+  op: string;
+  value: unknown;
+}
+
+function boundSupabase(operation: string, body: Record<string, unknown>): Record<string, unknown> {
+  switch (operation) {
+    case 'select':
+      return boundSelect(body);
+    case 'insert':
+      return boundInsert(body);
+    case 'update':
+      return boundUpdate(body);
+    case 'delete':
+      return { filters: parseFilters(body.filters, true) };
+    default:
+      throw new SdkError('invalid_request', 'unsupported operation', 400);
+  }
+}
+
+function boundSelect(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { filters: parseFilters(body.filters, false), limit: parseLimit(body.limit) };
+  if (body.columns !== undefined) out.columns = parseColumns(body.columns);
+  return out;
+}
+
+function boundInsert(body: Record<string, unknown>): Record<string, unknown> {
+  const rows = body.rows;
+  if (!Array.isArray(rows) || rows.length === 0) throw new SdkError('invalid_request', 'rows must be a non-empty array', 400);
+  if (rows.length > MAX_ROWS) throw new SdkError('invalid_request', `rows cannot exceed ${MAX_ROWS}`, 400);
+  let cells = 0;
+  for (const row of rows) {
+    cells += plainObjectKeys(row).length;
+    if (cells > MAX_CELLS) throw new SdkError('invalid_request', `rows cannot exceed ${MAX_CELLS} cells`, 400);
+  }
+  return { rows };
+}
+
+function boundUpdate(body: Record<string, unknown>): Record<string, unknown> {
+  const values = body.values;
+  if (values === null || typeof values !== 'object' || Array.isArray(values)) {
+    throw new SdkError('invalid_request', 'values must be a non-empty object', 400);
+  }
+  const keys = plainObjectKeys(values);
+  if (keys.length === 0) throw new SdkError('invalid_request', 'values must be a non-empty object', 400);
+  if (keys.length > MAX_COLUMNS) throw new SdkError('invalid_request', `values cannot exceed ${MAX_COLUMNS} columns`, 400);
+  return { values, filters: parseFilters(body.filters, true) };
+}
+
+function plainObjectKeys(row: unknown): string[] {
+  if (row === null || typeof row !== 'object' || Array.isArray(row)) {
+    throw new SdkError('invalid_request', 'each row must be a plain object', 400);
+  }
+  const keys = Object.keys(row as Record<string, unknown>);
+  for (const k of keys) if (!SUPABASE_COLUMN_RE.test(k)) throw new SdkError('invalid_request', `column "${k}" is invalid`, 400);
+  return keys;
+}
+
+function parseColumns(raw: unknown): string[] {
+  if (!Array.isArray(raw) || raw.length === 0) throw new SdkError('invalid_request', 'columns must be a non-empty array', 400);
+  if (raw.length > MAX_COLUMNS) throw new SdkError('invalid_request', `columns cannot exceed ${MAX_COLUMNS}`, 400);
+  return raw.map((c) => {
+    if (typeof c !== 'string' || !SUPABASE_COLUMN_RE.test(c)) throw new SdkError('invalid_request', 'column name is invalid', 400);
+    return c;
+  });
+}
+
+function parseLimit(raw: unknown): number {
+  if (raw === undefined) return SELECT_DEFAULT_LIMIT;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1 || raw > SELECT_MAX_LIMIT) {
+    throw new SdkError('invalid_request', `limit must be an integer between 1 and ${SELECT_MAX_LIMIT}`, 400);
+  }
+  return raw;
+}
+
+function parseFilters(raw: unknown, required: boolean): SupabaseFilter[] {
+  if (raw === undefined) {
+    if (required) throw new SdkError('invalid_request', 'at least one filter is required', 400);
+    return [];
+  }
+  if (!Array.isArray(raw)) throw new SdkError('invalid_request', 'filters must be an array', 400);
+  if (required && raw.length === 0) throw new SdkError('invalid_request', 'at least one filter is required', 400);
+  if (raw.length > MAX_FILTERS) throw new SdkError('invalid_request', `filters cannot exceed ${MAX_FILTERS}`, 400);
+  return raw.map(parseFilter);
+}
+
+function parseFilter(raw: unknown): SupabaseFilter {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new SdkError('invalid_request', 'each filter must be an object', 400);
+  }
+  const o = raw as Record<string, unknown>;
+  if (typeof o.column !== 'string' || !SUPABASE_COLUMN_RE.test(o.column)) {
+    throw new SdkError('invalid_request', 'filter column is invalid', 400);
+  }
+  if (typeof o.op !== 'string' || !SUPABASE_FILTER_OPS.has(o.op)) {
+    throw new SdkError('invalid_request', 'filter op is not supported', 400);
+  }
+  const value = o.value;
+  if (o.op === 'is') {
+    if (value !== null && value !== true && value !== false) {
+      throw new SdkError('invalid_request', 'the "is" filter requires null, true, or false', 400);
+    }
+  } else if (o.op === 'in') {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_IN_VALUES) {
+      throw new SdkError('invalid_request', `the "in" filter requires 1 to ${MAX_IN_VALUES} values`, 400);
+    }
+    for (const el of value) {
+      if (!isScalar(el)) throw new SdkError('invalid_request', 'the "in" values must be strings, numbers, or booleans', 400);
+    }
+  } else if (o.op === 'like' || o.op === 'ilike') {
+    if (typeof value !== 'string') throw new SdkError('invalid_request', `the "${o.op}" filter requires a string pattern`, 400);
+  } else if (!isScalar(value)) {
+    throw new SdkError('invalid_request', 'filter value must be a string, number, or boolean', 400);
+  }
+  return { column: o.column, op: o.op, value };
+}
+
+function isScalar(v: unknown): boolean {
+  return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+}
+
+function boundBrowseParams(params: Record<string, string>): Record<string, string> {
+  const entries = Object.entries(params);
+  if (entries.length > MAX_BROWSE_PARAMS) throw new IntegrationError('bad_request', 'too many browse parameters');
+  for (const [k, v] of entries) {
+    if (typeof k !== 'string' || typeof v !== 'string' || v.length > MAX_BROWSE_VALUE_LEN) {
+      throw new IntegrationError('bad_request', 'browse parameters must be short strings');
+    }
+  }
+  return params;
 }
 
 function attemptName(provider: string): string {

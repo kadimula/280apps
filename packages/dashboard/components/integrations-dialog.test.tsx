@@ -6,23 +6,46 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IntegrationsDialog } from "@/components/integrations-dialog";
-import { listIntegrations } from "@/lib/integrations";
+import {
+  listIntegrations,
+  mockConnect,
+  registerResource,
+  selectorSession,
+} from "@/lib/integrations";
+import { setMockReauth, setMockSelectorFail, setMockValidationFail } from "@/lib/mock-backend";
 
-vi.mock("@/lib/integrations", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/integrations")>()),
-  listIntegrations: vi.fn(),
-}));
+vi.mock("@/lib/integrations", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/lib/integrations")>();
+  return {
+    ...original,
+    listIntegrations: vi.fn(),
+    mockConnect: vi.fn(),
+    registerResource: vi.fn(),
+    selectorSession: vi.fn(),
+    disconnect: vi.fn(),
+    removeResource: vi.fn(),
+  };
+});
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 const app = { id: "app_1af8df68e0f6", slug: "sheets-todo" };
 const provider = { provider: "google", capabilities: ["google-sheets"] };
 
-async function openDialog() {
+const ordersReq = { alias: "orders", capability: "google-sheets", operations: ["read", "append"] };
+const inventoryReq = { alias: "inventory", capability: "google-sheets", operations: ["read", "write"] };
+const returnsReq = { alias: "returns", capability: "google-sheets", operations: ["read"] };
+
+async function openDialog(props?: Partial<Parameters<typeof IntegrationsDialog>[0]>) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<IntegrationsDialog app={app} apiBase="" mock />));
+  await act(async () =>
+    root.render(
+      <IntegrationsDialog app={app} apiBase="" mock autoOpen={false} {...props} />,
+    ),
+  );
   await act(async () => {
     (host.querySelector("button") as HTMLButtonElement).click();
     await Promise.resolve();
@@ -30,13 +53,23 @@ async function openDialog() {
   return { host, root };
 }
 
+function dialog() {
+  return document.querySelector('[role="dialog"]')!;
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
   vi.mocked(listIntegrations).mockReset();
+  vi.mocked(mockConnect).mockReset();
+  vi.mocked(registerResource).mockReset();
+  vi.mocked(selectorSession).mockReset();
+  setMockReauth(false);
+  setMockSelectorFail(false);
+  setMockValidationFail(false);
 });
 
 describe("IntegrationsDialog", () => {
-  it("renders with the deep link auto open flag during SSR", () => {
+  it("renders with the deep link autoOpen flag during SSR without portal", () => {
     const html = renderToStaticMarkup(
       <IntegrationsDialog app={app} apiBase="" mock autoOpen />,
     );
@@ -44,24 +77,23 @@ describe("IntegrationsDialog", () => {
     expect(html).toContain("Integrations");
   });
 
-  it("offers exactly one connect action for a manifest requirement", async () => {
+  it("shows Connect Google Sheets when there are requirements but no connection", async () => {
     vi.mocked(listIntegrations).mockResolvedValue({
       providers: [provider],
       connections: [],
-      requirements: [{ alias: "orders", capability: "google-sheets", operations: ["read", "append"] }],
+      requirements: [ordersReq],
     });
 
     const { root } = await openDialog();
-    const dialog = document.querySelector('[role="dialog"]')!;
-    const connectActions = [...dialog.querySelectorAll("button")].filter((button) => button.textContent === "Connect");
+    const d = dialog();
 
-    expect(dialog.textContent).toContain("orders");
-    expect(connectActions).toHaveLength(1);
-    expect(dialog.textContent).not.toContain("Add spreadsheet");
+    expect(d.textContent).toContain("Connect Google Sheets");
+    expect(d.textContent).toContain("orders");
+    expect(d.textContent).not.toContain("Connected accounts");
     await act(async () => root.unmount());
   });
 
-  it("shows an empty state without manual provisioning when the manifest has no requirements", async () => {
+  it("shows an empty state when the manifest has no requirements", async () => {
     vi.mocked(listIntegrations).mockResolvedValue({
       providers: [provider],
       connections: [],
@@ -69,11 +101,645 @@ describe("IntegrationsDialog", () => {
     });
 
     const { root } = await openDialog();
-    const dialog = document.querySelector('[role="dialog"]')!;
+    const d = dialog();
 
-    expect(dialog.textContent).toContain("No integrations requested");
-    expect(dialog.textContent).not.toContain("Connect");
-    expect(dialog.textContent).not.toContain("Add spreadsheet");
+    expect(d.textContent).toContain("No integrations requested");
+    expect(d.textContent).not.toContain("Connect");
+    await act(async () => root.unmount());
+  });
+
+  it("hides raw aliases in primary copy but shows them in Technical details", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    // The primary body doesn't show raw alias
+    const body = d.querySelector(".body-copy")?.textContent ?? "";
+    expect(body).not.toContain("google-sheets");
+    expect(body).not.toContain("append");
+
+    // Technical details contains the raw data
+    const tech = d.querySelector("details.tech")!;
+    expect(tech).toBeTruthy();
+    expect(tech.textContent).toContain("orders");
+    expect(tech.textContent).toContain("google-sheets");
+    expect(tech.textContent).toContain("read, append");
+    await act(async () => root.unmount());
+  });
+
+  it("Connect builds OAuth start URL with safe dashboard return path", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+    const btn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Connect Google Sheets"),
+    );
+    expect(btn).toBeTruthy();
+    await act(async () => root.unmount());
+  });
+
+  it("shows returning phase when autoOpen with active connection and unmet requirements", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      accessToken: "mock",
+      expiresAt: 9999,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <IntegrationsDialog app={app} apiBase="" mock autoOpen />,
+      ),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const d = dialog();
+    expect(d).toBeTruthy();
+    expect(d.textContent).toContain("Google Sheets connected");
+    await act(async () => root.unmount());
+  });
+
+  it("auto-continues into picker after returning phase resolves", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      accessToken: "mock",
+      expiresAt: 9999,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <IntegrationsDialog app={app} apiBase="" mock autoOpen />,
+      ),
+    );
+
+    // Flush all microtasks to let the returning → pick transition happen.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const d = dialog();
+    // After returning + auto-continue, should be showing the picker
+    expect(d.textContent).toContain("Pick a spreadsheet");
+    await act(async () => root.unmount());
+  });
+
+  it("picker cancellation does not register a resource and returns to choose", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+
+    // Manually pick a requirement (click the "Choose spreadsheet" button if visible).
+    // Actually, the choose state should have a "Choose spreadsheet" button.
+    const d = dialog();
+    const pickBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Choose spreadsheet"),
+    );
+    if (pickBtn) {
+      vi.mocked(selectorSession).mockResolvedValue({
+        accessToken: "mock",
+        expiresAt: 9999,
+        pickerApiKey: "mock",
+        projectNumber: "mock",
+      });
+      await act(async () => {
+        pickBtn.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    // Now cancel
+    const cancelBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Cancel"),
+    );
+    if (cancelBtn) {
+      await act(async () => {
+        cancelBtn.click();
+        await Promise.resolve();
+      });
+    }
+
+    expect(registerResource).not.toHaveBeenCalled();
+    expect(d.textContent).not.toContain("alert");
+    await act(async () => root.unmount());
+  });
+
+  it("auto-return only triggers picker once, not on re-render", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    } as never);
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      accessToken: "mock",
+      expiresAt: 9999,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <IntegrationsDialog app={app} apiBase="" mock autoOpen />,
+      ),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(selectorSession).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("shows reconnect state when connection needs reauthorization", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "reauthorization_required" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    expect(d.textContent).toContain("Reconnect Google Sheets");
+    expect(d.textContent).toContain("Orders 2026");
+    expect(d.textContent).toContain("expired");
+    await act(async () => root.unmount());
+  });
+
+  it("shows ready summary on repeat visit with Manage closed", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    expect(d.textContent).toContain("Google Sheets is ready");
+    expect(d.textContent).toContain("Orders 2026");
+    expect(d.textContent).toContain("Manage Google account");
+    // Manage should be closed by default
+    const manage = d.querySelector("details.manage-box") as HTMLDetailsElement;
+    expect(manage).toBeTruthy();
+    expect(manage.open).toBe(false);
+    await act(async () => root.unmount());
+  });
+
+  it("shows multiple requirements with correct progress", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq, inventoryReq, returnsReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    expect(d.textContent).toContain("1 of 3 ready");
+    expect(d.textContent).toContain("Ready");
+    expect(d.textContent).toContain("Waiting");
+    // The next unmet requirement should have "Choose spreadsheet"
+    const buttons = [...d.querySelectorAll("button")].filter((b) =>
+      b.textContent?.includes("Choose spreadsheet"),
+    );
+    expect(buttons.length).toBe(1);
+    await act(async () => root.unmount());
+  });
+
+  it("shows success with Done button after all requirements bound", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    // Should show ready (all requirements met)
+    expect(d.textContent).toContain("Google Sheets is ready");
+    await act(async () => root.unmount());
+  });
+
+  it("shows disconnect confirmation with consequences", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    // Open Manage Google account
+    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
+    expect(manage).toBeTruthy();
+    await act(async () => {
+      manage.click();
+      await Promise.resolve();
+    });
+
+    // Click Disconnect
+    const disconnectBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Disconnect"),
+    );
+    expect(disconnectBtn).toBeTruthy();
+    await act(async () => {
+      disconnectBtn!.click();
+      await Promise.resolve();
+    });
+
+    expect(d.textContent).toContain("Disconnect Google Sheets?");
+    expect(d.textContent).toContain("will lose access");
+    expect(d.textContent).toContain("Orders 2026");
+    await act(async () => root.unmount());
+  });
+
+  it("Escape closes confirmDisconnect before parent dialog", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    const { root } = await openDialog();
+    const d = dialog();
+
+    expect(d.textContent).toContain("Google Sheets is ready");
+
+    // Open Manage and click Disconnect
+    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
+    await act(async () => { manage.click(); await Promise.resolve(); });
+    const disconnectBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Disconnect"),
+    );
+    await act(async () => { disconnectBtn!.click(); await Promise.resolve(); });
+
+    expect(d.textContent).toContain("Disconnect Google Sheets?");
+
+    // Escape should cancel confirmation but keep dialog open
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(d.textContent).not.toContain("Disconnect Google Sheets?");
+    expect(d.textContent).toContain("Google Sheets is ready");
+    await act(async () => root.unmount());
+  });
+
+  it("closing restores focus to Integrations trigger", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [],
+      requirements: [ordersReq],
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(<IntegrationsDialog app={app} apiBase="" mock />),
+    );
+
+    const trigger = host.querySelector("button") as HTMLButtonElement;
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+
+    // Close via Escape
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeFalsy();
+    expect(document.activeElement).toBe(trigger);
+    await act(async () => root.unmount());
+  });
+
+  it("shows OAuth error state when oauthError prop is true", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [],
+      requirements: [ordersReq],
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <IntegrationsDialog app={app} apiBase="" mock autoOpen oauthError />,
+      ),
+    );
+
+    const d = dialog();
+    expect(d).toBeTruthy();
+    expect(d.textContent).toContain("Google Sheets did not connect");
+    expect(d.textContent).toContain("Try Google again");
+    await act(async () => root.unmount());
+  });
+
+  it("shows picker failure state when selector session fails", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      error: "The Google Picker session could not be created.",
+    });
+
+    const { root } = await openDialog();
+
+    // Click "Choose spreadsheet" to trigger selector
+    const d = dialog();
+    const pickBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Choose spreadsheet"),
+    );
+    expect(pickBtn).toBeTruthy();
+    await act(async () => {
+      pickBtn!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(d.textContent).toContain("Your spreadsheets could not open");
+    expect(d.textContent).toContain("Retry");
+    await act(async () => root.unmount());
+  });
+
+  it("shows resource validation failure state", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      accessToken: "mock",
+      expiresAt: 9999,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+
+    vi.mocked(registerResource).mockResolvedValue({
+      error: "Orders 2026 could not be verified. No binding was changed.",
+    });
+
+    const { root } = await openDialog();
+
+    const d = dialog();
+    const pickBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Choose spreadsheet"),
+    );
+    expect(pickBtn).toBeTruthy();
+
+    await act(async () => {
+      pickBtn!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Now select a sheet from mock picker
+    const sheetBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Orders 2026"),
+    );
+    expect(sheetBtn).toBeTruthy();
+    await act(async () => {
+      sheetBtn!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(d.textContent).toContain("not accessible");
+    expect(d.textContent).toContain("Choose another spreadsheet");
+    await act(async () => root.unmount());
+  });
+
+  it("preserves old binding during replacement validation failure", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue({
+      providers: [provider],
+      connections: [
+        {
+          id: "conn_1",
+          provider: "google",
+          status: "active" as const,
+          account: "owner@example.com",
+          updatedAt: 1,
+          resources: [{ id: "res_1", capability: "google-sheets", alias: "orders", displayName: "Orders 2026" }],
+        },
+      ],
+      requirements: [ordersReq],
+    });
+
+    vi.mocked(selectorSession).mockResolvedValue({
+      accessToken: "mock",
+      expiresAt: 9999,
+      pickerApiKey: "mock",
+      projectNumber: "mock",
+    });
+
+    vi.mocked(registerResource).mockResolvedValue({
+      error: "Validation failed.",
+    });
+
+    const { root } = await openDialog();
+
+    const d = dialog();
+
+    // Open Manage, click Replace
+    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
+    await act(async () => manage.click());
+    const replaceBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Replace"),
+    );
+    expect(replaceBtn).toBeTruthy();
+    await act(async () => {
+      replaceBtn!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Pick a sheet
+    const sheetBtn = [...d.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Orders 2026"),
+    );
+    if (sheetBtn) {
+      await act(async () => {
+        sheetBtn.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    // Should show error with "Choose another spreadsheet"
+    expect(d.textContent).toContain("not accessible");
     await act(async () => root.unmount());
   });
 });

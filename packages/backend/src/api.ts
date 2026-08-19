@@ -853,12 +853,32 @@ export class Server {
 
   private async handleIntegrationCallback(c: Context<HonoEnv>): Promise<Response> {
     const svc = this.integrations(c);
+    const provider = c.req.param('provider') ?? '';
+    const code = c.req.query('code') ?? '';
+    const stateQuery = c.req.query('state') ?? '';
+    const stateCookie = getCookie(c, INTEGRATION_OAUTH_COOKIE) ?? '';
+
+    // When Google denies access (no code) but state is valid, redirect to the
+    // dashboard so it renders the OAuth recovery state instead of a bare error.
+    if (stateQuery !== '' && stateCookie !== '' && code === '') {
+      const returnPath = await svc.resolveOAuthReturnPath(provider, stateCookie).catch(() => null);
+      deleteCookie(c, INTEGRATION_OAUTH_COOKIE, this.cookieOpts(c, 0));
+      if (returnPath !== null) {
+        const url = new URL(returnPath);
+        url.searchParams.set('integration_error', 'oauth');
+        url.searchParams.set('integrations', '1');
+        return c.redirect(url.toString(), 302);
+      }
+      // State is invalid or expired; let the normal error path handle it.
+      throw this.mapIntegrationErr(new IntegrationError('bad_request', 'that connection could not be verified'));
+    }
+
     try {
       const { redirect } = await svc.completeConnection({
-        provider: c.req.param('provider') ?? '',
-        code: c.req.query('code') ?? '',
-        stateQuery: c.req.query('state') ?? '',
-        stateCookie: getCookie(c, INTEGRATION_OAUTH_COOKIE) ?? '',
+        provider,
+        code,
+        stateQuery,
+        stateCookie,
       });
       deleteCookie(c, INTEGRATION_OAUTH_COOKIE, this.cookieOpts(c, 0));
       return c.redirect(redirect, 302);

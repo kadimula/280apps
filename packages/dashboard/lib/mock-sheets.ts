@@ -4,7 +4,9 @@
 export type PickedSheet = { id: string; name: string };
 
 export const MOCK_SHEETS: PickedSheet[] = [
-  { id: "sheet_orders", name: "Orders" },
-  { id: "sheet_inventory", name: "Inventory 2026" },
+  { id: "sheet_orders", name: "Orders 2026" },
+  { id: "sheet_inventory", name: "Inventory master" },
   { id: "sheet_signups", name: "Beta Signups" },
+  { id: "sheet_returns", name: "Returns Q3" },
+  { id: "sheet_weekly", name: "Weekly operations" },
 ];

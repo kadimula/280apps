@@ -120,54 +120,71 @@ export function IntegrationsDialog({
     });
   }, [autoOpen, refresh]);
 
-  // Drive phase from catalog changes. The isAutoOpenReturn flag is only true on
-  // the first load after an OAuth return (autoOpen + data arrived).
+  // Refs let effects read current values without listing them as deps.
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const startPickRef = useRef(startPick);
+  startPickRef.current = startPick;
+  const cancelPickRef = useRef(cancelPick);
+  cancelPickRef.current = cancelPick;
+
+  // Drive phase from catalog changes. Intentionally keyed only on data so that
+  // every refresh triggers re-evaluation without other deps causing extra runs.
   const wasOpenRef = useRef(false);
+  const autoOpenRef = useRef(autoOpen);
+  autoOpenRef.current = autoOpen;
+  const oauthErrorRef = useRef(oauthError);
+  oauthErrorRef.current = oauthError;
+  const openRef = useRef(open);
+  openRef.current = open;
   useEffect(() => {
     if (!data) return;
-    const isAutoOpenReturn = autoOpen && !wasOpenRef.current;
-    wasOpenRef.current = open;
+    const p = phaseRef.current;
+    const isAutoOpenReturn = autoOpenRef.current && !wasOpenRef.current;
+    wasOpenRef.current = openRef.current;
 
-    if (phase.phase === "loading" || phase.phase === "connect" || phase.phase === "reconnect") {
-      setPhase(derivePhase(data, oauthError, isAutoOpenReturn));
+    if (p.phase === "loading" || p.phase === "connect" || p.phase === "reconnect") {
+      setPhase(derivePhase(data, oauthErrorRef.current, isAutoOpenReturn));
       return;
     }
-    if (phase.phase === "returning" || phase.phase === "picking") return;
-    if (phase.phase === "binding") {
+    if (p.phase === "returning" || p.phase === "picking") return;
+    if (p.phase === "binding") {
       const derived = derivePhase(data, false, false);
-      // Show success after final binding; derived ready for subsequent ones
       setPhase(derived.phase === "ready" ? { phase: "success" } : derived);
       return;
     }
-    if (phase.phase === "success" || phase.phase === "ready") {
+    if (p.phase === "success" || p.phase === "ready") {
       const derived = derivePhase(data, false, false);
       if (derived.phase !== "ready" && derived.phase !== "success") setPhase(derived);
       return;
     }
-    // intentional: only re-derive on catalog changes, not on every phase/prop change
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data]);
 
   // Automatic Picker continuation after OAuth return.
   useEffect(() => {
-    if (phase.phase !== "returning" || autoContinueConsumed.current || !data) return;
+    if (phase.phase !== "returning" || autoContinueConsumed.current || !dataRef.current) return;
     autoContinueConsumed.current = true;
-    const conn = data.connections[0];
-    const unmet = data.requirements.filter(
+    const conn = dataRef.current.connections[0];
+    const unmet = dataRef.current.requirements.filter(
       (r) => !conn.resources.some((res) => res.capability === r.capability && res.alias === r.alias),
     );
     if (unmet.length === 0) return;
-    void startPick(conn, unmet[0]);
-  }, [phase.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+    void startPickRef.current(conn, unmet[0]);
+  }, [phase.phase]);
 
   // Focus trap and restoration.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (phase.phase === "confirmDisconnect") { setPhase(derivePhase(data!, false, false)); return; }
-      if (phase.phase === "picking") { cancelPick(); return; }
-      if (phase.phase === "success" || phase.phase === "ready") { close(); return; }
-      if (phase.phase === "error" && phase.kind === "resource") {
+      const p = phaseRef.current;
+      const d = dataRef.current;
+      if (p.phase === "confirmDisconnect") { setPhase(derivePhase(d!, false, false)); return; }
+      if (p.phase === "picking") { cancelPickRef.current(); return; }
+      if (p.phase === "success" || p.phase === "ready") { close(); return; }
+      if (p.phase === "error" && p.kind === "resource") {
         setPhase({ phase: "choose", unmetCount: 1 });
         return;
       }
@@ -179,7 +196,7 @@ export function IntegrationsDialog({
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = "";
     };
-  }, [open, phase.phase, data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Focus first actionable element on phase change.
   useEffect(() => {

@@ -537,7 +537,7 @@ export const cases: ConformanceCase[] = [
     name: 'AppStatusNoSuchApp',
     async run(mk) {
       const p = mk();
-      await wantCode(() => p.appStatus('app_does_not_exist'), DeployCode.NotFound);
+      await wantCode(() => p.appStatus('app_does_not_exist'), DeployCode.NoSuchApp);
     },
   },
 ];

@@ -1,4 +1,15 @@
-error: unavailable
+state: failed
+blockedOn: agent
+cause: deploy_failed
+summary: "the last deploy failed: activation failed on the platform"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: true
 message: activation failed on the platform
 fix: run two80 push again
-retryable: false
+next[1]{cmd,when,needsUser}:
+  two80 push,retry the deploy,false

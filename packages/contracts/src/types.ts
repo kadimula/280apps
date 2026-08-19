@@ -768,6 +768,10 @@ export const State = {
 } as const;
 export type State = (typeof State)[keyof typeof State];
 
+// App-level status (no deploy exists), returned only by appStatus, never a deploy
+// state. Deliberately not in State so push polling and stateTerminal stay untouched.
+export const APP_STATE_NOT_DEPLOYED = 'not_deployed';
+
 export function stateTerminal(s: string): boolean {
   return s === State.Live || s === State.Failed;
 }

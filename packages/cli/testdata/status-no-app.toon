@@ -1,4 +1,0 @@
-error: no_app
-message: no app to check status for
-fix: "run two80 status <app>, or push from this app directory first"
-retryable: false

@@ -1,3 +1,13 @@
 state: live
-url: "https://demo-rrgeuttdpr.280apps.run"
-help[1]: Run `two80 push` to redeploy
+blockedOn: none
+summary: "your app is live at https://demo-rrgeuttdpr.280apps.run"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: true
+  url: "https://demo-rrgeuttdpr.280apps.run"
+next[1]{cmd,when,needsUser}:
+  two80 push,redeploy after changes,false

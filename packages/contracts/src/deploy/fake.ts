@@ -10,6 +10,7 @@ import {
   MAX_BUILD_CONTEXT_BYTES,
   Resolution,
   State,
+  APP_STATE_NOT_DEPLOYED,
   stateTerminal,
   digestBytes,
   manifestBlobs,
@@ -105,6 +106,20 @@ export class Fake implements Port {
 
   appCount(): number {
     return this.apps.size;
+  }
+
+  // Test-only: an app the account owns that never reached a deploy, the one shape
+  // sync (which always opens a deploy) cannot produce.
+  seedAppWithoutDeploy(slug: string): string {
+    this.nextApp++;
+    const appId = `app_${String(this.nextApp).padStart(6, '0')}`;
+    this.apps.set(appId, {
+      id: appId,
+      slug,
+      url: `https://${slug}-${urlToken(appId)}.${this.urlBase}`,
+    });
+    this.blobs.set(appId, new Map());
+    return appId;
   }
 
   private fault(): DeployErr | undefined {
@@ -335,7 +350,7 @@ export class Fake implements Port {
     if (fault) throw fault;
     if (!this.apps.has(appId)) {
       throw new DeployErr({
-        code: DeployCode.NotFound,
+        code: DeployCode.NoSuchApp,
         message: `app ${quote(appId)} does not exist on this account`,
         fix: 'run two80 push to create it',
       });
@@ -358,11 +373,13 @@ export class Fake implements Port {
       }
     }
     if (newest === null) {
-      throw new DeployErr({
-        code: DeployCode.NotFound,
-        message: `app ${quote(appId)} has no deploy history yet`,
-        fix: 'run two80 push to deploy it',
-      });
+      return {
+        state: APP_STATE_NOT_DEPLOYED,
+        url: '',
+        notice: '',
+        secretNotice: '',
+        integrationNotice: '',
+      };
     }
     return this.status(appId, newest.id);
   }

@@ -1,4 +1,8 @@
-two80 status - check your app's platform state
+two80 status - reconcile this directory, its 280.json, and the platform
+
+Reports one document across three planes: the local link (.280/config.json),
+the wiring (280.json integrations and config), and the platform state. It never
+fails just to report a state; the summary line is safe to relay to your user.
 
 Usage:
   two80 status [<app>] [flags]

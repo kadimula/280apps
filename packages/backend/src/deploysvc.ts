@@ -5,6 +5,7 @@
 
 import {
   APP_ROLE_ORDER,
+  APP_STATE_NOT_DEPLOYED,
   DeployCode,
   DeployErr,
   MANIFEST_KIND_CONTAINER,
@@ -409,7 +410,7 @@ export class Service implements Port {
 
   async status(appId: string, deployId: string): Promise<DeployStatus> {
     const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
-    if (app === null) throw notFound(appId, deployId);
+    if (app === null) throw noSuchApp(appId);
     const dep = await this.wrapInternal('read deploy', () => this.p.store.deploy(appId, deployId));
     if (dep === null) throw notFound(appId, deployId);
     return this.statusFor(app, dep);
@@ -417,13 +418,7 @@ export class Service implements Port {
 
   async appStatus(appId: string): Promise<DeployStatus> {
     const app = await this.wrapInternal('look up app', () => this.p.store.app(this.userId, appId));
-    if (app === null) {
-      throw new DeployErr({
-        code: DeployCode.NotFound,
-        message: `app "${appId}" does not exist on this account`,
-        fix: 'run two80 push to create it',
-      });
-    }
+    if (app === null) throw noSuchApp(appId);
     let dep = null;
     if (app.activeDeploy !== '') {
       dep = await this.wrapInternal('read active deploy', () =>
@@ -442,11 +437,14 @@ export class Service implements Port {
       );
     }
     if (dep === null) {
-      throw new DeployErr({
-        code: DeployCode.NotFound,
-        message: `app "${appId}" has no deploy history yet`,
-        fix: 'run two80 push to deploy it',
-      });
+      return {
+        state: APP_STATE_NOT_DEPLOYED,
+        url: '',
+        notice: '',
+        secretNotice: '',
+        integrationNotice: '',
+        failure: undefined,
+      };
     }
     return this.statusFor(app, dep);
   }
@@ -669,6 +667,14 @@ function notFound(appId: string, deployId: string): DeployErr {
     code: DeployCode.NotFound,
     message: `deploy "${deployId}" not found for app "${appId}"`,
     fix: 'run two80 push again',
+  });
+}
+
+function noSuchApp(appId: string): DeployErr {
+  return new DeployErr({
+    code: DeployCode.NoSuchApp,
+    message: `app "${appId}" does not exist on this account`,
+    fix: 'run two80 push to create it',
   });
 }
 

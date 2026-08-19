@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DeployStatus, LogsResult } from '@280/contracts';
+import { DeployErr, type DeployStatus, type LogsResult } from '@280/contracts';
 import { Fake } from '@280/contracts/deploy/fake';
 import * as config from '../src/config.js';
 import * as credentials from '../src/credentials.js';
@@ -70,6 +70,26 @@ class IntegrationWaitFake extends Fake {
         `integration not connected: todos (google-sheets). Connect it at https://console.280apps.com/dashboard/${appId}?integrations=1`,
       failure: undefined,
     };
+  }
+}
+
+class ConfigWaitFake extends Fake {
+  async appStatus(appId: string): Promise<DeployStatus> {
+    return {
+      state: 'waiting_secrets',
+      url: '',
+      notice: '',
+      secretNotice:
+        `declared config values are not set: REGION. Set them at https://console.280apps.com/dashboard/${appId}?variables=1`,
+      integrationNotice: '',
+      failure: undefined,
+    };
+  }
+}
+
+class UnreachableFake extends Fake {
+  async appStatus(_appId: string): Promise<DeployStatus> {
+    throw new DeployErr({ code: 'not_found', message: 'the platform did not answer', synthesized: true });
   }
 }
 
@@ -318,9 +338,8 @@ const scenarios: Scenario[] = [
     },
   },
   {
-    name: 'status-no-app',
-    code: 1,
-    check: { error: 'no_app' },
+    name: 'status-unlinked',
+    code: 0,
     run: () => {
       freshHome();
       return runCli(['status'], { root: demoProject(), port: new Fake() });
@@ -331,15 +350,63 @@ const scenarios: Scenario[] = [
     code: 0,
     run: () => {
       freshHome();
-      const root = demoProject();
+      const root = tmpProject({
+        'package.json': JSON.stringify({ name: 'demo' }),
+        'index.html': '<h1>hi</h1>',
+        '280.json': JSON.stringify({
+          integrations: { todos: { capability: 'google-sheets', operations: ['read', 'append'] } },
+          config: { REGION: 'us-east-1', SHEET_ID: { sensitive: true } },
+        }),
+      });
       config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
       return runCli(['status'], { root, port: new IntegrationWaitFake() });
     },
   },
   {
+    name: 'status-config-wait',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: new ConfigWaitFake() });
+    },
+  },
+  {
+    name: 'status-not-deployed',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      const fake = new Fake();
+      const appId = fake.seedAppWithoutDeploy('demo');
+      config.save(root, { name: 'demo', framework: 'static', appId, clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: fake });
+    },
+  },
+  {
+    name: 'status-unknown-app',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: new Fake() });
+    },
+  },
+  {
+    name: 'status-unreachable',
+    code: 0,
+    run: () => {
+      freshHome();
+      const root = demoProject();
+      config.save(root, { name: 'demo', framework: 'static', appId: 'app_000001', clientRef: 'cr_x' });
+      return runCli(['status'], { root, port: new UnreachableFake() });
+    },
+  },
+  {
     name: 'status-failed',
-    code: 1,
-    check: { error: 'unavailable' },
+    code: 0,
     run: () => {
       freshHome();
       const root = demoProject();

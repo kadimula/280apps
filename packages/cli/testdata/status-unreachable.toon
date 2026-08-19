@@ -1,0 +1,11 @@
+state: unreachable
+blockedOn: agent
+cause: endpoint_unavailable
+summary: "the platform status endpoint did not answer in the expected shape; the backend may predate this CLI, or TWO80_API points at the wrong host"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+next[1]{cmd,when,needsUser}:
+  two80 status,retry after the backend catches up,false

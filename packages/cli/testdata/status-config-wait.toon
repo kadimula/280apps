@@ -1,0 +1,15 @@
+state: waiting_secrets
+blockedOn: user
+cause: awaiting_config_values
+summary: "parked: required configuration must be set in the dashboard before this deploy can finish"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: true
+secretNotice: "declared config values are not set: REGION. Set them at https://console.280apps.com/dashboard/app_000001?variables=1"
+next[2]{cmd,when,needsUser}:
+  set the configuration in the 280 dashboard,before the deploy can finish,true
+  two80 status,poll again after the user acts,false

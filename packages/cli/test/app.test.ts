@@ -299,12 +299,13 @@ describe('bare two80 home view', () => {
 });
 
 describe('status', () => {
-  it('before any push: no_app error with a fix', async () => {
-    const r = await runCli(['status'], { root: tmpProject(), port: new Fake() });
-    expect(r.code).toBe(1);
+  it('before any push: unlinked document, exit 0, no server call', async () => {
+    const r = await runCli(['status'], { root: tmpProject() });
+    expect(r.code).toBe(0);
     const t = parseToon(r.out);
-    expect(t.error).toBe('no_app');
-    expect(t.fix).toContain('two80 status <app>');
+    expect(t.state).toBe('unlinked');
+    expect(t.blockedOn).toBe('agent');
+    expect(t.cause).toBe('never_pushed');
   });
 
   it('explicit app ID wins over directory config', async () => {
@@ -317,7 +318,7 @@ describe('status', () => {
     expect(r.code).toBe(0);
     const t = parseToon(r.out);
     expect(t.state).toBe('live');
-    expect(t.url).toContain('280apps.run');
+    expect(r.out).toContain('280apps.run');
   });
 
   it('reports live state with URL after a successful push', async () => {
@@ -329,19 +330,20 @@ describe('status', () => {
     expect(r.code).toBe(0);
     const t = parseToon(r.out);
     expect(t.state).toBe('live');
-    expect(t.url).toContain('280apps.run');
+    expect(r.out).toContain('280apps.run');
   });
 
-  it('reports not_found for an explicit app that does not exist', async () => {
+  it('reports unknown_app for an explicit app that does not exist', async () => {
     const r = await runCli(['status', 'app_missing'], { root: tmpProject(), port: new Fake() });
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(0);
     const t = parseToon(r.out);
-    expect(t.error).toBe('not_found');
+    expect(t.state).toBe('unknown_app');
+    expect(t.cause).toBe('app_missing');
   });
 
   it('status --help prints usage and exits 0', async () => {
     const r = await runCli(['status', '--help'], { root: tmpProject() });
     expect(r.code).toBe(0);
-    expect(r.out).toContain('two80 status - check your app');
+    expect(r.out).toContain('two80 status - reconcile');
   });
 });

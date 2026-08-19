@@ -1,3 +1,22 @@
 state: waiting_secrets
+blockedOn: user
+cause: awaiting_integration_binding
+summary: "parked: an integration must be connected in the dashboard before this deploy can finish"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: true
+integrations[1]:
+  - alias: todos
+    capability: google-sheets
+    operations[2]: read,append
+config[2]{name,source}:
+  REGION,literal
+  SHEET_ID,dashboard
 integrationNotice: "integration not connected: todos (google-sheets). Connect it at https://console.280apps.com/dashboard/app_000001?integrations=1"
-help[1]: "ask your user to connect the integration, then run `two80 push` again"
+next[2]{cmd,when,needsUser}:
+  bind the integration in the 280 dashboard,before the deploy can finish,true
+  two80 status,poll again after the user acts,false

@@ -208,7 +208,7 @@ const scenarios: Scenario[] = [
     run: () => {
       freshHome();
       credentials.save({ token: 'tok', api: API });
-      return runCli(['whoami'], { root: demoProject() });
+      return runCli(['whoami'], { root: demoProject(), port: new Fake() });
     },
   },
   {

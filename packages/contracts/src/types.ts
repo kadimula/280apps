@@ -868,6 +868,14 @@ export const logsResultSchema = z
   .passthrough();
 export type LogsResult = z.infer<typeof logsResultSchema>;
 
+export const whoamiResultSchema = z
+  .object({
+    email: str(),
+    name: str(),
+  })
+  .passthrough();
+export type WhoamiResult = z.infer<typeof whoamiResultSchema>;
+
 export const deviceCodeResponseSchema = z
   .object({
     deviceCode: str(),

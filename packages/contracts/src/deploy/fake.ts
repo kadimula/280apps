@@ -26,6 +26,7 @@ import {
   type DeleteResult,
   type LogQuery,
   type LogsResult,
+  type WhoamiResult,
 } from '../index.js';
 import type { Port, BlobBody } from '../port.js';
 import { DeployErr } from './error.js';
@@ -66,6 +67,9 @@ function byteLess(a: string, b: string): boolean {
 export class Fake implements Port {
   private readonly urlBase = resolvePlatformTopology({}).appServingDomain;
   private nextApp = 0;
+
+  // The account this in-memory port belongs to: whoami's answer.
+  readonly account = { email: 'you@example.com', name: 'Example User' };
 
   private readonly apps = new Map<string, App>();
   private readonly byFingerprint = new Map<string, string[]>(); // fingerprint -> app ids, creation order
@@ -418,6 +422,12 @@ export class Fake implements Port {
       });
     }
     return { records: [] };
+  }
+
+  async whoami(): Promise<WhoamiResult> {
+    const fault = this.fault();
+    if (fault) throw fault;
+    return { email: this.account.email, name: this.account.name };
   }
 }
 

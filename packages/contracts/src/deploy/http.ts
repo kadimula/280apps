@@ -155,12 +155,14 @@ async function errorFromResponse(resp: Response): Promise<DeployErr> {
         code: DeployCode.Unauthorized,
         message: 'not logged in to 280',
         fix: 'run two80 login',
+        synthesized: true,
       });
     case 404:
       return new DeployErr({
         code: DeployCode.NotFound,
         message: 'not found',
         fix: 'run two80 push again',
+        synthesized: true,
       });
     case 503:
     case 502:
@@ -170,12 +172,14 @@ async function errorFromResponse(resp: Response): Promise<DeployErr> {
         code: DeployCode.Unavailable,
         message: '280 is temporarily unavailable',
         retryable: true,
+        synthesized: true,
       });
     default:
       return new DeployErr({
         code: DeployCode.Unavailable,
         message: `unexpected response from 280 (HTTP ${resp.status})`,
         fix: 'run two80 push again; if it persists, check https://280apps.com/status',
+        synthesized: true,
       });
   }
 }

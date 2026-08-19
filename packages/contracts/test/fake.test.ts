@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { Fake } from '../src/deploy/fake.js';
 import { asDeployError } from '../src/deploy/error.js';
 import {
+  APP_STATE_NOT_DEPLOYED,
   MANIFEST_KIND_CONTAINER,
   State,
   digestBytes,
@@ -141,5 +142,13 @@ describe('Fake fault injection & atomicity', () => {
     expect(r3.deployId).toBe(r2.deployId);
     expect(r3.state).toBe(State.Live);
     expect(f.activeDeployId(r1.app.id)).toBe(r2.deployId);
+  });
+
+  it('appStatus is not_deployed for an app that never reached a deploy', async () => {
+    const f = new Fake();
+    const appId = f.seedAppWithoutDeploy('demo');
+    const st = await f.appStatus(appId);
+    expect(st.state).toBe(APP_STATE_NOT_DEPLOYED);
+    expect(st.url).toBe('');
   });
 });

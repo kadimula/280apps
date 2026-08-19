@@ -1,0 +1,14 @@
+state: unknown_app
+blockedOn: user
+cause: app_missing
+summary: ".280/config.json points at app_000001, which does not exist on this account"
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: false
+next[2]{cmd,when,needsUser}:
+  two80 push --new,create a fresh app; abandons app_000001,true
+  two80 push,retry against the existing link,false

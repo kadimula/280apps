@@ -1,0 +1,13 @@
+state: not_deployed
+blockedOn: agent
+cause: never_pushed
+summary: the platform knows this app but it has never been deployed
+app:
+  name: demo
+  id: app_000001
+  framework: static
+  linked: true
+platform:
+  knowsApp: true
+next[1]{cmd,when,needsUser}:
+  two80 push,deploy this directory,false

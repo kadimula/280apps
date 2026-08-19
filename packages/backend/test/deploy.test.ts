@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  APP_STATE_NOT_DEPLOYED,
   DeployCode,
   MANIFEST_KIND_CONTAINER,
   MAX_BUILD_CONTEXT_BYTES,
@@ -473,7 +474,7 @@ describe('delete', () => {
     const done = await port.delete({ appId: res.app.id, confirm: res.app.slug });
     expect(done.deleted).toBe(true);
     expect(h.builder.torndown).toEqual([res.app.id]);
-    await expectCode(() => port.status(res.app.id, res.deployId), DeployCode.NotFound);
+    await expectCode(() => port.status(res.app.id, res.deployId), DeployCode.NoSuchApp);
   });
 });
 
@@ -488,9 +489,9 @@ describe('appStatus', () => {
     expect(st.url).toContain('280apps.run');
   });
 
-  it('returns not_found for an unknown app', async () => {
+  it('returns no_such_app for an unknown app', async () => {
     const { port } = await fresh();
-    await expectCode(() => port.appStatus('app_missing'), DeployCode.NotFound);
+    await expectCode(() => port.appStatus('app_missing'), DeployCode.NoSuchApp);
   });
 
   it('returns waiting_secrets for a parked deploy with missing secrets', async () => {
@@ -518,7 +519,7 @@ describe('appStatus', () => {
     expect(st.integrationNotice).toContain('google-sheets');
   });
 
-  it('returns not_found for an app with no deploy history', async () => {
+  it('returns not_deployed for an app with no deploy history', async () => {
     const { h, port } = await fresh();
     const app: Parameters<typeof h.store.createApp>[0] = {
       id: 'app_empty',
@@ -535,7 +536,9 @@ describe('appStatus', () => {
       lastDeployAt: null,
     };
     await h.store.createApp(app);
-    await expectCode(() => port.appStatus('app_empty'), DeployCode.NotFound);
+    const st = await port.appStatus('app_empty');
+    expect(st.state).toBe(APP_STATE_NOT_DEPLOYED);
+    expect(st.url).toBe('');
   });
 
   it('returns the active deploy over a newer open deploy', async () => {

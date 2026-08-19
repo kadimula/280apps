@@ -10,6 +10,9 @@ export class DeployErr extends Error implements DeployError {
   readonly fix: string;
   readonly retryable: boolean;
   readonly candidates: string[];
+  // Client-side only: the HTTP adapter fabricated this error by status class because
+  // the body was not a structured error. Never serialized; means "the server did not say this".
+  readonly synthesized: boolean;
 
   constructor(fields: {
     code: string;
@@ -17,6 +20,7 @@ export class DeployErr extends Error implements DeployError {
     fix?: string;
     retryable?: boolean;
     candidates?: string[];
+    synthesized?: boolean;
   }) {
     super(fields.message ?? '');
     this.name = 'DeployErr';
@@ -24,6 +28,7 @@ export class DeployErr extends Error implements DeployError {
     this.fix = fields.fix ?? '';
     this.retryable = fields.retryable ?? false;
     this.candidates = fields.candidates ?? [];
+    this.synthesized = fields.synthesized ?? false;
   }
 }
 

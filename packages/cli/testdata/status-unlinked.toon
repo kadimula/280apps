@@ -1,0 +1,8 @@
+state: unlinked
+blockedOn: agent
+cause: never_pushed
+summary: no app is linked to this directory yet; push to create and deploy it
+app:
+  linked: false
+next[1]{cmd,when,needsUser}:
+  two80 push,deploy this directory,false

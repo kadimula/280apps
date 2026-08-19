@@ -81,14 +81,15 @@ describe("mock integrations backend", () => {
     const resource = withResource.connections[0]!.resources[0]!;
     expect(resource.alias).toBe("orders");
 
-    // A duplicate alias is rejected, and a bad alias is rejected.
-    expect(
-      (await post(`${base}/${conn.id}/resources`, {
-        capability: "google-sheets",
-        alias: "orders",
-        externalId: sheet.id,
-      })).status,
-    ).toBe(422);
+    // A duplicate alias upserts (matches production store behavior), a bad alias format is rejected.
+    const upsert = await post(`${base}/${conn.id}/resources`, {
+      capability: "google-sheets",
+      alias: "orders",
+      externalId: MOCK_SHEETS[1]!.id,
+    });
+    expect(upsert.status).toBe(200);
+    expect(((await upsert.json()) as { displayName: string }).displayName).toBe(MOCK_SHEETS[1]!.name);
+    expect((await list()).connections[0]!.resources).toHaveLength(1);
     expect(
       (await post(`${base}/${conn.id}/resources`, {
         capability: "google-sheets",

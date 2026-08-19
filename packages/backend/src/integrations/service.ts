@@ -147,6 +147,13 @@ export class IntegrationService {
     return { authUrl, stateCookie: state };
   }
 
+  async resolveOAuthReturnPath(provider: string, stateCookie: string): Promise<string | null> {
+    const attempt = await this.store.consumeOAuthAttempt(hash(stateCookie), this.now());
+    if (attempt === null || attempt.provider !== provider) return null;
+    const payload = decodePayload(await this.cipher.reveal(attempt.appId, attemptName(provider), attempt.payloadEnvelope));
+    return this.frontendRedirect(payload.returnPath);
+  }
+
   async completeConnection(input: {
     provider: string;
     code: string;

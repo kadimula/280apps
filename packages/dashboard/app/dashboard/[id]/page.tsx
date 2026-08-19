@@ -35,14 +35,14 @@ export default async function AppPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ as?: string; variables?: string; integrations?: string }>;
+  searchParams: Promise<{ as?: string; variables?: string; integrations?: string; integration_error?: string }>;
 }) {
   const user = await getMe();
   if (!user) {
     redirect("/login");
   }
 
-  const [{ id }, { as, variables, integrations }] = await Promise.all([
+  const [{ id }, { as, variables, integrations, integration_error }] = await Promise.all([
     params,
     searchParams,
   ]);
@@ -165,6 +165,7 @@ export default async function AppPage({
           apiBase={integrationsApiBase}
           mock={MOCK_BACKEND}
           autoOpen={integrations === "1"}
+          oauthError={integration_error === "oauth"}
         />
         <AppMenu appId={app.id} slug={app.slug} />
         <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">

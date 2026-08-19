@@ -167,12 +167,28 @@ const MOCK_PROVIDERS = [{ provider: "google", capabilities: ["google-sheets"] }]
 const mockConnections = new Map<string, IntegrationConnection[]>();
 let mockIntSeq = 0;
 
+// Fixture toggles for exercising recovery states and multi-requirement views.
+// Set before the dialog opens; each test resets them in afterEach.
+let mockFixtureReauth = false;
+let mockFixtureSelectorFail = false;
+let mockFixtureValidationFail = false;
+
+export function setMockReauth(value: boolean) { mockFixtureReauth = value; }
+export function setMockSelectorFail(value: boolean) { mockFixtureSelectorFail = value; }
+export function setMockValidationFail(value: boolean) { mockFixtureValidationFail = value; }
+
 // The integration requirements each app declared in its 280.json, mirroring the
 // live app_policies.integrations slice. app-notes shows the parked-handoff case:
 // a required alias the owner must bind before the deploy can go live.
+// app-tracker exercises the multi-requirement view.
 const mockRequirements: Record<string, IntegrationRequirement[]> = {
   "app-notes": [
     { alias: "orders", capability: "google-sheets", operations: ["read", "append"] },
+  ],
+  "app-tracker": [
+    { alias: "orders", capability: "google-sheets", operations: ["read", "append"] },
+    { alias: "inventory", capability: "google-sheets", operations: ["read", "write"] },
+    { alias: "returns", capability: "google-sheets", operations: ["read"] },
   ],
 };
 
@@ -428,14 +444,15 @@ export function mockResponse(path: string, init?: RequestInit): Response {
     const list = connectionsFor(decodeURIComponent(connectMatch[1]));
     const provider = decodeURIComponent(connectMatch[2]);
     const existing = list.find((c) => c.provider === provider);
+    const status = mockFixtureReauth ? ("reauthorization_required" as const) : ("active" as const);
     if (existing) {
-      existing.status = "active";
+      existing.status = status;
       existing.updatedAt = Math.floor(Date.now() / 1000);
     } else {
       list.push({
         id: `int_${(mockIntSeq++).toString(36)}`,
         provider,
-        status: "active",
+        status,
         account: MOCK_USER.email,
         updatedAt: Math.floor(Date.now() / 1000),
         resources: [],
@@ -451,6 +468,9 @@ export function mockResponse(path: string, init?: RequestInit): Response {
     /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)\/selector-session$/,
   );
   if (method === "POST" && selectorMatch) {
+    if (mockFixtureSelectorFail) {
+      return json({ error: "The Google Picker session could not be created." }, 502);
+    }
     return json({
       accessToken: "mock-token",
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
@@ -466,6 +486,9 @@ export function mockResponse(path: string, init?: RequestInit): Response {
     /^\/internal\/apps\/([^/]+)\/integrations\/([^/]+)\/resources$/,
   );
   if (method === "POST" && resourceAddMatch) {
+    if (mockFixtureValidationFail) {
+      return json({ error: "Orders 2026 could not be verified. No binding was changed." }, 422);
+    }
     const list = connectionsFor(decodeURIComponent(resourceAddMatch[1]));
     const conn = list.find((c) => c.id === decodeURIComponent(resourceAddMatch[2]));
     if (!conn) return json({ error: "That connection does not exist." }, 404);
@@ -476,17 +499,21 @@ export function mockResponse(path: string, init?: RequestInit): Response {
         422,
       );
     }
-    if (conn.resources.some((r) => r.alias === alias)) {
-      return json({ error: "That alias is already in use." }, 422);
-    }
     const displayName =
       MOCK_SHEETS.find((s) => s.id === externalId)?.name ?? alias;
-    conn.resources.push({
-      id: `int_${(mockIntSeq++).toString(36)}`,
-      capability: typeof capability === "string" ? capability : "google-sheets",
-      alias,
-      displayName,
-    });
+    // Upsert: if a resource with this alias exists, replace it in place.
+    const existing = conn.resources.find((r) => r.alias === alias);
+    if (existing) {
+      existing.capability = typeof capability === "string" ? capability : "google-sheets";
+      existing.displayName = displayName;
+    } else {
+      conn.resources.push({
+        id: `int_${(mockIntSeq++).toString(36)}`,
+        capability: typeof capability === "string" ? capability : "google-sheets",
+        alias,
+        displayName,
+      });
+    }
     return json({ alias, capability, displayName });
   }
 

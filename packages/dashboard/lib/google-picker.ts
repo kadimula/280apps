@@ -29,6 +29,7 @@ interface PickerBuilder {
   setDeveloperKey(key: string): PickerBuilder;
   setAppId(id: string): PickerBuilder;
   setCallback(callback: (data: PickerData) => void): PickerBuilder;
+  setTitle(title: string): PickerBuilder;
   build(): PickerObject;
 }
 interface PickerNamespace {
@@ -74,6 +75,7 @@ function loadGapi(): Promise<Gapi> {
 
 export async function openGooglePicker(
   session: SelectorSession,
+  title?: string,
 ): Promise<PickedSheet | null> {
   const gapi = await loadGapi();
   await new Promise<void>((resolve) => gapi.load("picker", { callback: resolve }));
@@ -82,20 +84,20 @@ export async function openGooglePicker(
     const view = new picker.DocsView(picker.ViewId.SPREADSHEETS)
       .setSelectFolderEnabled(false)
       .setMode(picker.DocsViewMode.LIST);
-    new picker.PickerBuilder()
+    const builder = new picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(session.accessToken)
       .setDeveloperKey(session.pickerApiKey)
-      .setAppId(session.projectNumber)
-      .setCallback((data) => {
+      .setAppId(session.projectNumber);
+    if (title) builder.setTitle(title);
+    builder.setCallback((data) => {
         if (data.action === picker.Action.PICKED) {
           const doc = data.docs?.[0];
           resolve(doc ? { id: doc.id, name: doc.name } : null);
         } else if (data.action === picker.Action.CANCEL) {
           resolve(null);
         }
-      })
-      .build()
-      .setVisible(true);
+      });
+    builder.build().setVisible(true);
   });
 }

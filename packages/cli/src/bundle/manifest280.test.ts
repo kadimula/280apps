@@ -102,6 +102,40 @@ describe('read280', () => {
     ]);
   });
 
+  it('parses supabase-tables with each supported operation', () => {
+    expect(
+      read280(
+        projectWith({
+          integrations: {
+            tasks: { capability: 'supabase-tables', operations: ['select', 'insert', 'update', 'delete'] },
+          },
+        }),
+      ).integrations,
+    ).toEqual([{ alias: 'tasks', capability: 'supabase-tables', operations: ['select', 'insert', 'update', 'delete'] }]);
+  });
+
+  it('validates mixed google-sheets and supabase-tables aliases together', () => {
+    expect(
+      read280(
+        projectWith({
+          integrations: {
+            sheet: { capability: 'google-sheets', operations: ['read'] },
+            tasks: { capability: 'supabase-tables', operations: ['select', 'insert'] },
+          },
+        }),
+      ).integrations,
+    ).toEqual([
+      { alias: 'sheet', capability: 'google-sheets', operations: ['read'] },
+      { alias: 'tasks', capability: 'supabase-tables', operations: ['select', 'insert'] },
+    ]);
+  });
+
+  it('rejects an unsupported supabase-tables operation with the catalog-driven error', () => {
+    expect(() =>
+      read280(projectWith({ integrations: { tasks: { capability: 'supabase-tables', operations: ['truncate'] } } })),
+    ).toThrow(/does not support/);
+  });
+
   it('rejects malformed, unknown-capability, unsupported-operation, and bad-alias integrations', () => {
     expect(() => read280(projectWith({ integrations: ['google-sheets'] }))).toThrow(/must be an object/);
     expect(() => read280(projectWith({ integrations: { todos: 'google-sheets' } }))).toThrow(/must be an object/);

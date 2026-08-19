@@ -5,6 +5,8 @@ import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { IntegrationService } from './integrations/service.js';
 import { ProviderRegistry } from './integrations/registry.js';
 import { GoogleWorkspaceProvider } from './integrations/google/provider.js';
+import { SupabaseProvider } from './integrations/supabase/provider.js';
+import type { Provider } from './integrations/provider.js';
 import { SdkIdentityVerifier } from './integrations/sdk-identity.js';
 import { DepotBuilder } from './runtime/container/depot-builder.js';
 import type { ContainerBuilder } from './runtime/container/container.js';
@@ -104,17 +106,23 @@ export function buildIntegrations(
   cipher?: SecretCipher,
 ): IntegrationService | undefined {
   const g = config.googleIntegration;
-  if (g.clientId === '' || g.clientSecret === '') {
-    log.warn('integrations disabled: set GOOGLE_INTEGRATION_CLIENT_ID/GOOGLE_INTEGRATION_CLIENT_SECRET to enable them');
+  const s = config.supabaseIntegration;
+  const providers: Provider[] = [];
+  if (g.clientId !== '' && g.clientSecret !== '') {
+    providers.push(new GoogleWorkspaceProvider({ clientId: g.clientId, clientSecret: g.clientSecret }));
+  }
+  if (s.clientId !== '' && s.clientSecret !== '') {
+    providers.push(new SupabaseProvider({ clientId: s.clientId, clientSecret: s.clientSecret }));
+  }
+  if (providers.length === 0) {
+    log.warn('integrations disabled: configure GOOGLE_INTEGRATION_* or SUPABASE_INTEGRATION_* to enable them');
     return undefined;
   }
   if (cipher === undefined) {
     log.warn('integrations disabled: credential encryption requires APP_SECRETS_KMS_* or APP_SECRETS_LOCAL_MASTER_KEY');
     return undefined;
   }
-  const registry = new ProviderRegistry([
-    new GoogleWorkspaceProvider({ clientId: g.clientId, clientSecret: g.clientSecret }),
-  ]);
+  const registry = new ProviderRegistry(providers);
   const identity = new SdkIdentityVerifier({
     jwksUri: `${config.idIssuer.replace(/\/$/, '')}/.well-known/280-identity.jwks`,
     issuer: config.idIssuer,

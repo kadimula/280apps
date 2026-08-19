@@ -30,6 +30,22 @@ export {
   type SheetsDeleteRowsResult,
 } from './googleSheets.js';
 
+export {
+  supabaseTables,
+  type SupabaseTablesClient,
+  type SupabaseTablesOptions,
+  type SupabaseFilterOp,
+  type SupabaseFilter,
+  type TablesSelectInput,
+  type TablesSelectResult,
+  type TablesInsertInput,
+  type TablesInsertResult,
+  type TablesUpdateInput,
+  type TablesUpdateResult,
+  type TablesDeleteInput,
+  type TablesDeleteResult,
+} from './supabaseTables.js';
+
 export interface User280 {
   sub: string;
   email: string;

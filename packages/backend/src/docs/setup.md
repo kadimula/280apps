@@ -10,6 +10,8 @@ Full capability and operation reference: https://280apps.com/capabilities.md
 
         { "integrations": { "todos": { "capability": "google-sheets", "operations": ["read", "append", "update", "deleteRows"] } } }
 
+   Other capabilities (e.g. `supabase-tables` for Postgres tables) declare the same way; the capability reference above lists every one with its operations.
+
 3. **Declare non-credential config only.** Ids, regions, and flags go in the `280.json` config block and reach `process.env`. Credentials never do.
 
 4. **Push.**

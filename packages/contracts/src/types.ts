@@ -500,6 +500,7 @@ export function requiredConfigNames(config: readonly ConfigEntry[]): string[] {
 // declared capability to the connection provider that serves it.
 export const INTEGRATION_PROVIDERS: Readonly<Record<string, string>> = {
   'google-sheets': 'google',
+  'supabase-tables': 'supabase',
 };
 
 export function providerForCapability(capability: string): string {

@@ -10,7 +10,7 @@ import {
 
 describe('capability catalog', () => {
   it('carries a catalog version', () => {
-    expect(CAPABILITY_CATALOG_VERSION).toBe('1.0.0');
+    expect(CAPABILITY_CATALOG_VERSION).toBe('1.1.0');
   });
 
   it('maps google-sheets to exactly its supported operations', () => {
@@ -18,12 +18,18 @@ describe('capability catalog', () => {
     expect(capabilityOperations('google-sheets')).toEqual(['read', 'append', 'update', 'deleteRows']);
   });
 
+  it('maps supabase-tables to exactly its supported operations', () => {
+    expect(CAPABILITY_CATALOG['supabase-tables']).toEqual(['select', 'insert', 'update', 'delete']);
+    expect(capabilityOperations('supabase-tables')).toEqual(['select', 'insert', 'update', 'delete']);
+  });
+
   it('lists the catalog capabilities', () => {
-    expect(capabilityNames()).toEqual(['google-sheets']);
+    expect(capabilityNames()).toEqual(['google-sheets', 'supabase-tables']);
   });
 
   it('recognizes known capabilities and rejects unknown ones', () => {
     expect(isCapabilitySupported('google-sheets')).toBe(true);
+    expect(isCapabilitySupported('supabase-tables')).toBe(true);
     expect(isCapabilitySupported('dropbox')).toBe(false);
   });
 
@@ -31,6 +37,8 @@ describe('capability catalog', () => {
     expect(isOperationSupported('google-sheets', 'deleteRows')).toBe(true);
     expect(isOperationSupported('google-sheets', 'read')).toBe(true);
     expect(isOperationSupported('google-sheets', 'purge')).toBe(false);
+    expect(isOperationSupported('supabase-tables', 'select')).toBe(true);
+    expect(isOperationSupported('supabase-tables', 'truncate')).toBe(false);
     expect(isOperationSupported('dropbox', 'read')).toBe(false);
   });
 });

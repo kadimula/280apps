@@ -41,6 +41,11 @@ export interface OperationInput {
   body: Record<string, unknown>;
 }
 
+export interface BrowseItem {
+  id: string;
+  name: string;
+}
+
 export interface Provider {
   readonly name: string;
   readonly capabilities: readonly string[];
@@ -50,6 +55,10 @@ export interface Provider {
   revoke(cred: CredentialPayload): Promise<void>;
   validateResource(capability: string, accessToken: string, externalId: string): Promise<ValidatedResource>;
   runOperation(input: OperationInput, accessToken: string): Promise<Record<string, unknown>>;
+  // Server-side resource discovery for providers whose objects are enumerated from a
+  // management API rather than a client-side picker. Absent means the app selects via
+  // a token-scoped picker instead (see selectorSession).
+  browse?(capability: string, accessToken: string, params: Record<string, string>): Promise<{ items: BrowseItem[] }>;
 }
 
 export class ReauthorizationRequiredError extends Error {

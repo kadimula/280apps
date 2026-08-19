@@ -37,6 +37,7 @@ import {
   type BlobBody,
   type LogQuery,
   type LogsResult,
+  type WhoamiResult,
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
 import { type App, type BlobStore, type Deploy, type Store } from './seams.js';
@@ -486,6 +487,14 @@ export class Service implements Port {
       }),
     );
     return { records };
+  }
+
+  async whoami(): Promise<WhoamiResult> {
+    const user = await this.wrapInternal('look up account', () => this.p.store.userById(this.userId));
+    if (user === null) {
+      throw new DeployErr({ code: DeployCode.Unauthorized, message: 'not logged in to 280', fix: 'run two80 login' });
+    }
+    return { email: user.email, name: user.name };
   }
 
   // The one-line push-output notice when the dashboard's access override diverges

@@ -223,6 +223,14 @@ export class HttpClient {
     const res = await this.logsRaw(appId, qs);
     return (await parse(res)) as { records: Array<Record<string, unknown>> };
   }
+
+  whoamiRaw(): Promise<Response> {
+    return this.app.request('/v1/whoami', { method: 'GET', headers: this.auth() });
+  }
+
+  async whoami(): Promise<{ email: string; name: string }> {
+    return (await parse(await this.whoamiRaw())) as { email: string; name: string };
+  }
 }
 
 // returns the decoded success body or throws the seam's error, the way a real

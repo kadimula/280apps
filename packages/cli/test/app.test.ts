@@ -120,9 +120,16 @@ describe('whoami', () => {
       api: API,
       pending: { deviceCode: 'dev-1', userCode: 'ABCD-EFGH', url: API + '/activate', expiresAt: 2_000_000, api: API },
     });
-    const r = await runCli(['whoami'], { root: tmpProject(), auth: stubAuth({ api: API, token: 'tok-minted' }), now: 1_000_000 });
+    const r = await runCli(['whoami'], {
+      root: tmpProject(),
+      auth: stubAuth({ api: API, token: 'tok-minted' }),
+      port: new Fake(),
+      now: 1_000_000,
+    });
     expect(r.code).toBe(0);
-    expect(parseToon(r.out).loggedIn).toBe('true');
+    const t = parseToon(r.out);
+    expect(t.loggedIn).toBe('true');
+    expect(t.user).toBe('you@example.com');
     expect(credentials.load().creds.token).toBe('tok-minted');
   });
 

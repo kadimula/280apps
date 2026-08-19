@@ -15,7 +15,9 @@ export async function cmdWhoami(ctx: Ctx): Promise<number> {
   }
   const { token } = await resumeLogin(ctx.api, ctx.deps.authClient(ctx.api), ctx.deps.now());
   if (token === '') {
-    return output.result(s, { loggedIn: false, api: ctx.api, help: ['Run `two80 login`'] });
+    return output.result(s, { loggedIn: false, help: ['Run `two80 login`'] });
   }
-  return output.result(s, { loggedIn: true, api: ctx.api });
+  const port = await ctx.deps.openPort();
+  const me = await port.whoami();
+  return output.result(s, { loggedIn: true, user: me.email });
 }

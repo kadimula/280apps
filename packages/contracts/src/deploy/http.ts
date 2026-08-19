@@ -11,6 +11,7 @@ import {
   deleteResultSchema,
   syncResultSchema,
   logsResultSchema,
+  whoamiResultSchema,
   type Digest,
   type SyncRequest,
   type SyncResult,
@@ -19,6 +20,7 @@ import {
   type DeleteResult,
   type LogQuery,
   type LogsResult,
+  type WhoamiResult,
 } from '../types.js';
 import type { Port, BlobBody } from '../port.js';
 import { DeployErr } from './error.js';
@@ -102,6 +104,11 @@ export class Client implements Port {
     if (query.follow) qs.set('follow', '1');
     const out = await this.doJSON('GET', `/v1/apps/${appId}/logs?${qs.toString()}`, undefined);
     return logsResultSchema.parse(out);
+  }
+
+  async whoami(): Promise<WhoamiResult> {
+    const out = await this.doJSON('GET', '/v1/whoami', undefined);
+    return whoamiResultSchema.parse(out);
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

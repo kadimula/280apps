@@ -12,6 +12,7 @@ import type {
   DeleteResult,
   LogQuery,
   LogsResult,
+  WhoamiResult,
 } from './types.js';
 
 // Streamed content of one blob, consumed as a raw stream never a buffered body
@@ -49,4 +50,8 @@ export interface Port {
   delete(req: DeleteRequest): Promise<DeleteResult>;
 
   logs(appId: string, query: LogQuery): Promise<LogsResult>;
+
+  // Whoami resolves the machine token to the signed-in account. Reports who the
+  // token belongs to; unauthenticated tokens fail unauthorized.
+  whoami(): Promise<WhoamiResult>;
 }

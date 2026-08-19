@@ -109,6 +109,7 @@ export class Server {
     app.get('/v1/apps/:app/status', this.route((c) => this.handleAppStatus(c)));
     app.get('/v1/apps/:app/logs', this.route((c) => this.handleLogs(c)));
     app.post('/v1/apps/:app/delete', this.route((c) => this.handleDelete(c)));
+    app.get('/v1/whoami', this.route((c) => this.handleWhoami(c)));
 
     // The only unauthenticated deploy endpoints: how a machine gets a token.
     app.post('/v1/device/code', this.route((c) => this.handleDeviceCode(c)));
@@ -1050,6 +1051,11 @@ export class Server {
   }
 
   // authorize resolves the bearer token to a user-scoped service.
+  private async handleWhoami(c: Context<HonoEnv>): Promise<Response> {
+    const svc = await this.authorize(c);
+    return c.json(await svc.whoami());
+  }
+
   private async authorize(c: Context<HonoEnv>): Promise<Service> {
     this.tooOld(c);
 

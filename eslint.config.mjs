@@ -1,13 +1,14 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
-// Lint for the TS rewrite workspace (packages/* only). frontend/ has its own
-// eslint.config.mjs and is intentionally out of this config (plan §2/§5: the
-// root workspace must not touch the frontend build). Fast, non-type-checked
+// Lint for the TS rewrite workspace (packages/* only). frontend/ and the
+// standalone packages/dashboard (Next app, excluded from the pnpm workspace)
+// each own their eslint.config.mjs and are intentionally out of this config
+// (plan §2/§5: the root workspace must not touch those builds). Fast, non-type-checked
 // rules: type errors are the typecheck job's (tsc) responsibility.
 export default tseslint.config(
   {
-    ignores: ["**/.next/**", "**/dist/**", "**/testdata/**", "**/scripts/**", "platform/**"],
+    ignores: ["**/.next/**", "**/dist/**", "**/testdata/**", "**/scripts/**", "platform/**", "packages/dashboard/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

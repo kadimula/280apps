@@ -1,14 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+// This dialog bridges render state into imperatively-added DOM listeners (the escape
+// handler and body scroll-lock) through synced refs instead of useEffect, which this
+// package forbids (see CLAUDE.md). That reading of refs during render is what this
+// React Compiler rule flags, so it is turned off for this intentional pattern; every
+// other rule stays on.
+/* eslint-disable react-hooks/refs */
+
+import { type MutableRefObject, useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { openGooglePicker } from "@/lib/google-picker";
 import {
   type IntegrationCatalog,
   type IntegrationConnection,
-  type IntegrationRequirement,
-  type IntegrationResource,
+  type IntegrationSlot,
   disconnect as disconnectConnection,
   listIntegrations,
   mockConnect,
@@ -22,23 +28,58 @@ type ErrorKind = "oauth" | "picker" | "resource" | "platform";
 type PhaseState =
   | { phase: "loading" }
   | { phase: "connect" }
-  | { phase: "returning" }
   | { phase: "choose"; unmetCount: number; afterCancel?: boolean }
-  | { phase: "picking"; target: IntegrationRequirement; connectionId: string }
-  | { phase: "binding"; file: PickedSheet; target: IntegrationRequirement }
+  | { phase: "picking"; target: IntegrationSlot; connectionId: string }
+  | { phase: "binding"; file: PickedSheet; target: IntegrationSlot }
   | { phase: "success" }
   | { phase: "ready" }
   | { phase: "reconnect"; connection: IntegrationConnection }
-  | { phase: "error"; kind: ErrorKind; target?: IntegrationRequirement; file?: PickedSheet }
+  | { phase: "error"; kind: ErrorKind; target?: IntegrationSlot; file?: PickedSheet }
   | { phase: "confirmDisconnect"; connection: IntegrationConnection };
 
 function humanizeAlias(alias: string): string {
   return alias.charAt(0).toUpperCase() + alias.slice(1).replace(/[-_]/g, " ");
 }
 
+type OAuthOutcome = { ok: boolean } | { closed: true };
+
+function openCenteredPopup(url: string, name: string): Window | null {
+  const w = 520;
+  const h = 640;
+  const left = (window.screenLeft ?? window.screenX) + (window.innerWidth - w) / 2;
+  const top = (window.screenTop ?? window.screenY) + (window.innerHeight - h) / 2;
+  return window.open(url, name, `popup,width=${w},height=${h},left=${Math.max(left, 0)},top=${Math.max(top, 0)}`);
+}
+
+// Resolves when the popup posts its result back (via the /oauth/complete page) or
+// the user closes it. Both listeners are torn down on the first to fire.
+function awaitPopupOutcome(popup: Window): Promise<OAuthOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome: OAuthOutcome) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      clearInterval(poll);
+      resolve(outcome);
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const payload = event.data as { type?: string; ok?: boolean } | null;
+      if (payload?.type !== "280-oauth-complete") return;
+      try { popup.close(); } catch { /* cross-origin during redirect; ignore */ }
+      finish({ ok: payload.ok === true });
+    };
+    window.addEventListener("message", onMessage);
+    const poll = setInterval(() => {
+      if (popup.closed) finish({ closed: true });
+    }, 400);
+  });
+}
+
 function operationsLabel(ops: string[]): string {
   if (ops.length === 0) return "";
-  const human: Record<string, string> = { read: "read", write: "write", append: "add rows", update: "update", delete: "delete" };
+  const human: Record<string, string> = { read: "read", append: "add rows", update: "update", deleteRows: "delete rows" };
   const mapped = ops.map((o) => human[o] ?? o);
   if (mapped.length <= 2) return mapped.join(" and ");
   return mapped.slice(0, -1).join(", ") + ", and " + mapped[mapped.length - 1];
@@ -50,56 +91,60 @@ export function IntegrationsDialog({
   mock,
   autoOpen = false,
   oauthError = false,
+  hideTrigger = false,
+  controllerRef,
+  onCatalogChange,
 }: {
   app: { id: string; slug: string };
   apiBase: string;
   mock: boolean;
   autoOpen?: boolean;
   oauthError?: boolean;
+  // When the dialog is opened from another surface (the settings sidebar) the
+  // built-in trigger is suppressed and open() is published through this ref.
+  hideTrigger?: boolean;
+  controllerRef?: MutableRefObject<{ open: () => void } | null>;
+  // Publishes every fresh catalog read so surfaces outside the dialog (the
+  // settings sidebar and header badge) reflect binds and disconnects live.
+  onCatalogChange?: (catalog: IntegrationCatalog) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<IntegrationCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<PhaseState>({ phase: "loading" });
-  const autoContinueConsumed = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const liveRegionId = useId();
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<IntegrationCatalog | null> => {
     const result = await listIntegrations(app.id);
     if ("error" in result) {
       setError(result.error);
-      setData((current) => current ?? { providers: [], connections: [], requirements: [] });
-    } else {
-      setData(result);
+      setData((current) => current ?? { providers: [], connections: [], slots: [] });
+      return null;
     }
-  }, [app.id]);
+    setData(result);
+    onCatalogChange?.(result);
+    return result;
+  }, [app.id, onCatalogChange]);
 
-  function derivePhase(catalog: IntegrationCatalog, oauthFailed: boolean, isAutoOpenReturn: boolean): PhaseState {
-    const reqs = catalog.requirements;
+  function derivePhase(catalog: IntegrationCatalog, oauthFailed: boolean): PhaseState {
+    const slots = catalog.slots;
     const conn = catalog.connections[0] ?? null;
 
     if (oauthFailed) return { phase: "error", kind: "oauth" };
 
-    if (!conn && reqs.length === 0) return { phase: "ready" };
+    if (!conn && slots.length === 0) return { phase: "ready" };
 
     if (!conn) return { phase: "connect" };
 
     if (conn.status === "reauthorization_required") return { phase: "reconnect", connection: conn };
 
-    const unmet = reqs.filter(
-      (r) => !conn.resources.some((res) => res.capability === r.capability && res.alias === r.alias),
-    );
+    const unmet = slots.filter((s) => s.binding === null);
 
     if (unmet.length === 0) {
-      return { phase: reqs.length > 0 ? "ready" : "success" };
-    }
-
-    if (isAutoOpenReturn && !autoContinueConsumed.current) {
-      return { phase: "returning" };
+      return { phase: slots.length > 0 ? "ready" : "success" };
     }
 
     return { phase: "choose", unmetCount: unmet.length };
@@ -108,102 +153,11 @@ export function IntegrationsDialog({
   function openDialog() {
     setOpen(true);
     setPhase({ phase: "loading" });
-    void refresh().then(() => {});
-  }
-
-  useEffect(() => {
-    if (!autoOpen) return;
-    queueMicrotask(() => {
-      setOpen(true);
-      setPhase({ phase: "loading" });
-      void refresh().then(() => {});
-    });
-  }, [autoOpen, refresh]);
-
-  // Refs let effects read current values without listing them as deps.
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
-  const dataRef = useRef(data);
-  dataRef.current = data;
-  const startPickRef = useRef(startPick);
-  startPickRef.current = startPick;
-  const cancelPickRef = useRef(cancelPick);
-  cancelPickRef.current = cancelPick;
-
-  // Drive phase from catalog changes. Intentionally keyed only on data so that
-  // every refresh triggers re-evaluation without other deps causing extra runs.
-  const wasOpenRef = useRef(false);
-  const autoOpenRef = useRef(autoOpen);
-  autoOpenRef.current = autoOpen;
-  const oauthErrorRef = useRef(oauthError);
-  oauthErrorRef.current = oauthError;
-  const openRef = useRef(open);
-  openRef.current = open;
-  useEffect(() => {
-    if (!data) return;
-    const p = phaseRef.current;
-    const isAutoOpenReturn = autoOpenRef.current && !wasOpenRef.current;
-    wasOpenRef.current = openRef.current;
-
-    if (p.phase === "loading" || p.phase === "connect" || p.phase === "reconnect") {
-      setPhase(derivePhase(data, oauthErrorRef.current, isAutoOpenReturn));
-      return;
-    }
-    if (p.phase === "returning" || p.phase === "picking") return;
-    if (p.phase === "binding") {
-      const derived = derivePhase(data, false, false);
-      setPhase(derived.phase === "ready" ? { phase: "success" } : derived);
-      return;
-    }
-    if (p.phase === "success" || p.phase === "ready") {
-      const derived = derivePhase(data, false, false);
-      if (derived.phase !== "ready" && derived.phase !== "success") setPhase(derived);
-      return;
-    }
-  }, [data]);
-
-  // Automatic Picker continuation after OAuth return.
-  useEffect(() => {
-    if (phase.phase !== "returning" || autoContinueConsumed.current || !dataRef.current) return;
-    autoContinueConsumed.current = true;
-    const conn = dataRef.current.connections[0];
-    const unmet = dataRef.current.requirements.filter(
-      (r) => !conn.resources.some((res) => res.capability === r.capability && res.alias === r.alias),
-    );
-    if (unmet.length === 0) return;
-    void startPickRef.current(conn, unmet[0]);
-  }, [phase.phase]);
-
-  // Focus trap and restoration.
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      const p = phaseRef.current;
-      const d = dataRef.current;
-      if (p.phase === "confirmDisconnect") { setPhase(derivePhase(d!, false, false)); return; }
-      if (p.phase === "picking") { cancelPickRef.current(); return; }
-      if (p.phase === "success" || p.phase === "ready") { close(); return; }
-      if (p.phase === "error" && p.kind === "resource") {
-        setPhase({ phase: "choose", unmetCount: 1 });
-        return;
-      }
-      close();
-    };
-    document.addEventListener("keydown", onKeyDown);
     document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = "";
-    };
-  }, [open]);
-
-  // Focus first actionable element on phase change.
-  useEffect(() => {
-    if (!open || !dialogRef.current) return;
-    const el = dialogRef.current.querySelector<HTMLElement>("button.primary-action, button:not([aria-label])");
-    if (el) el.focus();
-  }, [open, phase.phase]);
+    refresh().then((catalog) => {
+      if (catalog) setPhase(derivePhase(catalog, oauthError));
+    });
+  }
 
   function close() {
     setOpen(false);
@@ -211,28 +165,113 @@ export function IntegrationsDialog({
     setError(null);
     setBusy(false);
     setPhase({ phase: "loading" });
-    autoContinueConsumed.current = false;
-    wasOpenRef.current = false;
+    document.body.style.overflow = "";
     triggerRef.current?.focus();
   }
+
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const cancelPickRef = useRef(cancelPick);
+  cancelPickRef.current = cancelPick;
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  const oauthErrorRef = useRef(oauthError);
+  oauthErrorRef.current = oauthError;
+
+  const escapeHandlerRef = useRef((event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    const p = phaseRef.current;
+    const d = dataRef.current;
+    if (p.phase === "confirmDisconnect") { setPhase(derivePhase(d!, false)); return; }
+    if (p.phase === "picking") { cancelPickRef.current(); return; }
+    if (p.phase === "success" || p.phase === "ready") { closeRef.current(); return; }
+    if (p.phase === "error" && p.kind === "resource") {
+      setPhase({ phase: "choose", unmetCount: 1 });
+      return;
+    }
+    closeRef.current();
+  });
+
+  const autoOpenTriggeredRef = useRef(false);
+
+  const dialogOverlayRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) {
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", escapeHandlerRef.current);
+      return;
+    }
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", escapeHandlerRef.current);
+  }, []);
+
+  const triggerRefCallback = useCallback((el: HTMLButtonElement | null) => {
+    triggerRef.current = el;
+  }, []);
+
+  // The autoOpen deep link fires from an always-mounted sentinel rather than the
+  // trigger button, so hiding the trigger (sidebar-driven open) still honors it.
+  const autoOpenMountRef = useCallback((el: HTMLElement | null) => {
+    if (!el || !autoOpen || autoOpenTriggeredRef.current) return;
+    autoOpenTriggeredRef.current = true;
+
+    setOpen(true);
+    setPhase({ phase: "loading" });
+    document.body.style.overflow = "hidden";
+
+    refreshRef.current().then((catalog) => {
+      if (catalog) setPhase(derivePhase(catalog, oauthErrorRef.current));
+    });
+    // Runs once on mount to honor the autoOpen deep link; later autoOpen changes must not re-fire it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (controllerRef) controllerRef.current = { open: openDialog };
 
   async function connect(provider: string) {
     if (mock) {
       setBusy(true);
       setError(null);
       const failure = await mockConnect(app.id, provider);
-      if (failure) setError(failure.error);
-      else await refresh();
+      if (failure) {
+        setError(failure.error);
+      } else {
+        const catalog = await refresh();
+        if (catalog) setPhase(derivePhase(catalog, false));
+      }
       setBusy(false);
       return;
     }
-    const redirect = `/dashboard/${app.id}?integrations=1`;
-    window.location.assign(
-      `${apiBase}/internal/apps/${encodeURIComponent(app.id)}/integrations/${encodeURIComponent(provider)}/start?redirect=${encodeURIComponent(redirect)}`,
-    );
+    const startUrl = (returnPath: string) =>
+      `${apiBase}/internal/apps/${encodeURIComponent(app.id)}/integrations/${encodeURIComponent(provider)}/start?redirect=${encodeURIComponent(returnPath)}`;
+
+    const popup = openCenteredPopup(startUrl("/oauth/complete"), "280-oauth");
+    if (!popup) {
+      // Popup blocked: fall back to the full-page redirect, which returns to the
+      // dashboard deep link and resumes through the autoOpen path.
+      window.location.assign(startUrl(`/dashboard/${app.id}?integrations=1`));
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    const outcome = await awaitPopupOutcome(popup);
+    setBusy(false);
+    // A severed opener (COOP) can drop the postMessage, so a bare close is not a
+    // failure: re-read the catalog and let derivePhase advance to the picker step
+    // if the exchange actually landed. Only an explicit ok:false is a real failure.
+    if ("ok" in outcome && !outcome.ok) {
+      setPhase({ phase: "error", kind: "oauth" });
+      return;
+    }
+    const catalog = await refresh();
+    if (catalog) setPhase(derivePhase(catalog, false));
   }
 
-  async function startPick(connection: IntegrationConnection, target: IntegrationRequirement) {
+  async function startPick(connection: IntegrationConnection, target: IntegrationSlot) {
     setBusy(true);
     setError(null);
     const session = await selectorSession(app.id, connection.id);
@@ -249,23 +288,20 @@ export function IntegrationsDialog({
       const title = `Choose the spreadsheet for ${humanizeAlias(target.alias)}`;
       const file = await openGooglePicker(session, title);
       if (file) bindResource(file, target);
-      else {
-        // Picker cancelled cleanly.
-      }
     } catch {
       setPhase({ phase: "error", kind: "picker", target });
     }
   }
 
   function cancelPick() {
-    const derived = data ? derivePhase(data, false, false) : { phase: "connect" as const };
+    const derived = data ? derivePhase(data, false) : { phase: "connect" as const };
     setPhase(derived.phase === "choose" ? { ...derived, afterCancel: true } : derived);
   }
 
-  function pickForRequirement(req: IntegrationRequirement) {
+  function pickForRequirement(slot: IntegrationSlot) {
     const conn = data?.connections[0];
     if (!conn) return;
-    void startPick(conn, req);
+    void startPick(conn, slot);
   }
 
   function mockSelectSheet(sheet: PickedSheet) {
@@ -273,7 +309,7 @@ export function IntegrationsDialog({
     bindResource(sheet, phase.target);
   }
 
-  async function bindResource(file: PickedSheet, target: IntegrationRequirement) {
+  async function bindResource(file: PickedSheet, target: IntegrationSlot) {
     const conn = data?.connections[0];
     if (!conn) return;
     setPhase({ phase: "binding", file, target });
@@ -282,7 +318,11 @@ export function IntegrationsDialog({
     if ("error" in result) {
       setPhase({ phase: "error", kind: "resource", target, file });
     } else {
-      await refresh();
+      const catalog = await refresh();
+      if (catalog) {
+        const derived = derivePhase(catalog, false);
+        setPhase(derived.phase === "ready" ? { phase: "success" } : derived);
+      }
     }
     setBusy(false);
   }
@@ -292,27 +332,22 @@ export function IntegrationsDialog({
     setError(null);
     setPhase({ phase: "loading" });
     const failure = await disconnectConnection(app.id, connection.id);
-    if (failure) setError(failure.error);
-    else await refresh();
+    if (failure) {
+      setError(failure.error);
+    } else {
+      const catalog = await refresh();
+      if (catalog) setPhase(derivePhase(catalog, false));
+    }
     setBusy(false);
   }
 
-  // Reconnect: restart OAuth for the provider, same as initial connect.
   function reconnect(connection: IntegrationConnection) {
     void connect(connection.provider);
   }
 
-  const bindingFor = (req: IntegrationRequirement): { connection: IntegrationConnection; resource: IntegrationResource } | null => {
-    for (const c of data?.connections ?? []) {
-      const resource = c.resources.find((r) => r.capability === req.capability && r.alias === req.alias);
-      if (resource) return { connection: c, resource };
-    }
-    return null;
-  };
-
   const conn = data?.connections[0] ?? null;
-  const requirements = data?.requirements ?? [];
-  const unmetReqs = requirements.filter((r) => !bindingFor(r));
+  const slots = data?.slots ?? [];
+  const unmetSlots = slots.filter((s) => s.binding === null);
 
   function renderPhase() {
     switch (phase.phase) {
@@ -322,7 +357,6 @@ export function IntegrationsDialog({
             icon="spinner"
             title="Getting Google Sheets ready"
             body={`Checking what ${app.slug} needs and whether Google is already connected.`}
-            helper="This usually takes a moment."
           />
         );
 
@@ -331,65 +365,63 @@ export function IntegrationsDialog({
           <FocusContent
             icon="provider"
             title="Connect Google Sheets"
-            body={`${app.slug} needs a spreadsheet for ${humanizeAlias(unmetReqs[0]?.alias ?? "data")}. Connect Google to choose it next.`}
+            body={`${app.slug} needs a spreadsheet for ${humanizeAlias(unmetSlots[0]?.alias ?? "data")}. Connect Google to choose it next.`}
             action={
               <GoogleButton onClick={() => connect("google")} disabled={busy}>
                 {busy ? "Connecting…" : "Connect Google Sheets"}
               </GoogleButton>
             }
-            helper="280 can only use spreadsheets you choose."
-            tech={unmetReqs[0]}
-          />
-        );
-
-      case "returning":
-        return (
-          <FocusContent
-            icon="success"
-            title="Google Sheets connected"
-            body={`Connected as ${conn?.account ?? "your Google account"}. Opening your spreadsheets for the ${humanizeAlias(unmetReqs[0]?.alias ?? "")} setup.`}
-            extra={<Spinner label="Opening Google Picker" />}
-            helper="The Google Picker opens automatically."
           />
         );
 
       case "choose": {
-        const chooseTitle = unmetReqs.length > 1
-          ? `Choose ${unmetReqs.length} more ${unmetReqs.length === 1 ? "spreadsheet" : "spreadsheets"}`
-          : `Choose the ${humanizeAlias(unmetReqs[0]?.alias ?? "")} spreadsheet`;
-        const chooseBody = phase.afterCancel && unmetReqs.length === 1
-          ? `No spreadsheet was selected. Choose the sheet ${app.slug} should use for ${humanizeAlias(unmetReqs[0]?.alias ?? "data")}.`
-          : `${app.slug} needs ${unmetReqs.length > 1 ? `a separate spreadsheet for each job` : `the sheet ${app.slug} should use for ${humanizeAlias(unmetReqs[0]?.alias ?? "data")}`}.`;
+        if (unmetSlots.length === 1) {
+          const slot = unmetSlots[0];
+          const alias = humanizeAlias(slot.alias);
+          return (
+            <FocusContent
+              icon="provider"
+              banner={conn && <ConnectedBanner />}
+              title={
+                phase.afterCancel
+                  ? `No spreadsheet was selected. Choose the sheet we should use for ${alias}.`
+                  : `Please choose the sheet we should use for ${alias}.`
+              }
+              action={
+                <button
+                  type="button"
+                  className="primary-btn primary-action"
+                  onClick={() => pickForRequirement(slot)}
+                  disabled={busy}
+                  autoFocus
+                >
+                  {busy ? "Opening…" : "Choose spreadsheet"}
+                </button>
+              }
+            />
+          );
+        }
         return (
           <SetupPanel
-            title={chooseTitle}
-            body={chooseBody}
-            progress={requirements.length > 1 ? { done: requirements.length - unmetReqs.length, total: requirements.length } : undefined}
+            title={`Choose ${unmetSlots.length} more spreadsheets`}
+            body={`${app.slug} needs a separate spreadsheet for each job.`}
+            progress={slots.length > 1 ? { done: slots.length - unmetSlots.length, total: slots.length } : undefined}
             account={conn}
-            requirements={requirements}
-            unmetReqs={unmetReqs}
-            bindings={bindingFor}
+            slots={slots}
+            unmetSlots={unmetSlots}
             onPick={pickForRequirement}
-            tech={requirements}
           />
         );
       }
 
       case "picking":
         return (
-          <div>
-            <SetupPanel
-              title={`Choose the ${humanizeAlias(phase.target.alias)} spreadsheet`}
-              body={`Select the sheet ${app.slug} should use for ${humanizeAlias(phase.target.alias)}.`}
-              account={conn}
-              requirements={requirements}
-              unmetReqs={unmetReqs}
-              bindings={bindingFor}
-              onPick={pickForRequirement}
-              tech={requirements}
-            />
-            <MockPicker sheets={MOCK_SHEETS} onSelect={mockSelectSheet} onCancel={cancelPick} />
-          </div>
+          <FocusContent
+            icon="provider"
+            title={`Choose the ${humanizeAlias(phase.target.alias)} spreadsheet`}
+            body={`Select the sheet ${app.slug} should use for ${humanizeAlias(phase.target.alias)}.`}
+            extra={<MockPicker sheets={MOCK_SHEETS} onSelect={mockSelectSheet} onCancel={cancelPick} />}
+          />
         );
 
       case "binding":
@@ -401,8 +433,6 @@ export function IntegrationsDialog({
             extra={
               <SelectedFileCard file={phase.file} />
             }
-            helper="Keep this window open for a moment."
-            tech={phase.target}
           />
         );
 
@@ -410,20 +440,18 @@ export function IntegrationsDialog({
         return (
           <FocusContent
             icon="success"
-            title={`${humanizeAlias(requirements[0]?.alias ?? "Everything")} is ready`}
-            body={`${app.slug} can now ${operationsLabel(requirements[0]?.operations ?? [])} in ${bindingsForLabel()}. Any deployment waiting for this spreadsheet can continue.`}
+            title={`${humanizeAlias(slots[0]?.alias ?? "Everything")} is ready`}
+            body={`This app can now ${operationsLabel(slots[0]?.operations ?? [])} in ${bindingsForLabel()}.`}
             action={
-              <button type="button" className="primary-btn" onClick={close}>
+              <button type="button" className="primary-btn" onClick={close} autoFocus>
                 Done
               </button>
             }
-            helper="You can replace this spreadsheet later from Manage Google account."
-            tech={requirements[0]}
           />
         );
 
       case "ready":
-        if (requirements.length === 0 && !conn) {
+        if (slots.length === 0 && !conn) {
           return (
             <FocusContent
               title="No integrations requested"
@@ -432,25 +460,13 @@ export function IntegrationsDialog({
           );
         }
         return (
-          <SetupPanel
-            title="Google Sheets is ready"
-            body={`${app.slug} has every spreadsheet it needs.`}
-            account={conn}
-            requirements={requirements}
-            unmetReqs={[]}
-            bindings={bindingFor}
-            manage={
-              conn ? (
-                <ManageAccount
-                  connection={conn}
-                  requirements={requirements}
-                  bindings={bindingFor}
-                  busy={busy}
-                  onReplace={(req) => pickForRequirement(req)}
-                  onDisconnect={() => setPhase({ phase: "confirmDisconnect", connection: conn })}
-                />
-              ) : undefined
-            }
+          <ReadyPanel
+            appSlug={app.slug}
+            connection={conn!}
+            slots={slots}
+            busy={busy}
+            onReplace={(slot) => pickForRequirement(slot)}
+            onDisconnect={() => setPhase({ phase: "confirmDisconnect", connection: conn! })}
           />
         );
 
@@ -465,7 +481,6 @@ export function IntegrationsDialog({
                 {busy ? "Connecting…" : "Reconnect Google Sheets"}
               </GoogleButton>
             }
-            helper="Your spreadsheet choices will stay connected."
             extra={phase.connection.resources.length > 0 && (
               <div className="need-card">
                 <SheetsIcon />
@@ -490,7 +505,6 @@ export function IntegrationsDialog({
                   Try Google again
                 </GoogleButton>
               }
-              helper="If this keeps happening, make sure popups and Google sign in are allowed."
             />
           );
         }
@@ -501,7 +515,7 @@ export function IntegrationsDialog({
               title="Your spreadsheets could not open"
               body="Google Picker could not be opened. Check your connection, then try again."
               action={
-                <button type="button" className="primary-btn" onClick={() => phase.target && pickForRequirement(phase.target)}>
+                <button type="button" className="primary-btn" onClick={() => phase.target && pickForRequirement(phase.target)} autoFocus>
                   Retry
                 </button>
               }
@@ -514,7 +528,6 @@ export function IntegrationsDialog({
                   </div>
                 </div>
               )}
-              helper="You can cancel setup and return later."
             />
           );
         }
@@ -526,7 +539,7 @@ export function IntegrationsDialog({
               title={fileName ? `${fileName} is not accessible` : "Spreadsheet is not accessible"}
               body={`The spreadsheet may have been deleted or your access changed. Choose another spreadsheet for ${phase.target ? humanizeAlias(phase.target.alias) : "this need"}.`}
               action={
-                <button type="button" className="primary-btn" onClick={() => phase.target && pickForRequirement(phase.target)}>
+                <button type="button" className="primary-btn" onClick={() => phase.target && pickForRequirement(phase.target)} autoFocus>
                   Choose another spreadsheet
                 </button>
               }
@@ -535,18 +548,16 @@ export function IntegrationsDialog({
                   {fileName ? `${fileName} could not be verified. No binding was changed.` : "The spreadsheet could not be verified. Choose another."}
                 </div>
               }
-              helper="The setup remains incomplete."
             />
           );
         }
-        // platform
         return (
           <FocusContent
             error
             title="Something went wrong"
             body={error ?? "An unexpected error occurred. Please try again."}
             action={
-              <button type="button" className="primary-btn" onClick={close}>
+              <button type="button" className="primary-btn" onClick={close} autoFocus>
                 Close
               </button>
             }
@@ -557,31 +568,26 @@ export function IntegrationsDialog({
       case "confirmDisconnect":
         return (
           <FocusContent
-            warningBox
+            icon="warning"
             title="Disconnect Google Sheets?"
-            body={`This disconnects ${phase.connection.account} and removes every spreadsheet connected through this account.`}
-            extra={
-              <div className="confirm-card">
-                <strong>{app.slug} will lose access to {resourcesLabel(phase.connection)}.</strong>
-                <p>Integration calls will fail. Future deployments will wait until Google Sheets is connected again.</p>
-                <div className="confirm-actions">
-                  <button type="button" className="secondary-btn" onClick={() => setPhase(derivePhase(data!, false, false))}>
-                    Cancel
-                  </button>
-                  <button type="button" className="danger-btn" onClick={() => disconnectConn(phase.connection)} disabled={busy}>
-                    {busy ? "Disconnecting…" : "Disconnect Google Sheets"}
-                  </button>
-                </div>
+            body={`${app.slug} will lose access to ${resourcesLabel(phase.connection)} and integration calls will fail until you reconnect ${phase.connection.account}.`}
+            action={
+              <div className="confirm-actions">
+                <button type="button" className="secondary-btn" onClick={() => setPhase(derivePhase(data!, false))}>
+                  Cancel
+                </button>
+                <button type="button" className="danger-btn" onClick={() => disconnectConn(phase.connection)} disabled={busy}>
+                  {busy ? "Disconnecting…" : "Disconnect"}
+                </button>
               </div>
             }
-            helper="This action cannot be undone automatically."
           />
         );
     }
   }
 
   function bindingsForLabel(): string {
-    const bound = requirements.map((r) => bindingFor(r)?.resource.displayName).filter(Boolean);
+    const bound = slots.map((s) => s.binding?.displayName).filter(Boolean);
     if (bound.length === 0) return "the selected spreadsheet";
     return bound.join(", ");
   }
@@ -593,44 +599,33 @@ export function IntegrationsDialog({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={openDialog}
-        className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-paper-warm)] px-3 py-1.5 text-[13px] font-semibold text-[var(--color-ink)] transition-colors hover:border-[var(--color-ink)]"
-      >
-        <PlugIcon />
-        Integrations
-      </button>
+      <span ref={autoOpenMountRef} hidden aria-hidden />
+      {!hideTrigger && (
+        <button
+          ref={triggerRefCallback}
+          type="button"
+          onClick={openDialog}
+          className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-paper-warm)] px-3 py-1.5 text-[13px] font-semibold text-[var(--color-ink)] transition-colors hover:border-[var(--color-ink)]"
+        >
+          <PlugIcon />
+          Integrations
+        </button>
+      )}
 
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-50 flex items-start justify-center bg-[rgba(10,10,10,0.66)] px-6 py-[68px] backdrop-blur-[1px]"
+            ref={dialogOverlayRef}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(10,10,10,0.66)] px-6 py-[68px] backdrop-blur-[1px]"
             onClick={(event) => event.target === event.currentTarget && close()}
           >
             <div
-              ref={dialogRef}
               role="dialog"
               aria-modal="true"
               aria-labelledby={headingId}
-              className="w-full max-w-[560px] rounded-[18px] border border-[var(--color-line)] bg-[var(--color-paper)] shadow-[0_24px_70px_-18px_rgba(10,10,10,0.55)] overflow-hidden"
+              className="flex max-h-full min-h-[340px] w-full max-w-[420px] flex-col rounded-[18px] border border-[var(--color-line)] bg-[var(--color-paper)] shadow-[0_24px_70px_-18px_rgba(10,10,10,0.55)] overflow-hidden"
             >
-              <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-4">
-                <span id={headingId} className="min-w-0 text-[11px] font-semibold text-[var(--color-muted)]">
-                  Google Sheets setup for {app.slug}
-                </span>
-                <button
-                  type="button"
-                  onClick={close}
-                  aria-label="Close integrations"
-                  className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--color-muted)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-
-              <div className="px-6 pb-6">
+              <div className="flex flex-1 flex-col justify-center overflow-y-auto px-7 py-7">
                 <div aria-live="polite" id={liveRegionId} className="sr-only" />
                 {renderPhase()}
               </div>
@@ -646,27 +641,24 @@ export function IntegrationsDialog({
 
 function FocusContent({
   icon,
+  banner,
   title,
   body,
   action,
-  helper,
   extra,
-  tech,
   error,
-  warningBox,
 }: {
   icon?: "provider" | "success" | "warning" | "spinner";
+  banner?: React.ReactNode;
   title: string;
-  body: string;
+  body?: string;
   action?: React.ReactNode;
-  helper?: string;
   extra?: React.ReactNode;
-  tech?: IntegrationRequirement | IntegrationRequirement[];
   error?: boolean;
-  warningBox?: boolean;
 }) {
   return (
-    <div className={`focus-content${error ? " error" : ""}${warningBox ? " warning" : ""}`}>
+    <div className={`focus-content${error ? " error" : ""}`}>
+      {banner}
       {icon === "provider" && (
         <div className="provider-icon">
           <SheetsIconLarge />
@@ -676,27 +668,10 @@ function FocusContent({
       {icon === "warning" && <div className="warning-icon">!</div>}
       {icon === "spinner" && <Spinner />}
       <h4>{title}</h4>
-      <p className="body-copy">{body}</p>
+      {body && <p className="body-copy">{body}</p>}
       {extra}
       {action}
-      {helper && <p className="helper">{helper}</p>}
-      {tech && <TechnicalDetails reqs={Array.isArray(tech) ? tech : [tech]} />}
     </div>
-  );
-}
-
-function TechnicalDetails({ reqs }: { reqs: IntegrationRequirement[] }) {
-  return (
-    <details className="tech">
-      <summary>Technical details</summary>
-      {reqs.map((req) => (
-        <p key={`${req.capability}:${req.alias}`}>
-          Alias: {req.alias}<br />
-          Capability: {req.capability}<br />
-          Operations: {req.operations.join(", ")}
-        </p>
-      ))}
-    </details>
   );
 }
 
@@ -705,25 +680,19 @@ function SetupPanel({
   body,
   progress,
   account,
-  requirements,
-  unmetReqs,
-  bindings,
-  manage,
+  slots,
+  unmetSlots,
   onPick,
-  tech,
 }: {
   title: string;
   body: string;
   progress?: { done: number; total: number };
   account: IntegrationConnection | null;
-  requirements: IntegrationRequirement[];
-  unmetReqs: IntegrationRequirement[];
-  bindings: (req: IntegrationRequirement) => { connection: IntegrationConnection; resource: IntegrationResource } | null;
-  manage?: React.ReactNode;
-  onPick?: (req: IntegrationRequirement) => void;
-  tech?: IntegrationRequirement[];
+  slots: IntegrationSlot[];
+  unmetSlots: IntegrationSlot[];
+  onPick?: (slot: IntegrationSlot) => void;
 }) {
-  const unmetSet = new Set(unmetReqs.map((r) => `${r.capability}:${r.alias}`));
+  const unmetSet = new Set(unmetSlots.map((s) => `${s.capability}:${s.alias}`));
   return (
     <div className="setup-panel">
       {account && (
@@ -740,7 +709,7 @@ function SetupPanel({
         <>
           <div className="progress-line">
             <strong>{progress.done} of {progress.total} ready</strong>
-            <span>{progress.done > 0 ? `${Object.values(requirements.filter((r) => bindings(r))).length} connected` : ""}</span>
+            <span>{progress.done > 0 ? `${slots.filter((s) => s.binding).length} connected` : ""}</span>
           </div>
           <div className="progress-track">
             <div className="progress-value" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
@@ -748,24 +717,24 @@ function SetupPanel({
         </>
       )}
       <div className="needs">
-        {requirements.map((req) => {
-          const binding = bindings(req);
-          const isUnmet = unmetSet.has(`${req.capability}:${req.alias}`);
-          const isNext = unmetReqs.length > 0 && unmetReqs[0] === req;
+        {slots.map((slot) => {
+          const binding = slot.binding;
+          const isUnmet = unmetSet.has(`${slot.capability}:${slot.alias}`);
+          const isNext = unmetSlots.length > 0 && unmetSlots[0] === slot;
           return (
-            <div key={`${req.capability}:${req.alias}`} className={`requirement-card${isNext ? " active" : ""}`}>
+            <div key={`${slot.capability}:${slot.alias}`} className={`requirement-card${isNext ? " active" : ""}`}>
               <SheetsIconSmall />
               <div>
-                <strong>{humanizeAlias(req.alias)} spreadsheet</strong>
+                <strong>{humanizeAlias(slot.alias)} spreadsheet</strong>
                 <span>
                   {binding
-                    ? `${binding.resource.displayName} · ${operationsLabel(req.operations)}`
-                    : operationsLabel(req.operations)}
+                    ? `${binding.displayName} · ${operationsLabel(slot.operations)}`
+                    : operationsLabel(slot.operations)}
                 </span>
               </div>
               {isUnmet ? (
                 isNext ? (
-                  <button type="button" className="row-button primary-action" onClick={() => onPick?.(req)}>
+                  <button type="button" className="row-button primary-action" onClick={() => onPick?.(slot)}>
                     Choose spreadsheet
                   </button>
                 ) : (
@@ -778,57 +747,56 @@ function SetupPanel({
           );
         })}
       </div>
-      {manage}
-      {tech && <TechnicalDetails reqs={tech} />}
     </div>
   );
 }
 
-function ManageAccount({
+function ReadyPanel({
+  appSlug,
   connection,
-  requirements,
-  bindings,
+  slots,
   busy,
   onReplace,
   onDisconnect,
 }: {
+  appSlug: string;
   connection: IntegrationConnection;
-  requirements: IntegrationRequirement[];
-  bindings: (req: IntegrationRequirement) => { connection: IntegrationConnection; resource: IntegrationResource } | null;
+  slots: IntegrationSlot[];
   busy: boolean;
-  onReplace: (req: IntegrationRequirement) => void;
+  onReplace: (slot: IntegrationSlot) => void;
   onDisconnect: () => void;
 }) {
   return (
-    <details className="manage-box">
-      <summary>Manage Google account</summary>
-      <div className="manage-actions">
-        {requirements.map((req) => {
-          const binding = bindings(req);
-          if (!binding) return null;
-          return (
-            <div key={`${req.capability}:${req.alias}`} className="manage-row">
-              <div>
-                <strong>{binding.resource.displayName}</strong>
-                <span>Used for {humanizeAlias(req.alias)}</span>
-              </div>
-              <button type="button" className="text-action" onClick={() => onReplace(req)} disabled={busy}>
-                Replace
-              </button>
-            </div>
-          );
-        })}
-        <div className="manage-row">
-          <div>
-            <strong>{connection.account}</strong>
-            <span>Connected Google account</span>
-          </div>
-          <button type="button" className="text-action danger" onClick={onDisconnect} disabled={busy}>
-            Disconnect
-          </button>
+    <div className="ready-panel">
+      <div className="ready-head">
+        <span className="ready-check" aria-hidden>✓</span>
+        <div>
+          <h4>Google Sheets is ready</h4>
+          <p>{appSlug} has every spreadsheet it needs.</p>
         </div>
       </div>
-    </details>
+      <div className="ready-sheets">
+        {slots.map((slot) => (
+          <div key={`${slot.capability}:${slot.alias}`} className="sheet-row">
+            <SheetsIconSmall />
+            <div className="sheet-meta">
+              <strong>{slot.binding?.displayName ?? `${humanizeAlias(slot.alias)} spreadsheet`}</strong>
+              <span>{humanizeAlias(slot.alias)} · {operationsLabel(slot.operations)}</span>
+            </div>
+            <button type="button" className="ghost-btn" onClick={() => onReplace(slot)} disabled={busy}>
+              Replace
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="ready-account">
+        <span className="acct-dot" aria-hidden />
+        <span className="acct-email">{connection.account}</span>
+        <button type="button" className="link-danger" onClick={onDisconnect} disabled={busy}>
+          Disconnect
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -882,6 +850,20 @@ function GoogleButton({ onClick, disabled, children }: { onClick: () => void; di
   );
 }
 
+function ConnectedBanner() {
+  return (
+    <div className="mb-2 flex items-center gap-2.5">
+      <span
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#18864b] text-[19px] font-bold text-white"
+        aria-hidden
+      >
+        ✓
+      </span>
+      <strong className="text-[17px] font-semibold text-[#14683c]">Google Sheets connected</strong>
+    </div>
+  );
+}
+
 function SelectedFileCard({ file }: { file: PickedSheet }) {
   return (
     <div className="selected-file">
@@ -930,14 +912,6 @@ function SheetsIconSmall() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted)]">
       <rect x="4" y="3" width="16" height="18" rx="2" />
       <path d="M4 9h16M4 15h16M10 9v12M15 9v12" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden className="h-4 w-4">
-      <path d="m6 6 12 12M18 6 6 18" />
     </svg>
   );
 }

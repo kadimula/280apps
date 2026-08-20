@@ -5,8 +5,9 @@
 // is denied, a revoked connection stops serving, and an invalid grant surfaces as
 // reauthorization_required. Nothing reaches the network.
 
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { IdentitySigner, publicJwkFromPrivate } from '@280/contracts/identity';
+import { DEV_APP_HEADER, IdentitySigner, publicJwkFromPrivate } from '@280/contracts/identity';
 import { Server } from '../src/api.js';
 import type { RequestDeps } from '../src/config.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper } from '../src/secrets.js';
@@ -21,6 +22,22 @@ import { newAuth, signIn, cookiePair } from './helpers/auth.js';
 const INT_COOKIE = '280_int_oauth';
 const JWKS_URI = 'https://auth.test/.well-known/280-identity.jwks';
 const ISSUER = 'https://auth.test';
+const listUrl = '/internal/apps/app_orders/integrations';
+
+type Catalog = {
+  connections: Array<{ id: string; resources: Array<{ id: string; capability: string; alias: string; displayName: string }> }>;
+  requirements: Array<{ alias: string; capability: string; operations: string[] }>;
+  slots: Array<{
+    alias: string;
+    capability: string;
+    operations: string[];
+    provider: string;
+    binding: { resourceId: string; displayName: string; connectionId: string } | null;
+  }>;
+};
+
+const bound = (cat: Catalog): boolean =>
+  cat.connections.some((c) => c.resources.some((r) => r.capability === 'google-sheets' && r.alias === 'orders'));
 
 function b64url(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -159,6 +176,7 @@ async function makeWorld(): Promise<World> {
     cipher,
     registry,
     identity,
+    machineTokenTtlSecs: 30 * 24 * 60 * 60,
     config: { apiOrigin: 'https://api.test', frontendOrigin: 'https://app.test', picker: { apiKey: 'pk', projectNumber: '42' } },
     now: () => clock,
   });
@@ -220,6 +238,22 @@ function sdk(w: World, op: string, token: string, body: unknown): Promise<Respon
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+// The local-dev call the SDK makes under `next dev`: a machine token plus the app id,
+// standing in for the gateway-signed identity.
+function sdkDev(w: World, op: string, token: string, appId: string, body: unknown): Promise<Response> {
+  return w.app.request(`/v1/sdk/integrations/google-sheets/${op}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, [DEV_APP_HEADER]: appId, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function machineToken(w: World, email: string, token: string): Promise<void> {
+  const user = await w.store.userByEmail(email);
+  if (user === null) throw new Error(`no user ${email}`);
+  await w.store.addToken(user.id, createHash('sha256').update(token, 'utf8').digest('hex'));
 }
 
 describe('integrations end to end', () => {
@@ -324,26 +358,55 @@ describe('integrations end to end', () => {
     manifest.integrations = [{ alias: 'orders', capability: 'google-sheets', operations: ['read', 'append'] }];
     await w.store.openDeploy({ appId: 'app_orders', id: 'dep_parked', manifest, state: State.WaitingSecrets, failure: null });
 
-    const listUrl = '/internal/apps/app_orders/integrations';
-    type Catalog = {
-      connections: Array<{ id: string; resources: Array<{ capability: string; alias: string }> }>;
-      requirements: Array<{ alias: string; capability: string; operations: string[] }>;
-    };
     const before = (await (await w.app.request(listUrl, { headers: { Cookie: w.session } })).json()) as Catalog;
     expect(before.requirements).toEqual([
       { alias: 'orders', capability: 'google-sheets', operations: ['read', 'append'] },
     ]);
+    // The server resolves the requirement to a slot with no binding yet, and names
+    // the provider for the capability so the dashboard never re-derives it.
+    expect(before.slots).toEqual([
+      { alias: 'orders', capability: 'google-sheets', operations: ['read', 'append'], provider: 'google', binding: null },
+    ]);
     // Unbound: no connection carries a matching resource yet.
-    const bound = (cat: Catalog) =>
-      cat.connections.some((c) => c.resources.some((r) => r.capability === 'google-sheets' && r.alias === 'orders'));
     expect(bound(before)).toBe(false);
 
     // Binding the required alias (the connect helper connects and aliases 'orders')
     // readies it — the same state resumeWaiting keys on to un-park the deploy.
     await connect(w);
     const after = (await (await w.app.request(listUrl, { headers: { Cookie: w.session } })).json()) as Catalog;
-    expect(after.requirements).toHaveLength(1);
+    expect(after.slots).toHaveLength(1);
     expect(bound(after)).toBe(true);
+    // The slot now carries the binding detail, joined once on the server.
+    const boundResource = after.connections[0]!.resources.find((r) => r.alias === 'orders')!;
+    expect(after.slots[0]!.binding).toMatchObject({
+      resourceId: boundResource.id,
+      displayName: boundResource.displayName,
+      connectionId: after.connections[0]!.id,
+    });
+  });
+
+  it('keeps an orphaned binding visible on the connection but out of the slots', async () => {
+    world = await makeWorld();
+    const w = world;
+
+    // The manifest declares only 'orders'.
+    const { manifest } = testManifest('parked worker');
+    manifest.integrations = [{ alias: 'orders', capability: 'google-sheets', operations: ['read'] }];
+    await w.store.openDeploy({ appId: 'app_orders', id: 'dep_parked', manifest, state: State.WaitingSecrets, failure: null });
+
+    // Bind 'orders' (via connect) and then a second alias 'ghost' absent from the manifest.
+    const connId = await connect(w);
+    await w.app.request(`/internal/apps/app_orders/integrations/${connId}/resources`, {
+      method: 'POST',
+      headers: { Cookie: w.session, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capability: 'google-sheets', alias: 'ghost', externalId: 'sheet_orders' }),
+    });
+
+    const cat = (await (await w.app.request(listUrl, { headers: { Cookie: w.session } })).json()) as Catalog;
+    // Slots are keyed by the current requirements, so the orphan is not among them.
+    expect(cat.slots.map((s) => s.alias)).toEqual(['orders']);
+    // But it stays visible on the connection so the owner can still remove it.
+    expect(cat.connections[0]!.resources.map((r) => r.alias).sort()).toEqual(['ghost', 'orders']);
   });
 
   it('refuses a token minted for another app (cross-app replay)', async () => {
@@ -456,6 +519,50 @@ describe('integrations end to end', () => {
     world = await makeWorld();
     await connect(world);
     const res = await sdk(world, 'deleteRows', 'not-a-jwt', { resource: 'orders', startRow: 1, rowCount: 1 });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('integrations local-dev machine-token path', () => {
+  let world: World | null = null;
+  afterEach(async () => {
+    if (world) await world.cleanup();
+    world = null;
+  });
+
+  it('serves the owner authenticated by a machine token and named app id', async () => {
+    world = await makeWorld();
+    const w = world;
+    await connect(w);
+    await machineToken(w, 'owner@acme.com', 'mtok-owner');
+
+    const append = await sdkDev(w, 'append', 'mtok-owner', 'app_orders', {
+      resource: 'orders',
+      range: 'Orders!A:D',
+      values: [['1', 'a@b.com', '9.99', 'now']],
+    });
+    expect(append.status).toBe(200);
+    expect((await append.json()) as { updatedCells: number }).toMatchObject({ updatedCells: 4 });
+
+    const read = await sdkDev(w, 'read', 'mtok-owner', 'app_orders', { resource: 'orders', range: 'Orders!A:D' });
+    expect(read.status).toBe(200);
+    expect(((await read.json()) as { values: unknown[][] }).values).toContainEqual(['1', 'a@b.com', '9.99', 'now']);
+  });
+
+  it('rejects a machine token for an app the caller does not own', async () => {
+    world = await makeWorld();
+    const w = world;
+    await connect(w);
+    await machineToken(w, 'owner@acme.com', 'mtok-owner');
+
+    const res = await sdkDev(w, 'read', 'mtok-owner', 'app_intruder', { resource: 'orders', range: 'Orders!A:D' });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects an unknown machine token', async () => {
+    world = await makeWorld();
+    await connect(world);
+    const res = await sdkDev(world, 'read', 'never-issued', 'app_orders', { resource: 'orders', range: 'Orders!A:D' });
     expect(res.status).toBe(401);
   });
 });

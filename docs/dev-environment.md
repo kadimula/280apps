@@ -32,6 +32,24 @@ cookie configuration. Those derived values must not be configured independently.
 TWO80_API=https://api-development.280apps.com npx -y two80@latest push
 ```
 
+## Running an app locally against real integrations
+
+An app built on `@two80/sdk` reaches its integration data from `next dev` with no
+gateway and no local infra. The SDK falls back to the developer's own credential:
+
+1. `two80 login` (writes the machine token and API origin to `~/.280/credentials`).
+2. `two80 push` once (writes the resolved `appId` to `.280/config.json` and creates
+   the app so its integrations can be connected in the dashboard).
+3. `next dev`.
+
+When no gateway identity header is present, `@two80/sdk` authenticates SDK calls with
+that machine token and sends the app id as `X-280-Dev-App`. The backend resolves the
+token to its owner, confirms the owner owns the named app, and serves as that owner.
+This path is owner-only and never impersonates another viewer, so `can()`/`scope()`
+authorization is not exercised locally (that remains gateway territory). Override the
+origin, token, or app with `TWO80_API`, `TWO80_TOKEN`, `TWO80_APP`. In a deployed
+container the gateway always injects the identity header, so this fallback never runs.
+
 ## Railway backend
 
 The backend runs from `packages/backend/Dockerfile`. Railway supplies the port,

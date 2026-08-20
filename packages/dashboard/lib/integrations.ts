@@ -40,11 +40,23 @@ export type IntegrationConnection = {
   resources: IntegrationResource[];
 };
 
+// A resolved requirement (a "slot"): the declared need plus its binding, joined once
+// on the server by the same predicate the deploy gate uses. The dialog reads
+// slot.binding directly instead of cross-referencing requirements against connections.
+export type IntegrationSlot = {
+  alias: string;
+  capability: string;
+  operations: string[];
+  provider: string;
+  binding: { resourceId: string; displayName: string; connectionId: string } | null;
+};
+
 export type IntegrationCatalog = {
   providers: IntegrationProvider[];
   connections: IntegrationConnection[];
-  requirements: IntegrationRequirement[];
+  slots: IntegrationSlot[];
 };
+
 
 export type SelectorSession = {
   accessToken: string;
@@ -86,7 +98,7 @@ export async function listIntegrations(
   return {
     providers: body.providers ?? [],
     connections: body.connections ?? [],
-    requirements: body.requirements ?? [],
+    slots: body.slots ?? [],
   };
 }
 

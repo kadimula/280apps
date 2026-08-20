@@ -4,6 +4,7 @@ import type { AppAccess } from "@/lib/grants";
 import type {
   IntegrationConnection,
   IntegrationRequirement,
+  IntegrationSlot,
 } from "@/lib/integrations";
 import { MOCK_SHEETS } from "@/lib/mock-sheets";
 import type { SessionUser } from "@/lib/session";
@@ -199,6 +200,21 @@ function connectionsFor(appId: string): IntegrationConnection[] {
     mockConnections.set(appId, list);
   }
   return list;
+}
+
+// Mirrors the real backend's svc.slots: resolve each requirement against its binding
+// by the same alias↔resource join, so the mock hands the dialog the same shape.
+function slotsFor(appId: string): IntegrationSlot[] {
+  const conns = connectionsFor(appId);
+  return (mockRequirements[appId] ?? []).map((r) => {
+    for (const c of conns) {
+      const res = c.resources.find((x) => x.capability === r.capability && x.alias === r.alias);
+      if (res) {
+        return { ...r, provider: "google", binding: { resourceId: res.id, displayName: res.displayName, connectionId: c.id } };
+      }
+    }
+    return { ...r, provider: "google", binding: null };
+  });
 }
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
@@ -430,6 +446,7 @@ export function mockResponse(path: string, init?: RequestInit): Response {
     return json({
       providers: MOCK_PROVIDERS,
       connections: connectionsFor(appId),
+      slots: slotsFor(appId),
       requirements: mockRequirements[appId] ?? [],
     });
   }

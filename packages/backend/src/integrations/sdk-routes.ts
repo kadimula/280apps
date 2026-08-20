@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { ID_HEADER } from '@280/contracts/identity';
+import { DEV_APP_HEADER, ID_HEADER } from '@280/contracts/identity';
 import type { HonoEnv } from './../observe.js';
 import { SdkError } from './service.js';
 
@@ -12,6 +12,7 @@ export function sdkIntegrationRoutes(): Hono<HonoEnv> {
     if (svc === undefined) return errorJson(c, 'not_configured', 'integrations are not configured', 404);
 
     const token = bearer(c) || (c.req.header(ID_HEADER) ?? '');
+    const devAppId = c.req.header(DEV_APP_HEADER) ?? '';
     let body: Record<string, unknown>;
     try {
       const parsed: unknown = await c.req.json();
@@ -24,6 +25,7 @@ export function sdkIntegrationRoutes(): Hono<HonoEnv> {
     try {
       const result = await svc.execute({
         token,
+        devAppId,
         capability: c.req.param('capability') ?? '',
         operation: c.req.param('operation') ?? '',
         body,

@@ -1,3 +1,3 @@
 error: unknown_flag
 message: unknown flag --stat for `push`
-help: "valid flags for `push`: --name, --framework, --new (--help always allowed)"
+help: "valid flags for `push`: --name, --framework, --new, --verbose (--help always allowed)"

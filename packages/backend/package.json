@@ -39,6 +39,7 @@
     "src"
   ],
   "scripts": {
+    "dev": "./scripts/dev-local.sh",
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/docs', 'dist/docs', { recursive: true })\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "node dist/migrate.js",
@@ -54,6 +55,7 @@
     "pg": "^8.13.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.0"
+    "@types/pg": "^8.11.0",
+    "wrangler": "^4.116.0"
   }
 }

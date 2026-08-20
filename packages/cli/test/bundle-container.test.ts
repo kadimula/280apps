@@ -18,7 +18,7 @@ describe('Next.js buildpack instrumentation injection', () => {
     expect(text).toBeDefined();
     expect(text).toContain('export function onRequestError');
     expect(text).toContain("t: '280.error'");
-    expect(bundle.notes.some((n) => n.includes('two80 logs --digest'))).toBe(true);
+    expect(bundle.details.some((n) => n.includes('two80 logs --digest'))).toBe(true);
   });
 
   it('does not clobber an existing instrumentation.ts', () => {
@@ -27,7 +27,7 @@ describe('Next.js buildpack instrumentation injection', () => {
     const bundle = buildNextContainer(root);
     expect(fileText(bundle, 'instrumentation.js')).toBeUndefined();
     expect(fileText(bundle, 'instrumentation.ts')).toBe(own);
-    expect(bundle.notes.some((n) => n.includes('two80 logs'))).toBe(false);
+    expect(bundle.details.some((n) => n.includes('two80 logs'))).toBe(false);
   });
 
   it('places the hook under src/ when the app uses a src directory', () => {

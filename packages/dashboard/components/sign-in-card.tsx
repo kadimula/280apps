@@ -1,7 +1,9 @@
 // The one sign-in surface. /login and /activate differ only in where they send
-// you afterward, which the caller folds into `href`. Login moved to the backend,
-// so this is now a single link into that flow rather than a form: the app holds
-// no credentials and no auth logic.
+// you afterward, which the caller passes as `redirect`. Login moved to the
+// backend, so each provider is a plain link into that flow rather than a form:
+// the app holds no credentials and no auth logic.
+
+import { loginHref, type LoginProvider } from "@/lib/session";
 
 function GoogleMark({ className }: { className?: string }) {
   return (
@@ -26,13 +28,33 @@ function GoogleMark({ className }: { className?: string }) {
   );
 }
 
+function MicrosoftMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={className}>
+      <path fill="#F25022" d="M2 2h9.5v9.5H2z" />
+      <path fill="#7FBA00" d="M12.5 2H22v9.5h-9.5z" />
+      <path fill="#00A4EF" d="M2 12.5h9.5V22H2z" />
+      <path fill="#FFB900" d="M12.5 12.5H22V22h-9.5z" />
+    </svg>
+  );
+}
+
+const PROVIDERS: {
+  name: LoginProvider;
+  label: string;
+  Mark: (props: { className?: string }) => React.ReactElement;
+}[] = [
+  { name: "google", label: "Continue with Google", Mark: GoogleMark },
+  { name: "microsoft", label: "Continue with Microsoft", Mark: MicrosoftMark },
+];
+
 export function SignInCard({
-  href,
+  redirect,
   error,
   heading,
   subheading,
 }: {
-  href: string;
+  redirect: string;
   error?: string;
   heading?: string;
   subheading?: string;
@@ -46,13 +68,18 @@ export function SignInCard({
         {subheading ?? ""}
       </p>
 
-      <a
-        href={href}
-        className="mt-7 flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 text-[14px] font-medium text-[var(--color-ink)] transition-colors hover:bg-[var(--color-paper-warm)]"
-      >
-        <GoogleMark className="h-[18px] w-[18px]" />
-        Continue with Google
-      </a>
+      <div className="mt-7 flex flex-col gap-2">
+        {PROVIDERS.map(({ name, label, Mark }) => (
+          <a
+            key={name}
+            href={loginHref(redirect, name)}
+            className="flex w-full items-center justify-center gap-3 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-3 text-[14px] font-medium text-[var(--color-ink)] transition-colors hover:bg-[var(--color-paper-warm)]"
+          >
+            <Mark className="h-[18px] w-[18px]" />
+            {label}
+          </a>
+        ))}
+      </div>
 
       {error ? (
         <p className="mt-4 text-[13px] leading-[1.6] text-[#b4342b]">

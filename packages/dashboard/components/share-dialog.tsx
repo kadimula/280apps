@@ -198,9 +198,9 @@ export function ShareDialog({
   const loading = grants === null;
   // Fail closed while the first load is in flight: the strictest mode is the
   // safest thing to claim about an app we haven't heard back about.
-  // Existing domain access is presented as Google Login while the domain
-  // option is retired from this setting. Choosing that tab converts it to the
-  // explicit invited mode.
+  // Existing domain access is folded into the "Require sign-in" tab while the
+  // domain option is retired from this setting. Choosing that tab converts it
+  // to the explicit invited mode.
   const current: AppAccess = access?.access === "public" ? "public" : "invited";
 
   return (
@@ -379,7 +379,8 @@ export function ShareDialog({
                   >
                     <span className="flex items-center justify-center gap-1.5">
                       <GoogleIcon />
-                      Google Login
+                      <MicrosoftIcon />
+                      Require sign-in
                     </span>
                   </AccessTab>
                   <AccessTab
@@ -502,6 +503,17 @@ function GoogleIcon() {
       <path fill="#34A853" d="M12 21.7c2.63 0 4.84-.87 6.45-2.36l-3.14-2.45c-.87.58-1.98.92-3.31.92-2.54 0-4.69-1.72-5.46-4.03H3.3v2.53A9.74 9.74 0 0 0 12 21.7Z" />
       <path fill="#FBBC05" d="M6.54 13.78a5.85 5.85 0 0 1 0-3.56V7.69H3.3a9.74 9.74 0 0 0 0 8.62l3.24-2.53Z" />
       <path fill="#EA4335" d="M12 6.19c1.43 0 2.71.49 3.72 1.45l2.79-2.79C16.84 3.27 14.63 2.3 12 2.3a9.74 9.74 0 0 0-8.7 5.39l3.24 2.53C7.31 7.91 9.46 6.19 12 6.19Z" />
+    </svg>
+  );
+}
+
+function MicrosoftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-[15px] w-[15px]">
+      <path fill="#F25022" d="M2 2h9.5v9.5H2z" />
+      <path fill="#7FBA00" d="M12.5 2H22v9.5h-9.5z" />
+      <path fill="#00A4EF" d="M2 12.5h9.5V22H2z" />
+      <path fill="#FFB900" d="M12.5 12.5H22V22h-9.5z" />
     </svg>
   );
 }

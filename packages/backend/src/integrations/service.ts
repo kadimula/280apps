@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isOperationSupported, type IntegrationRequirement } from '@280/contracts';
 import type { VerifiedIdentity } from '@280/contracts/identity';
 import { IntegrationStatus, type IntegrationConnection, type Store } from '../seams.js';
+import { boundResource } from './binding.js';
 import type { SecretCipher } from '../secrets.js';
 import {
   ProviderRequestError,
@@ -16,9 +18,6 @@ const OAUTH_ATTEMPT_TTL_SECS = 10 * 60;
 const REFRESH_MARGIN_SECS = 60;
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
-const OPERATIONS: Record<string, Set<string>> = {
-  'google-sheets': new Set(['read', 'append', 'update', 'deleteRows']),
-};
 const MAX_RANGE_LEN = 256;
 const MAX_ROWS = 1000;
 const MAX_CELLS = 10_000;
@@ -56,6 +55,17 @@ export interface ConnectionView {
   resources: Array<{ id: string; capability: string; alias: string; displayName: string }>;
 }
 
+// A resolved requirement: the declared need plus its binding, joined once on the
+// server by the same predicate the deploy gate uses (boundResource). `provider` is
+// resolved from the capability so the dashboard never re-derives any of it.
+export interface SlotView {
+  alias: string;
+  capability: string;
+  operations: string[];
+  provider: string;
+  binding: { resourceId: string; displayName: string; connectionId: string } | null;
+}
+
 export interface SelectorSessionView {
   accessToken: string;
   expiresAt: number;
@@ -75,6 +85,7 @@ export interface IntegrationServiceDeps {
   registry: ProviderRegistry;
   identity: SdkIdentityVerifier;
   config: IntegrationServiceConfig;
+  machineTokenTtlSecs: number;
   now?: () => number;
   randomId?: () => string;
   randomState?: () => string;
@@ -86,6 +97,7 @@ export class IntegrationService {
   private readonly registry: ProviderRegistry;
   private readonly identityVerifier: SdkIdentityVerifier;
   private readonly config: IntegrationServiceConfig;
+  private readonly machineTokenTtlSecs: number;
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly randomState: () => string;
@@ -97,6 +109,7 @@ export class IntegrationService {
     this.registry = deps.registry;
     this.identityVerifier = deps.identity;
     this.config = deps.config;
+    this.machineTokenTtlSecs = deps.machineTokenTtlSecs;
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
     this.randomId = deps.randomId ?? (() => 'int_' + randomBytes(12).toString('hex'));
     this.randomState = deps.randomState ?? (() => randomBytes(32).toString('hex'));
@@ -123,6 +136,32 @@ export class IntegrationService {
         })),
       })),
     );
+  }
+
+  async slots(appId: string, requirements: readonly IntegrationRequirement[]): Promise<SlotView[]> {
+    return Promise.all(
+      requirements.map(async (r) => {
+        const bound = await boundResource(this.store, appId, r);
+        return {
+          alias: r.alias,
+          capability: r.capability,
+          operations: [...r.operations],
+          provider: this.providerForCapability(r.capability),
+          binding:
+            bound === null
+              ? null
+              : { resourceId: bound.id, displayName: bound.displayName, connectionId: bound.connectionId },
+        };
+      }),
+    );
+  }
+
+  private providerForCapability(capability: string): string {
+    try {
+      return this.registry.forCapability(capability).name;
+    } catch {
+      return '';
+    }
   }
 
   async startConnection(input: {
@@ -282,10 +321,11 @@ export class IntegrationService {
     return this.identityVerifier.verify(token);
   }
 
-  async execute(input: { token: string; capability: string; operation: string; body: Record<string, unknown> }): Promise<Record<string, unknown>> {
+  // Production path: the gateway-signed identity carries the app it was minted for.
+  private async resolveGatewayApp(token: string): Promise<string> {
     let identity: VerifiedIdentity;
     try {
-      identity = await this.verifyIdentity(input.token);
+      identity = await this.verifyIdentity(token);
     } catch {
       throw new SdkError('unauthenticated', 'the request identity is missing or invalid', 401);
     }
@@ -294,9 +334,46 @@ export class IntegrationService {
     }
     const appId = identity.claims.app;
     if (appId === '') throw new SdkError('forbidden', 'this identity is not bound to an app', 403);
+    return appId;
+  }
 
-    const ops = OPERATIONS[input.capability];
-    if (ops === undefined || !ops.has(input.operation)) {
+  // Local-development path: no gateway signs an identity, so the SDK authenticates
+  // the developer with their `two80 login` machine token and names the app. The token
+  // resolves the owner; store.app gates that they own the named app; they then act as
+  // that owner. Strictly weaker than the gateway path (owner only, never impersonation).
+  private async resolveDevApp(token: string, appId: string): Promise<string> {
+    if (token === '') {
+      throw new SdkError('unauthenticated', 'run `two80 login` to use integrations locally', 401);
+    }
+    let user;
+    try {
+      user = await this.store.userByToken(hash(token), this.now() - this.machineTokenTtlSecs);
+    } catch {
+      throw new SdkError('provider_unavailable', 'the auth lookup failed; try again', 503, true);
+    }
+    if (user === null) {
+      throw new SdkError('unauthenticated', 'your local session has expired; run `two80 login`', 401);
+    }
+    const app = await this.store.app(user.id, appId);
+    if (app === null) {
+      throw new SdkError('forbidden', 'this app is not yours, or it has not been pushed yet', 403);
+    }
+    return app.id;
+  }
+
+  async execute(input: {
+    token: string;
+    capability: string;
+    operation: string;
+    body: Record<string, unknown>;
+    devAppId?: string;
+  }): Promise<Record<string, unknown>> {
+    const appId =
+      input.devAppId !== undefined && input.devAppId !== ''
+        ? await this.resolveDevApp(input.token, input.devAppId)
+        : await this.resolveGatewayApp(input.token);
+
+    if (!isOperationSupported(input.capability, input.operation)) {
       throw new SdkError('invalid_request', 'unsupported capability or operation', 400);
     }
     let provider: Provider;

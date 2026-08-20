@@ -33,9 +33,36 @@ vi.mock("@/lib/integrations", async (importOriginal) => {
 const app = { id: "app_1af8df68e0f6", slug: "sheets-todo" };
 const provider = { provider: "google", capabilities: ["google-sheets"] };
 
-const ordersReq = { alias: "orders", capability: "google-sheets", operations: ["read", "append"] };
-const inventoryReq = { alias: "inventory", capability: "google-sheets", operations: ["read", "write"] };
-const returnsReq = { alias: "returns", capability: "google-sheets", operations: ["read"] };
+type Conn = {
+  id: string;
+  provider: string;
+  status: "active" | "reauthorization_required";
+  account: string;
+  updatedAt: number;
+  resources: { id: string; capability: string; alias: string; displayName: string }[];
+};
+type Req = { alias: string; capability: string; operations: string[] };
+
+const ordersReq: Req = { alias: "orders", capability: "google-sheets", operations: ["read", "append"] };
+const inventoryReq: Req = { alias: "inventory", capability: "google-sheets", operations: ["read", "write"] };
+const returnsReq: Req = { alias: "returns", capability: "google-sheets", operations: ["read"] };
+
+// The server resolves each requirement to a slot by the alias↔resource join; the
+// dialog reads slot.binding directly. These fixtures build the same shape the backend
+// hands the dialog, so the test never re-derives the join client-side.
+function slotsFrom(reqs: Req[], conns: Conn[]) {
+  return reqs.map((r) => {
+    for (const c of conns) {
+      const res = c.resources.find((x) => x.capability === r.capability && x.alias === r.alias);
+      if (res) return { ...r, provider: "google", binding: { resourceId: res.id, displayName: res.displayName, connectionId: c.id } };
+    }
+    return { ...r, provider: "google", binding: null };
+  });
+}
+
+function catalog({ connections = [], requirements = [] }: { connections?: Conn[]; requirements?: Req[] }) {
+  return { providers: [provider], connections, slots: slotsFrom(requirements, connections) };
+}
 
 async function openDialog(props?: Partial<Parameters<typeof IntegrationsDialog>[0]>) {
   const host = document.createElement("div");
@@ -78,27 +105,25 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows Connect Google Sheets when there are requirements but no connection", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
 
     expect(d.textContent).toContain("Connect Google Sheets");
-    expect(d.textContent).toContain("orders");
+    expect(d.textContent).toContain("Orders");
     expect(d.textContent).not.toContain("Connected accounts");
     await act(async () => root.unmount());
   });
 
   it("shows an empty state when the manifest has no requirements", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
@@ -108,36 +133,27 @@ describe("IntegrationsDialog", () => {
     await act(async () => root.unmount());
   });
 
-  it("hides raw aliases in primary copy but shows them in Technical details", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+  it("hides raw aliases in the primary connect copy", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
 
-    // The primary body doesn't show raw alias
+    // The focus panel names the humanized alias, never the raw manifest values.
     const body = d.querySelector(".body-copy")?.textContent ?? "";
     expect(body).not.toContain("google-sheets");
     expect(body).not.toContain("append");
-
-    // Technical details contains the raw data
-    const tech = d.querySelector("details.tech")!;
-    expect(tech).toBeTruthy();
-    expect(tech.textContent).toContain("orders");
-    expect(tech.textContent).toContain("google-sheets");
-    expect(tech.textContent).toContain("read, append");
     await act(async () => root.unmount());
   });
 
   it("Connect builds OAuth start URL with safe dashboard return path", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
@@ -148,9 +164,8 @@ describe("IntegrationsDialog", () => {
     await act(async () => root.unmount());
   });
 
-  it("shows returning phase when autoOpen with active connection and unmet requirements", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+  it("lands on the choose step when autoOpen returns with a connection and unmet requirements", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -162,14 +177,11 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
-    vi.mocked(selectorSession).mockResolvedValue({
-      accessToken: "mock",
-      expiresAt: 9999,
-      pickerApiKey: "mock",
-      projectNumber: "mock",
-    });
+    // The picker must not open on its own after the OAuth return; a stalled session
+    // would surface only if something auto-launched it.
+    vi.mocked(selectorSession).mockReturnValue(new Promise(() => {}));
 
     const host = document.createElement("div");
     document.body.append(host);
@@ -189,12 +201,13 @@ describe("IntegrationsDialog", () => {
     const d = dialog();
     expect(d).toBeTruthy();
     expect(d.textContent).toContain("Google Sheets connected");
+    expect(d.textContent).toContain("choose the sheet we should use for");
+    expect(d.textContent).not.toContain("Pick a spreadsheet");
     await act(async () => root.unmount());
   });
 
-  it("auto-continues into picker after returning phase resolves", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+  it("opens the picker only after the user clicks choose on the return step", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -206,7 +219,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     vi.mocked(selectorSession).mockResolvedValue({
       accessToken: "mock",
@@ -224,23 +237,30 @@ describe("IntegrationsDialog", () => {
       ),
     );
 
-    // Flush all microtasks to let the returning → pick transition happen.
     await act(async () => {
-      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    const d = dialog();
-    // After returning + auto-continue, should be showing the picker
-    expect(d.textContent).toContain("Pick a spreadsheet");
+    // No picker until the user clicks; the return step waits on a gesture.
+    expect(dialog().textContent).not.toContain("Pick a spreadsheet");
+
+    await act(async () => {
+      const btn = [...dialog().querySelectorAll("button")].find((b) =>
+        b.textContent?.includes("Choose spreadsheet"),
+      ) as HTMLButtonElement;
+      btn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(dialog().textContent).toContain("Pick a spreadsheet");
     await act(async () => root.unmount());
   });
 
   it("picker cancellation does not register a resource and returns to choose", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -252,7 +272,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
 
@@ -292,52 +312,8 @@ describe("IntegrationsDialog", () => {
     await act(async () => root.unmount());
   });
 
-  it("auto-return only triggers picker once, not on re-render", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
-      connections: [
-        {
-          id: "conn_1",
-          provider: "google",
-          status: "active" as const,
-          account: "owner@example.com",
-          updatedAt: 1,
-          resources: [],
-        },
-      ],
-      requirements: [ordersReq],
-    } as never);
-
-    vi.mocked(selectorSession).mockResolvedValue({
-      accessToken: "mock",
-      expiresAt: 9999,
-      pickerApiKey: "mock",
-      projectNumber: "mock",
-    });
-
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-    await act(async () =>
-      root.render(
-        <IntegrationsDialog app={app} apiBase="" mock autoOpen />,
-      ),
-    );
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(selectorSession).toHaveBeenCalledTimes(1);
-    await act(async () => root.unmount());
-  });
-
   it("shows reconnect state when connection needs reauthorization", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -349,7 +325,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
@@ -360,9 +336,8 @@ describe("IntegrationsDialog", () => {
     await act(async () => root.unmount());
   });
 
-  it("shows ready summary on repeat visit with Manage closed", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+  it("shows ready summary with inline replace and disconnect", async () => {
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -374,24 +349,22 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
 
     expect(d.textContent).toContain("Google Sheets is ready");
     expect(d.textContent).toContain("Orders 2026");
-    expect(d.textContent).toContain("Manage Google account");
-    // Manage should be closed by default
-    const manage = d.querySelector("details.manage-box") as HTMLDetailsElement;
-    expect(manage).toBeTruthy();
-    expect(manage.open).toBe(false);
+    const replaceBtn = [...d.querySelectorAll("button")].find((b) => b.textContent?.includes("Replace"));
+    const disconnectBtn = [...d.querySelectorAll("button")].find((b) => b.textContent?.includes("Disconnect"));
+    expect(replaceBtn).toBeTruthy();
+    expect(disconnectBtn).toBeTruthy();
     await act(async () => root.unmount());
   });
 
   it("shows multiple requirements with correct progress", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -403,7 +376,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq, inventoryReq, returnsReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
@@ -420,8 +393,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows success with Done button after all requirements bound", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -433,7 +405,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
@@ -444,8 +416,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows disconnect confirmation with consequences", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -457,20 +428,12 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
 
-    // Open Manage Google account
-    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
-    expect(manage).toBeTruthy();
-    await act(async () => {
-      manage.click();
-      await Promise.resolve();
-    });
-
-    // Click Disconnect
+    // Click Disconnect (inline on the ready panel)
     const disconnectBtn = [...d.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("Disconnect"),
     );
@@ -487,8 +450,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("Escape closes confirmDisconnect before parent dialog", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -500,16 +462,14 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     const { root } = await openDialog();
     const d = dialog();
 
     expect(d.textContent).toContain("Google Sheets is ready");
 
-    // Open Manage and click Disconnect
-    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
-    await act(async () => { manage.click(); await Promise.resolve(); });
+    // Click Disconnect (inline on the ready panel)
     const disconnectBtn = [...d.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("Disconnect"),
     );
@@ -529,11 +489,10 @@ describe("IntegrationsDialog", () => {
   });
 
   it("closing restores focus to Integrations trigger", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [ordersReq],
-    });
+    }));
 
     const host = document.createElement("div");
     document.body.append(host);
@@ -564,11 +523,10 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows OAuth error state when oauthError prop is true", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [],
       requirements: [ordersReq],
-    });
+    }));
 
     const host = document.createElement("div");
     document.body.append(host);
@@ -587,8 +545,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows picker failure state when selector session fails", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -600,7 +557,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     vi.mocked(selectorSession).mockResolvedValue({
       error: "The Google Picker session could not be created.",
@@ -626,8 +583,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("shows resource validation failure state", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -639,7 +595,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     vi.mocked(selectorSession).mockResolvedValue({
       accessToken: "mock",
@@ -683,8 +639,7 @@ describe("IntegrationsDialog", () => {
   });
 
   it("preserves old binding during replacement validation failure", async () => {
-    vi.mocked(listIntegrations).mockResolvedValue({
-      providers: [provider],
+    vi.mocked(listIntegrations).mockResolvedValue(catalog({
       connections: [
         {
           id: "conn_1",
@@ -696,7 +651,7 @@ describe("IntegrationsDialog", () => {
         },
       ],
       requirements: [ordersReq],
-    });
+    }));
 
     vi.mocked(selectorSession).mockResolvedValue({
       accessToken: "mock",
@@ -713,9 +668,7 @@ describe("IntegrationsDialog", () => {
 
     const d = dialog();
 
-    // Open Manage, click Replace
-    const manage = d.querySelector("details.manage-box summary") as HTMLElement;
-    await act(async () => manage.click());
+    // Click Replace (inline on the ready panel)
     const replaceBtn = [...d.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("Replace"),
     );

@@ -1,7 +1,7 @@
 import { DeployCode, type DeployError } from '@280/contracts';
 import { resolvePlatformTopology } from '@280/contracts/platform-config';
 import { Auth } from './authsvc.js';
-import { GoogleProvider, type OidcProvider } from './auth/oidc.js';
+import { EntraProvider, GoogleProvider, type OidcProvider } from './auth/oidc.js';
 import { IntegrationService } from './integrations/service.js';
 import { ProviderRegistry } from './integrations/registry.js';
 import { GoogleWorkspaceProvider } from './integrations/google/provider.js';
@@ -55,7 +55,7 @@ function buildDepotBuilder(config: Config, log: Logger): DepotBuilder {
     hostSuffix: config.hostSuffix,
     gatewayService: config.gatewayService,
     idIssuer: config.idIssuer,
-    sdkApiOrigin: config.apiOrigin,
+    sdkApiOrigin: config.sdkApiOrigin,
     frameAncestors: config.frameAncestors,
     log,
   });
@@ -70,6 +70,12 @@ export function buildAuth(store: Store, config: Config, log: Logger): Auth | und
     providers.google = new GoogleProvider({
       clientId: config.google.clientId,
       clientSecret: config.google.clientSecret,
+    });
+  }
+  if (config.entra.clientId !== '' && config.entra.clientSecret !== '') {
+    providers.microsoft = new EntraProvider({
+      clientId: config.entra.clientId,
+      clientSecret: config.entra.clientSecret,
     });
   }
 
@@ -124,6 +130,7 @@ export function buildIntegrations(
     cipher,
     registry,
     identity,
+    machineTokenTtlSecs: config.machineTokenTtlDays * 24 * 60 * 60,
     config: {
       apiOrigin: config.apiOrigin,
       frontendOrigin: config.dashboardOrigin,

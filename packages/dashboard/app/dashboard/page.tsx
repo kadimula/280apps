@@ -44,9 +44,6 @@ export default async function Dashboard() {
           box, and main is transparent, so a menu that loses the stacking order
           still looks right while main quietly swallows every click on it. */}
       <SiteHeader className="z-20">
-        <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">
-          Docs
-        </a>
         <UserMenu
           name={user.name}
           email={user.email}

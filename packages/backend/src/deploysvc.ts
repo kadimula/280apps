@@ -41,6 +41,7 @@ import {
 } from '@280/contracts';
 import { randomBytes } from 'node:crypto';
 import { type App, type BlobStore, type Deploy, type Store } from './seams.js';
+import { boundResource } from './integrations/binding.js';
 import type { ContainerDeploymentCoordinator } from './activator.js';
 import { normalizeLevel, parseDurationMs, type LogSource } from './logsource.js';
 
@@ -150,8 +151,7 @@ export async function missingRequirements(
   const secrets = requiredVariableNames(m).filter((name) => !present.has(name));
   const integrations: IntegrationRequirement[] = [];
   for (const r of m.integrations ?? []) {
-    const bound = await store.resourceByAlias(appId, r.capability, r.alias).catch(() => null);
-    if (bound === null) integrations.push(r);
+    if ((await boundResource(store, appId, r)) === null) integrations.push(r);
   }
   return { secrets, integrations };
 }

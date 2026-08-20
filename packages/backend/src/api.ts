@@ -126,6 +126,7 @@ export class Server {
     // whoever the cookie resolves to.
     app.post('/internal/device/approve', this.route((c) => this.handleDeviceApprove(c)));
     app.get('/internal/apps', this.route((c) => this.handleApps(c)));
+    app.get('/internal/apps/:app/status', this.route((c) => this.handleInternalStatus(c)));
     app.post('/internal/apps/:app/delete', this.route((c) => this.handleInternalDelete(c)));
 
     // The share dialog and its data: list/grant/revoke access (both tiers) and the
@@ -391,6 +392,12 @@ export class Server {
         lastDeployAt: a.lastDeployAt,
       })),
     });
+  }
+
+  private async handleInternalStatus(c: Context<HonoEnv>): Promise<Response> {
+    const user = await this.sessionUser(c);
+    const st = await this.deps(c).platform.for(user.id).appStatus(c.req.param('app') ?? '');
+    return c.json(encodeStatus(st));
   }
 
   private async handleInternalDelete(c: Context<HonoEnv>): Promise<Response> {
@@ -821,15 +828,18 @@ export class Server {
     const { app } = await this.ownedApp(c);
     const svc = this.integrations(c);
     try {
-      // requirements are the app's declared, alias-keyed integration needs, read
-      // from the newest deploy's manifest so a parked deploy (whose policy is not
-      // registered until it goes live) still surfaces what the human must bind. The
-      // dialog cross-references them against connections for each alias's readiness.
+      // slots are the app's declared integration needs resolved against their bindings,
+      // read from the newest deploy's manifest so a parked deploy (whose policy is not
+      // registered until it goes live) still surfaces what the human must bind. The join
+      // is computed once here by the same predicate the deploy gate uses; the dashboard
+      // reads slot.binding directly. `requirements` stays until the dashboard is on slots.
       const latest = await this.deps(c).platform.store.latestDeploy(app.id).catch(() => null);
+      const requirements = latest?.manifest.integrations ?? [];
       return c.json({
         providers: svc.catalog(),
         connections: await svc.listConnections(app.id),
-        requirements: latest?.manifest.integrations ?? [],
+        slots: await svc.slots(app.id, requirements),
+        requirements,
       });
     } catch (err) {
       this.mapIntegrationErr(err);

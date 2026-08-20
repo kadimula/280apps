@@ -83,7 +83,7 @@ describe('buildNextContainer', () => {
     expect(p.some((x) => x.startsWith('secrets/'))).toBe(false);
     expect(p).toContain('README.md'); // a non-ignored file still ships
 
-    const note = b.notes.find((n) => n.startsWith('not uploaded (gitignored):'))!;
+    const note = b.details.find((n) => n.startsWith('not uploaded (gitignored):'))!;
     expect(note).toContain('SUPABASE_SECRETS.md');
     expect(note).toContain('secrets/');
   });
@@ -94,7 +94,7 @@ describe('buildNextContainer', () => {
     const p = b.manifest.files.map((f) => f.path);
     expect(p).toContain('notes.md');
     expect(p).toContain('SUPABASE_SECRETS.md');
-    expect(b.notes.some((n) => n.startsWith('not uploaded (gitignored):'))).toBe(false);
+    expect(b.details.some((n) => n.startsWith('not uploaded (gitignored):'))).toBe(false);
   });
 
   it('escape hatch: a user Dockerfile wins and nothing is generated', () => {
@@ -139,6 +139,99 @@ describe('buildNextContainer', () => {
   it('rejects a malformed 280.json policy before uploading anything', () => {
     const root = nextProject({ '280.json': JSON.stringify({ access: 'everyone' }) });
     expect(() => buildNextContainer(root)).toThrow(PreflightError);
+  });
+});
+
+function textOf(root: string, path: string): string {
+  const b = buildNextContainer(root);
+  const f = b.manifest.files.find((x) => x.path === path)!;
+  return new TextDecoder().decode(b.content.get(f.digest)!);
+}
+
+describe('vendoring out-of-tree file: dependencies', () => {
+  function workspace(appPkg: Record<string, unknown>, libPkg: Record<string, unknown>) {
+    const base = mkdtempSync(join(tmpdir(), '280-ws-'));
+    const root = join(base, 'app');
+    write(join(root, 'package.json'), JSON.stringify(appPkg));
+    write(join(root, 'app', 'page.tsx'), 'export default () => <h1>hi</h1>;');
+    write(join(base, 'lib', 'package.json'), JSON.stringify(libPkg));
+    write(join(base, 'lib', 'dist', 'index.js'), 'export const x = 1;');
+    return { base, root };
+  }
+
+  it('copies the target into the context and rewrites package.json + lockfile links', () => {
+    const { root } = workspace(
+      { name: 'demo', dependencies: { '@acme/lib': 'file:../lib', next: '15.0.0' } },
+      { name: '@acme/lib', version: '1.0.0', main: './dist/index.js' },
+    );
+    write(
+      join(root, 'package-lock.json'),
+      JSON.stringify({
+        name: 'demo',
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'demo', dependencies: { '@acme/lib': 'file:../lib', next: '15.0.0' } },
+          '../lib': { name: '@acme/lib', version: '1.0.0', devDependencies: { tsup: '^8' } },
+          'node_modules/@acme/lib': { resolved: '../lib', link: true },
+        },
+      }),
+    );
+    const b = buildNextContainer(root);
+    const p = b.manifest.files.map((f) => f.path);
+    expect(p).toContain('.two80-vendor/acme-lib/package.json');
+    expect(p).toContain('.two80-vendor/acme-lib/dist/index.js');
+
+    const pkg = JSON.parse(textOf(root, 'package.json'));
+    expect(pkg.dependencies['@acme/lib']).toBe('file:./.two80-vendor/acme-lib');
+
+    const lock = JSON.parse(textOf(root, 'package-lock.json'));
+    expect(lock.packages['../lib']).toBeUndefined();
+    expect(lock.packages['.two80-vendor/acme-lib'].devDependencies).toBeUndefined();
+    expect(lock.packages['node_modules/@acme/lib'].resolved).toBe('.two80-vendor/acme-lib');
+    expect(lock.packages[''].dependencies['@acme/lib']).toBe('file:./.two80-vendor/acme-lib');
+
+    expect(b.details.some((n) => n.includes('vendored local dependencies'))).toBe(true);
+  });
+
+  it('strips the vendored package build tooling so npm never sees a workspace: dep', () => {
+    const { root } = workspace(
+      { name: 'demo', dependencies: { '@acme/lib': 'file:../lib', next: '15.0.0' } },
+      {
+        name: '@acme/lib',
+        version: '1.0.0',
+        main: './dist/index.js',
+        devDependencies: { '@acme/other': 'workspace:*' },
+        scripts: { build: 'tsup' },
+      },
+    );
+    const manifest = JSON.parse(textOf(root, '.two80-vendor/acme-lib/package.json'));
+    expect(manifest.devDependencies).toBeUndefined();
+    expect(manifest.scripts).toBeUndefined();
+  });
+
+  it('leaves an in-tree file: dependency untouched (it already ships)', () => {
+    const root = nextProject({
+      'local/package.json': JSON.stringify({ name: 'local', version: '1.0.0' }),
+      'package.json': JSON.stringify({ name: 'demo', dependencies: { local: 'file:./local', next: '15.0.0' } }),
+    });
+    const b = buildNextContainer(root);
+    expect(b.manifest.files.some((f) => f.path.startsWith('.two80-vendor/'))).toBe(false);
+    expect(b.notes.some((n) => n.includes('vendored'))).toBe(false);
+  });
+
+  it('rejects an out-of-tree file: dep whose target is missing', () => {
+    const root = nextProject({
+      'package.json': JSON.stringify({ name: 'demo', dependencies: { gone: 'file:../nope', next: '15.0.0' } }),
+    });
+    expect(() => buildNextContainer(root)).toThrow(/does not exist/);
+  });
+
+  it('rejects a vendored package that itself needs another local package', () => {
+    const { root } = workspace(
+      { name: 'demo', dependencies: { '@acme/lib': 'file:../lib', next: '15.0.0' } },
+      { name: '@acme/lib', version: '1.0.0', dependencies: { '@acme/core': 'workspace:*' } },
+    );
+    expect(() => buildNextContainer(root)).toThrow(/cannot resolve/);
   });
 });
 

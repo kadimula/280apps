@@ -1,4 +1,5 @@
-import { ID_HEADER } from '@280/contracts/identity';
+import { DEV_APP_HEADER, ID_HEADER } from '@280/contracts/identity';
+import { loadDevCredential } from './devCredential.js';
 import { sdkApiUrl, type HeaderSource, type RequestLike } from './index.js';
 
 export interface SheetsReadInput {
@@ -87,16 +88,28 @@ function notReadyCode(err: unknown): NotReadyCode | null {
 
 export function googleSheets(request: RequestLike, opts: GoogleSheetsOptions = {}): GoogleSheetsClient {
   const fetchImpl = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
-  const token = readHeader(request, ID_HEADER);
+  const gatewayToken = readHeader(request, ID_HEADER);
+
+  // In production the gateway header is always present, so the dev credential is never
+  // loaded. Under `next dev` it is absent and the developer's machine token stands in.
+  async function auth(): Promise<{ token: string; origin?: string; devAppId: string }> {
+    if (gatewayToken !== '') return { token: gatewayToken, origin: opts.origin, devAppId: '' };
+    const dev = await loadDevCredential();
+    if (dev === null) return { token: '', origin: opts.origin, devAppId: '' };
+    return { token: dev.token, origin: opts.origin ?? dev.origin, devAppId: dev.appId };
+  }
 
   async function call<T>(operation: string, body: object): Promise<T> {
-    const url = sdkApiUrl(`/v1/sdk/integrations/google-sheets/${operation}`, { origin: opts.origin });
+    const cred = await auth();
+    const url = sdkApiUrl(`/v1/sdk/integrations/google-sheets/${operation}`, { origin: cred.origin });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${cred.token}`,
+    };
+    if (cred.devAppId !== '') headers[DEV_APP_HEADER] = cred.devAppId;
     const res = await fetchImpl(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(body),
     });
     const text = await res.text();

@@ -18,6 +18,7 @@ export interface Bundle {
   manifest: Manifest;
   content: Map<Digest, Uint8Array>;
   notes: string[];
+  details: string[];
 }
 export interface Options {
   root: string; // project root

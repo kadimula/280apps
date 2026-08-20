@@ -99,6 +99,7 @@ async function cmdPush(ctx: Ctx): Promise<number> {
     { name: 'name', type: 'string' },
     { name: 'framework', type: 'string' },
     { name: 'new', type: 'bool' },
+    { name: 'verbose', type: 'bool' },
   ]);
   if (p.usage !== undefined) return p.usage;
   if (p.help) {
@@ -108,6 +109,7 @@ async function cmdPush(ctx: Ctx): Promise<number> {
   const { cfg, created } = ensureInit(ctx.env.root, p.values.name as string, p.values.framework as string);
   if (created) output.progress(s, `initialized (${cfg.framework}, ${cfg.name})`);
   const bundle = await ctx.deps.buildBundle(ctx.env.root, cfg.framework);
+  if (p.values.verbose as boolean) for (const d of bundle.details) output.progress(s, d);
   for (const note of bundle.notes) output.progress(s, note);
   const port = await ctx.deps.openPort();
   const res = await push.run(
@@ -150,6 +152,7 @@ Flags:
   --name <slug>             app name on first init (default: package.json name)
   --framework next|static   skip detection on first init
   --new                     force a fresh app instead of linking an existing one
+  --verbose                 also print build details (Dockerfile, vendoring, instrumentation)
 
 Examples:
   two80 push
@@ -162,6 +165,7 @@ Usage:
     --name <slug>             app name on first init (default: package.json name)
     --framework next|static   skip detection on first init
     --new                     force a fresh app instead of linking an existing one
+    --verbose                 also print build details (Dockerfile, vendoring, instrumentation)
 
   two80 init [flags]    detect framework, write .280/config.json (push does this for you)
     --name <slug>             app name (default: package.json name)

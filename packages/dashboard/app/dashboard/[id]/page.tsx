@@ -1,20 +1,25 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { AppMenu } from "@/components/app-menu";
+import {
+  IntegrationsMount,
+  SettingsButton,
+  SettingsProvider,
+  SettingsSidebar,
+} from "@/components/app-settings";
 import { CloverMark } from "@/components/clover-mark";
-import { IntegrationsDialog } from "@/components/integrations-dialog";
 import { ShareDialog } from "@/components/share-dialog";
 import { SiteHeader } from "@/components/site-header";
 import { UserMenu } from "@/components/user-menu";
-import { VariablesDialog } from "@/components/variables-dialog";
 import {
   type ViewAsGroup,
   ViewAsMenu,
 } from "@/components/view-as-menu";
 import { apiBase, MOCK_BACKEND } from "@/lib/api";
-import { getApp } from "@/lib/apps";
+import { getApp, getAppStatus } from "@/lib/apps";
 import { listViewGrants } from "@/lib/grants";
+import { integrationSummary } from "@/lib/integration-summary";
+import { type IntegrationCatalog, listIntegrations } from "@/lib/integrations";
 import { mintPreviewUrl, parseViewAs, VIEW_AS_ROLES } from "@/lib/preview";
 import { getMe, logoutHref } from "@/lib/session";
 
@@ -35,14 +40,14 @@ export default async function AppPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ as?: string; variables?: string; integrations?: string; integration_error?: string }>;
+  searchParams: Promise<{ as?: string; integrations?: string; integration_error?: string }>;
 }) {
   const user = await getMe();
   if (!user) {
     redirect("/login");
   }
 
-  const [{ id }, { as, variables, integrations, integration_error }] = await Promise.all([
+  const [{ id }, { as, integrations, integration_error }] = await Promise.all([
     params,
     searchParams,
   ]);
@@ -51,10 +56,19 @@ export default async function AppPage({
     notFound();
   }
 
+  const status = await getAppStatus(id);
+
   // The Integrations dialog builds a top-level OAuth link against the backend
   // origin; in mock mode there is no backend to name, so the dialog uses its
   // mock connect path instead and never reads this.
   const integrationsApiBase = MOCK_BACKEND ? "" : apiBase();
+
+  // The sidebar's Integrations tab shows requested integrations and whether they
+  // are connected; an unreachable platform simply renders as "unavailable".
+  const integrationsResult = await listIntegrations(app.id);
+  const integrationsCatalog: IntegrationCatalog | null =
+    "error" in integrationsResult ? null : integrationsResult;
+  const integrationsSummary = integrationSummary(integrationsCatalog);
 
   const host = app.url.replace(/^https:\/\//, "");
   const viewAs = parseViewAs(as);
@@ -107,6 +121,10 @@ export default async function AppPage({
         : null;
 
   return (
+    <SettingsProvider
+      defaultOpen={integrationsSummary.readiness === "attention"}
+      initialCatalog={integrationsCatalog}
+    >
     <div className="flex h-screen flex-col bg-[var(--color-paper)]">
       <SiteHeader
         className="z-20 border-b border-[var(--color-line)]"
@@ -159,18 +177,7 @@ export default async function AppPage({
             }}
           />
         )}
-        <VariablesDialog app={{ id: app.id, slug: app.slug }} autoOpen={variables === "1"} />
-        <IntegrationsDialog
-          app={{ id: app.id, slug: app.slug }}
-          apiBase={integrationsApiBase}
-          mock={MOCK_BACKEND}
-          autoOpen={integrations === "1"}
-          oauthError={integration_error === "oauth"}
-        />
-        <AppMenu appId={app.id} slug={app.slug} />
-        <a href="/docs" className="transition-colors hover:text-[var(--color-ink)]">
-          Docs
-        </a>
+        <SettingsButton />
         <UserMenu
           name={user.name}
           email={user.email}
@@ -179,6 +186,8 @@ export default async function AppPage({
         />
       </SiteHeader>
 
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
       {!app.live ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <p className="font-display text-[1.75rem] leading-tight text-[var(--color-ink)]">
@@ -229,6 +238,21 @@ export default async function AppPage({
           </a>
         </div>
       )}
+        </div>
+        <SettingsSidebar
+          status={status}
+          appId={app.id}
+          slug={app.slug}
+        />
+      </div>
+      <IntegrationsMount
+        app={{ id: app.id, slug: app.slug }}
+        apiBase={integrationsApiBase}
+        mock={MOCK_BACKEND}
+        autoOpen={integrations === "1"}
+        oauthError={integration_error === "oauth"}
+      />
     </div>
+    </SettingsProvider>
   );
 }

@@ -11,6 +11,7 @@ import {
 import type { App, BlobStore, ConfigDelivery, Deploy, ContainerApp, Store } from './seams.js';
 import type { ContainerBuilder, RolloutJob } from './runtime/container/container.js';
 import { asDeployErr, deployShaped, errText, internal } from './deploysvc.js';
+import { boundResource } from './integrations/binding.js';
 
 export interface ContainerDeploymentDeps {
   store: Store;
@@ -150,8 +151,7 @@ export class ContainerDeploymentCoordinator {
     const requiredCfg = requiredConfigNames(manifest.config ?? []);
     if (requiredCfg.length > 0 && (await this.namesUnconfigured(appId, requiredCfg))) return true;
     for (const r of manifest.integrations ?? []) {
-      const bound = await this.deps.store.resourceByAlias(appId, r.capability, r.alias).catch(() => null);
-      if (bound === null) return true;
+      if ((await boundResource(this.deps.store, appId, r)) === null) return true;
     }
     return false;
   }

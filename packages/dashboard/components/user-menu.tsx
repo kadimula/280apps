@@ -93,6 +93,13 @@ export function UserMenu({
               )}
             </div>
           )}
+          <a
+            href="/docs"
+            role="menuitem"
+            className="block border-b border-[var(--color-line)] px-4 py-3 text-[13px] text-[var(--color-body)] transition-colors hover:bg-[var(--color-paper-warm)] hover:text-[var(--color-ink)]"
+          >
+            Docs
+          </a>
           <form action={logoutHref} method="post">
             <button
               type="submit"

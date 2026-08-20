@@ -8,6 +8,14 @@ export interface ConfigVars {
   RAILWAY_ENVIRONMENT_NAME?: string;
   PLATFORM_DOMAIN?: string;
   APP_SERVING_DOMAIN?: string;
+  // Local-dev escapes from the domain-based topology: point the browser login flow
+  // at http://localhost origins. Unset in every deployed environment.
+  TWO80_API_ORIGIN?: string;
+  TWO80_DASHBOARD_ORIGIN?: string;
+  TWO80_COOKIE_DOMAIN?: string;
+  // The platform-owned SDK API origin baked into deployed containers; must stay a
+  // real exact HTTPS origin even when TWO80_API_ORIGIN points at http://localhost.
+  TWO80_SDK_API_ORIGIN?: string;
   ADDITIONAL_FRAME_ANCESTORS?: string;
   MINIMUM_SUPPORTED_CLI_VERSION?: string;
   DEPOT_BUILD_PROJECT_ID?: string;
@@ -16,6 +24,8 @@ export interface ConfigVars {
 
   GOOGLE_OIDC_CLIENT_ID?: string;
   GOOGLE_OIDC_CLIENT_SECRET?: string;
+  MICROSOFT_ENTRA_OIDC_CLIENT_ID?: string;
+  MICROSOFT_ENTRA_OIDC_CLIENT_SECRET?: string;
   GOOGLE_INTEGRATION_CLIENT_ID?: string;
   GOOGLE_INTEGRATION_CLIENT_SECRET?: string;
   GOOGLE_PICKER_API_KEY?: string;
@@ -35,6 +45,7 @@ export interface Config {
   appDomain: string;
   hostSuffix: string;
   apiOrigin: string;
+  sdkApiOrigin: string;
   dashboardOrigin: string;
   frameAncestors: string;
   activationUrl: string;
@@ -46,6 +57,7 @@ export interface Config {
   machineTokenTtlDays: number;
   loginRate: { windowSecs: number; max: number };
   google: { clientId: string; clientSecret: string };
+  entra: { clientId: string; clientSecret: string };
   // A dedicated OAuth client for third-party data integrations, separate from the
   // dashboard login client above so their consent scopes never mix.
   googleIntegration: { clientId: string; clientSecret: string; pickerApiKey: string; projectNumber: string };
@@ -66,16 +78,23 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
   });
   const additionalFrameAncestors = vars.ADDITIONAL_FRAME_ANCESTORS?.trim() ?? '';
 
+  const apiOrigin = vars.TWO80_API_ORIGIN?.trim() || topology.apiOrigin;
+  const sdkApiOrigin = vars.TWO80_SDK_API_ORIGIN?.trim() || topology.apiOrigin;
+  const dashboardOrigin = vars.TWO80_DASHBOARD_ORIGIN?.trim() || topology.dashboardOrigin;
+  const cookieDomain =
+    vars.TWO80_COOKIE_DOMAIN !== undefined ? vars.TWO80_COOKIE_DOMAIN.trim() : topology.backendCookieDomain;
+
   return {
     dbSchema: PLATFORM_POLICY.databaseSchema,
     dbConnectionString,
     appDomain: topology.appServingDomain,
     hostSuffix: topology.hostSuffix,
-    apiOrigin: topology.apiOrigin,
-    dashboardOrigin: topology.dashboardOrigin,
-    frameAncestors: [topology.dashboardOrigin, additionalFrameAncestors].filter(Boolean).join(' '),
-    activationUrl: topology.activationUrl,
-    cookieDomain: topology.backendCookieDomain,
+    apiOrigin,
+    sdkApiOrigin,
+    dashboardOrigin,
+    frameAncestors: [dashboardOrigin, additionalFrameAncestors].filter(Boolean).join(' '),
+    activationUrl: `${dashboardOrigin}/activate`,
+    cookieDomain,
     sessionCookieName: topology.sessionCookieName,
     oauthCookieName: topology.oauthCookieName,
     minCliVersion: vars.MINIMUM_SUPPORTED_CLI_VERSION ?? '',
@@ -88,6 +107,10 @@ export function resolveConfig(vars: ConfigVars, dbConnectionString: string): Con
     google: {
       clientId: vars.GOOGLE_OIDC_CLIENT_ID ?? '',
       clientSecret: vars.GOOGLE_OIDC_CLIENT_SECRET ?? '',
+    },
+    entra: {
+      clientId: vars.MICROSOFT_ENTRA_OIDC_CLIENT_ID ?? '',
+      clientSecret: vars.MICROSOFT_ENTRA_OIDC_CLIENT_SECRET ?? '',
     },
     googleIntegration: {
       clientId: vars.GOOGLE_INTEGRATION_CLIENT_ID ?? '',

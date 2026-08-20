@@ -27,6 +27,9 @@ docs/*
 .env
 .env.*
 !.env.example
+.dev-local-secret-key
+.dev-local-build-tokens.env
+.dev-local-database-url
 
 # Cloudflare Wrangler local cache
 .wrangler/

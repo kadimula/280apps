@@ -40,3 +40,27 @@ export async function getApp(id: string): Promise<App | null> {
   const apps = await getApps();
   return apps?.find((app) => app.id === id) ?? null;
 }
+
+export type AppStatus = {
+  state: string;
+  url?: string;
+  notice?: string;
+  secretNotice?: string;
+  integrationNotice?: string;
+  failure?: unknown;
+};
+
+// getAppStatus mirrors what the CLI polls (deploy state plus the secret/integration
+// "waiting for" notices), owner-scoped through the session cookie.
+export async function getAppStatus(id: string): Promise<AppStatus | null> {
+  try {
+    const res = await apiFetch(`/internal/apps/${encodeURIComponent(id)}/status`, {
+      headers: { Cookie: await cookieHeader() },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as AppStatus;
+  } catch {
+    return null;
+  }
+}

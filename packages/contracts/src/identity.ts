@@ -4,6 +4,9 @@
 // README "Signed identity header" for custody, TTL, and rationale (report OQ8).
 
 export const ID_HEADER = 'X-280-Identity';
+// Local development only: the SDK sends this app id alongside a machine-token bearer
+// so the backend can authorize the developer as the app's owner without a gateway.
+export const DEV_APP_HEADER = 'X-280-Dev-App';
 export const ID_TYP = '280-identity+jwt';
 export const ID_ALG = 'ES256';
 export const DEFAULT_TTL_SECS = 120;

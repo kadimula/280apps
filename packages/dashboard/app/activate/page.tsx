@@ -84,7 +84,7 @@ export default async function Activate({
           </div>
         ) : !me ? (
           <SignInCard
-            href={loginHref(code ? `/activate?code=${encodeURIComponent(code)}` : "/activate")}
+            redirect={code ? `/activate?code=${encodeURIComponent(code)}` : "/activate"}
             heading="Connect your agent"
             subheading="Sign in first."
           />

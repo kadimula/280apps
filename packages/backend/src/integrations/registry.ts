@@ -14,7 +14,13 @@ export class ProviderRegistry {
   constructor(providers: Provider[]) {
     for (const p of providers) {
       this.byName.set(p.name, p);
-      for (const cap of p.capabilities) this.byCapability.set(cap, p);
+      for (const cap of p.capabilities) {
+        const owner = this.byCapability.get(cap);
+        if (owner !== undefined && owner.name !== p.name) {
+          throw new Error(`capability "${cap}" is claimed by both "${owner.name}" and "${p.name}"`);
+        }
+        this.byCapability.set(cap, p);
+      }
     }
   }
 

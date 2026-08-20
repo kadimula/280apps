@@ -12,6 +12,7 @@ import type { ConfigEntry, IntegrationRequirement } from '@280/contracts';
 import { read280, routeGateDiff, type Policy280 } from './manifest280.js';
 import { discoverNextRoutes } from './nextroutes.js';
 import { dirExists, fail, fileExists, walkContext } from './walk.js';
+import { vendorLocalFileDeps } from './vendor.js';
 const EMPTY_POLICY: Policy280 = {
   egress: { allowedHosts: [], credentials: [] },
   access: 'invited',
@@ -182,7 +183,7 @@ function assemble(
   files: BlobInfo[],
   content: Map<Digest, Uint8Array>,
   builder: string,
-  notes: string[],
+  details: string[],
   policy: Policy280 = EMPTY_POLICY,
 ): Bundle {
   if (files.length === 0) {
@@ -207,7 +208,7 @@ function assemble(
   extra.push(...configDisclosure(policy.config));
   extra.push(...integrationDisclosure(policy.integrations));
   const diff = routeGateDiff(discoverNextRoutes(files.map((f) => f.path)), policy.routes);
-  return { manifest, content, notes: [...notes, ...extra, ...diff] };
+  return { manifest, content, notes: [...extra, ...diff], details };
 }
 export function integrationDisclosure(integrations: IntegrationRequirement[]): string[] {
   if (integrations.length === 0) return [];
@@ -252,6 +253,7 @@ export function buildNextContainer(root: string): Bundle {
     );
   }
   const files = walkContext(root, content, { skip });
+  const vendorNote = vendorLocalFileDeps(root, files, content);
   addGenerated(files, content, 'Dockerfile', NEXT_DOCKERFILE);
   addGenerated(files, content, ENTRYPOINT_PATH, ENTRYPOINT);
   const instrumentationNote = injectInstrumentation(root, files, content);
@@ -261,6 +263,7 @@ export function buildNextContainer(root: string): Bundle {
     'next',
     [
       'generated a Dockerfile that builds and runs your Next.js app on port ' + APP_PORT,
+      ...vendorNote,
       ...instrumentationNote,
       ...skippedNote(skipped),
     ],

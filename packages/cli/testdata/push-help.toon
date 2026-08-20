@@ -4,6 +4,7 @@ Flags:
   --name <slug>             app name on first init (default: package.json name)
   --framework next|static   skip detection on first init
   --new                     force a fresh app instead of linking an existing one
+  --verbose                 also print build details (Dockerfile, vendoring, instrumentation)
 
 Examples:
   two80 push

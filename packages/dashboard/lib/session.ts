@@ -36,10 +36,12 @@ export async function getMe(): Promise<SessionUser | null> {
   }
 }
 
-// loginHref is where the browser goes to sign in: the backend's login flow, told
-// where to send the browser back to afterward.
-export function loginHref(redirect = "/dashboard"): string {
-  return `${apiBase()}/auth/google/start?redirect=${encodeURIComponent(redirect)}`;
+export type LoginProvider = "google" | "microsoft";
+
+// loginHref is where the browser goes to sign in: the backend's login flow for the
+// chosen provider, told where to send the browser back to afterward.
+export function loginHref(redirect = "/dashboard", provider: LoginProvider = "google"): string {
+  return `${apiBase()}/auth/${provider}/start?redirect=${encodeURIComponent(redirect)}`;
 }
 
 // logoutHref clears the session. It is posted to as a top-level navigation so the

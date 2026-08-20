@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { SignInCard } from "@/components/sign-in-card";
 import { SiteHeader } from "@/components/site-header";
-import { getMe, loginHref } from "@/lib/session";
+import { getMe } from "@/lib/session";
 
 // A bare path only: a "next" that leaves the site is an open redirect, and the
 // backend rejects one anyway, so this never sends one on.
@@ -36,7 +36,7 @@ export default async function Login({
       </SiteHeader>
 
       <main className="relative z-10 flex flex-1 items-center justify-center px-6 py-16">
-        <SignInCard href={loginHref(safeNext(next))} error={error} />
+        <SignInCard redirect={safeNext(next)} error={error} />
       </main>
 
       <footer className="relative z-10 border-t border-[var(--color-line)]">

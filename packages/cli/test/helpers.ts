@@ -60,7 +60,7 @@ export function testBundle(): Bundle {
     [dd, dockerfile],
     [sd, src],
   ]);
-  return { manifest, content, notes: [] };
+  return { manifest, content, notes: [], details: [] };
 }
 
 export interface StubAuthOptions {

@@ -1,6 +1,7 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { isOperationSupported, type IntegrationRequirement } from '@280/contracts';
 import type { VerifiedIdentity } from '@280/contracts/identity';
+import { constantTimeEqual, hashToken } from '../crypto.js';
 import { IntegrationStatus, type IntegrationConnection, type Store } from '../seams.js';
 import { boundResource } from './binding.js';
 import type { SecretCipher } from '../secrets.js';
@@ -176,7 +177,7 @@ export class IntegrationService {
     const payload = JSON.stringify({ verifier, returnPath: this.safePath(input.returnPath) });
     const payloadEnvelope = await this.cipher.protect(input.appId, attemptName(provider.name), payload);
     await this.store.createOAuthAttempt({
-      stateHash: hash(state),
+      stateHash: hashToken(state),
       appId: input.appId,
       provider: provider.name,
       payloadEnvelope,
@@ -187,7 +188,7 @@ export class IntegrationService {
   }
 
   async resolveOAuthReturnPath(provider: string, stateCookie: string): Promise<string | null> {
-    const attempt = await this.store.consumeOAuthAttempt(hash(stateCookie), this.now());
+    const attempt = await this.store.consumeOAuthAttempt(hashToken(stateCookie), this.now());
     if (attempt === null || attempt.provider !== provider) return null;
     const payload = decodePayload(await this.cipher.reveal(attempt.appId, attemptName(provider), attempt.payloadEnvelope));
     return this.frontendRedirect(payload.returnPath);
@@ -208,7 +209,7 @@ export class IntegrationService {
     ) {
       throw new IntegrationError('bad_request', 'that connection could not be verified');
     }
-    const attempt = await this.store.consumeOAuthAttempt(hash(input.stateCookie), this.now());
+    const attempt = await this.store.consumeOAuthAttempt(hashToken(input.stateCookie), this.now());
     if (attempt === null || attempt.provider !== provider.name) {
       throw new IntegrationError('bad_request', 'that connection request has expired');
     }
@@ -347,7 +348,7 @@ export class IntegrationService {
     }
     let user;
     try {
-      user = await this.store.userByToken(hash(token), this.now() - this.machineTokenTtlSecs);
+      user = await this.store.userByToken(hashToken(token), this.now() - this.machineTokenTtlSecs);
     } catch {
       throw new SdkError('provider_unavailable', 'the auth lookup failed; try again', 503, true);
     }
@@ -590,17 +591,6 @@ function attemptName(provider: string): string {
 
 function credName(provider: string): string {
   return `integration-credential:${provider}`;
-}
-
-function hash(s: string): string {
-  return createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf8');
-  const bb = Buffer.from(b, 'utf8');
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
 }
 
 function str(v: unknown): string {

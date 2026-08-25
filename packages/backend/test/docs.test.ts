@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { capabilityNames, capabilityOperations } from '@280/contracts';
-import { Server } from '../src/api.js';
+import { Server } from '../src/http/server.js';
 import {
   docsCapabilities,
   capabilitiesMarkdown,

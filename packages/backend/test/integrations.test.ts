@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEV_APP_HEADER, IdentitySigner, publicJwkFromPrivate } from '@280/contracts/identity';
-import { Server } from '../src/api.js';
+import { Server } from '../src/http/server.js';
 import type { RequestDeps } from '../src/config.js';
 import { EnvelopeSecretCipher, LocalKeyWrapper } from '../src/secrets.js';
 import { IntegrationService } from '../src/integrations/service.js';

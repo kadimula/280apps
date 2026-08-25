@@ -17,7 +17,7 @@ import {
 import { Platform, type Service } from '../../src/deploysvc.js';
 import type { LogSource } from '../../src/logsource.js';
 import { ContainerDeploymentCoordinator } from '../../src/activator.js';
-import { Server } from '../../src/api.js';
+import { Server } from '../../src/http/server.js';
 import type { Auth } from '../../src/authsvc.js';
 import type { RequestDeps } from '../../src/config.js';
 import type { Logger, HonoEnv } from '../../src/observe.js';

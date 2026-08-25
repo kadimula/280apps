@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { serve } from '@hono/node-server';
 import type { AddressInfo } from 'node:net';
 import type { Server as NodeHttpServer } from 'node:http';
-import { Server } from '../src/api.js';
+import { Server } from '../src/http/server.js';
 import { REQUEST_ID_HEADER } from '../src/observe.js';
 import { newPlatform, seedToken, testDeps, testManifest, type Harness } from './helpers/harness.js';
 

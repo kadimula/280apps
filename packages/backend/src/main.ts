@@ -2,7 +2,7 @@ import type { Server as NodeHttpServer } from 'node:http';
 import { join } from 'node:path';
 import { PLATFORM_POLICY } from '@280/contracts/platform-config';
 import { serve } from '@hono/node-server';
-import { Server } from './api.js';
+import { Server } from './http/server.js';
 import { Platform } from './deploysvc.js';
 import { ContainerDeploymentCoordinator } from './activator.js';
 import { buildContainerServices, buildAuth, buildIntegrations, sweepExpired } from './deps.js';

@@ -6,7 +6,8 @@
 // secret: a token is valid because its unexpired hash is in the table, and logging
 // out is deleting the row.
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { constantTimeEqual, hashToken } from './crypto.js';
 import type { OidcProvider } from './auth/oidc.js';
 import type { Session, Store, User } from './seams.js';
 
@@ -23,39 +24,25 @@ export class AuthError extends Error {
 }
 
 export interface AuthConfig {
-  // Keyed by name ("google"); the map is the whole provider registry.
-  providers: Record<string, OidcProvider>;
-  // This backend's own public origin, used to build the OIDC callback URL. Must
-  // match what the provider console has registered.
-  apiOrigin: string;
-  // The only origin a post-login redirect may land on: the open-redirect whitelist.
-  frontendOrigin: string;
-  // Optionally overrides that guard: the gateway sets it (its valid destinations are
-  // the whole *.280apps.run space); the control plane leaves it unset for the default.
-  resolveRedirect?: (raw: string) => string;
-  // Scopes the session cookie. Empty is host-only (localhost dev); ".280apps.com"
-  // lets api and www share it in production.
-  cookieDomain: string;
-  sessionCookieName: string;
-  oauthCookieName: string;
-  sessionTtlSecs: number;
-  // Login limiter, applied per client IP at the start of the flow.
-  rate: { windowSecs: number; max: number };
-  // Injected seams; defaulted for production.
-  now?: () => number;
-  randomToken?: () => string;
-  newUserId?: () => string;
+  providers: Record<string, OidcProvider>; // provider registry keyed by name, e.g. { google: {...} }
+  apiOrigin: string; // this backend's public origin for the OIDC callback, e.g. "https://api.280apps.com"
+  frontendOrigin: string; // sole allowed post-login redirect origin, e.g. "https://www.280apps.com"
+  resolveRedirect?: (raw: string) => string; // overrides the redirect guard, e.g. gateway's *.280apps.run resolver
+  cookieDomain: string; // session cookie scope, e.g. "" (host-only dev) or ".280apps.com"
+  sessionCookieName: string; // e.g. "280_session"
+  oauthCookieName: string; // e.g. "280_oauth_state"
+  sessionTtlSecs: number; // e.g. 2592000 (30 days)
+  rate: { windowSecs: number; max: number }; // per-IP login limiter, e.g. { windowSecs: 60, max: 10 }
+  now?: () => number; // injected clock, e.g. () => Math.floor(Date.now() / 1000)
+  randomToken?: () => string; // injected token generator, e.g. () => randomBytes(32).toString('hex')
+  newUserId?: () => string; // injected id generator, e.g. () => 'usr_' + randomBytes(12).toString('hex')
 }
 
-// StartResult is what the transport needs to begin a login: where to send the
-// browser, and the state cookie the callback checks to prove the flow is this one's.
 export interface StartResult {
   authUrl: string;
   stateCookie: string;
 }
 
-// CompleteResult is a finished login: the session token to set as a cookie and the
-// validated URL to send the browser back to.
 export interface CompleteResult {
   user: User;
   sessionToken: string;
@@ -97,15 +84,10 @@ export class Auth {
     return this.cfg.frontendOrigin;
   }
 
-  // safeRedirect confines a destination to the frontend origin. Public so the
-  // transport can vet a logout redirect through the same guard the login flow uses.
   safeRedirect(raw: string): string {
     return this.resolveRedirect(raw);
   }
 
-  // start validates and rate-limits the request, returning the provider's auth URL
-  // plus a state cookie. The cookie carries the validated redirect target, so the
-  // callback trusts a destination this browser was actually issued.
   async start(providerName: string, rawRedirect: string, clientIp: string): Promise<StartResult> {
     const provider = this.provider(providerName);
 
@@ -125,9 +107,6 @@ export class Auth {
     return { authUrl, stateCookie: encodeState(state, redirect) };
   }
 
-  // complete verifies the callback belongs to a flow this browser started, trades
-  // the code for an identity, resolves it to a user (creating or linking), and mints
-  // a session.
   async complete(
     providerName: string,
     code: string,
@@ -159,8 +138,6 @@ export class Auth {
     return { user, sessionToken, redirect: parsed.redirect };
   }
 
-  // me resolves a session token to its user, or null if the token is empty,
-  // unknown, or expired.
   async me(sessionToken: string): Promise<User | null> {
     if (sessionToken === '') return null;
     const session = await this.store.sessionByHash(hashToken(sessionToken));
@@ -168,16 +145,11 @@ export class Auth {
     return this.store.userById(session.userId);
   }
 
-  // logout deletes the session behind a token. Unknown tokens are a no-op, so
-  // signing out twice is not an error.
   async logout(sessionToken: string): Promise<void> {
     if (sessionToken === '') return;
     await this.store.deleteSession(hashToken(sessionToken));
   }
 
-  // resolveUser maps an external identity onto a stable user. The order preserves
-  // accounts across the migration: an existing provider login wins, then a matching
-  // email (which gets the provider linked onto it), then a fresh user.
   private async resolveUser(provider: string, identity: { subject: string; email: string; name: string; image: string }): Promise<User> {
     const email = identity.email.trim().toLowerCase();
 
@@ -214,9 +186,6 @@ export class Auth {
     return `${this.cfg.apiOrigin}/auth/${provider}/callback`;
   }
 
-  // The open-redirect guard. A config-supplied guard (the gateway's *.280apps.run
-  // policy) wins; otherwise a bare path resolves against the frontend origin, a full
-  // URL must already be on it, and anything else falls back to the dashboard.
   private resolveRedirect(raw: string): string {
     if (this.cfg.resolveRedirect !== undefined) return this.cfg.resolveRedirect(raw);
     const origin = this.cfg.frontendOrigin;
@@ -227,14 +196,12 @@ export class Auth {
       const u = new URL(raw);
       if (u.origin === origin) return u.toString();
     } catch {
-      // not a URL; fall through
+      return fallback;
     }
     return fallback;
   }
 }
 
-// State is bound to its redirect so the callback cannot be tricked into sending
-// the browser somewhere the start endpoint did not vet.
 function encodeState(state: string, redirect: string): string {
   return state + '|' + encodeURIComponent(redirect);
 }
@@ -249,13 +216,3 @@ function decodeState(raw: string): { state: string; redirect: string } | null {
   }
 }
 
-function hashToken(s: string): string {
-  return createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf8');
-  const bb = Buffer.from(b, 'utf8');
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
-}

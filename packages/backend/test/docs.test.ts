@@ -99,43 +99,30 @@ describe('capability docs track the catalog', () => {
     }
   });
 
-  it('capabilities.md contains every catalog slug and operation', () => {
+});
+
+// capabilities.md is now static agent-facing prose: it documents the credential
+// env-var model and the identity SDK, and no longer carries any per-app integration
+// catalog. These guard that the integration story stays out of it.
+describe('capabilities.md documents credentials and identity, not integrations', () => {
+  it('describes sensitive config injected from process.env', () => {
     const md = capabilitiesMarkdown();
-    for (const slug of capabilityNames()) {
-      expect(md).toContain(`\`${slug}\``);
-      for (const op of capabilityOperations(slug)) {
-        expect(md).toContain(`\`${op}\``);
-      }
-    }
+    expect(md).toContain('## Credentials and config');
+    expect(md).toContain('sensitive');
+    expect(md).toContain('process.env');
   });
 
-  it('capabilities.md is self-sufficient on request scoping (no unlinked README deferral)', () => {
+  it('keeps the identity SDK for access control', () => {
     const md = capabilitiesMarkdown();
-    expect(md).toContain('### Request scoping');
     expect(md).toContain('identity(');
-    expect(md).toContain('await headers()');
-    expect(md).not.toContain('README');
+    expect(md).toContain('await identity(request)');
   });
 
-  it('capabilities.md table rows map one-to-one onto the catalog', () => {
+  it('carries no per-app integration alias or capability story', () => {
     const md = capabilitiesMarkdown();
-    const rows = md
-      .split('\n')
-      .filter((line) => /^\| .+ \| `[a-z-]+` \|/.test(line));
-    const parsed = rows.map((row) => {
-      const cells = row.split('|').map((c) => c.trim());
-      const slug = cells[2].replace(/`/g, '');
-      const operations = cells[3]
-        .split(',')
-        .map((c) => c.trim().replace(/`/g, ''))
-        .filter(Boolean);
-      return { slug, operations };
-    });
-    expect(parsed).toEqual(
-      capabilityNames().map((slug) => ({
-        slug,
-        operations: [...capabilityOperations(slug)],
-      })),
-    );
+    expect(md).not.toContain('integrations');
+    expect(md).not.toContain('googleSheets');
+    expect(md).not.toContain('### Request scoping');
+    expect(md).not.toMatch(/alias/i);
   });
 });

@@ -5,7 +5,6 @@
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import {
-  CAPABILITY_CATALOG_VERSION,
   capabilityNames,
   capabilityOperations,
   type CapabilityName,
@@ -94,14 +93,9 @@ export const RUNTIME_LIMITS: CapabilityGroup = {
       note: 'Local disk only, lost on restart; persist to external storage',
     },
     {
-      name: 'Unrestricted outbound network',
-      status: 'unsupported',
-      note: 'Default deny; containers can reach only the 280 SDK API host (others get HTTP 520)',
-    },
-    {
-      name: 'Raw TCP outbound (e.g. Postgres on :5432)',
-      status: 'unsupported',
-      note: 'Use an available @two80/sdk capability instead',
+      name: 'Outbound network to any host',
+      status: 'supported',
+      note: 'The container reaches the internet directly; call provider SDKs and APIs with your own credentials',
     },
     {
       name: 'Background work while idle (setInterval, polling loops)',
@@ -142,9 +136,9 @@ export const PLATFORM_FEATURES: CapabilityGroup = {
       note: 'Gateway signs a verified identity header; the app reads it via @two80/sdk',
     },
     {
-      name: 'Fixed SDK API network boundary',
+      name: 'Encrypted credential injection',
       status: 'supported',
-      note: 'Cloudflare permits only the platform supplied TWO80_API host',
+      note: 'Sensitive 280.json config is entered in the dashboard and injected as a Cloudflare secret the app reads from process.env',
     },
     {
       name: 'Feature permissions, sharing grants, route gates',
@@ -238,27 +232,13 @@ function stackRows(): string {
   ).join('\n');
 }
 
-function unsupportedRows(): string {
-  return RUNTIME_LIMITS.features
-    .filter((f) => f.status === 'unsupported')
-    .map((f) => `| ${f.name} | ${f.note ?? ''} |`)
-    .join('\n');
-}
-
-// The capability reference agents read before pushing. The capability/operation
-// section is generated from the @280/contracts catalog: a capability or operation
-// missing from the catalog cannot appear here, and a new one appears automatically.
+// The platform reference agents read before pushing. Static prose plus a small set
+// of generated tables (stacks, runtime limits) so the doc cannot drift from the
+// runtime facts those constants encode.
 export function capabilitiesMarkdown(): string {
-  const docs = capabilityDocs();
-  const capabilityTable = docs
-    .map((c) => `| ${c.title} | \`${c.slug}\` | ${c.operations.map((op) => `\`${op}\``).join(', ')} |`)
-    .join('\n');
-  const example = docs[0] ?? { slug: 'google-sheets', operations: ['read', 'append', 'update', 'deleteRows'] };
-  const exampleOps = example.operations.map((op) => `"${op}"`).join(', ');
+  return `# 280 platform reference
 
-  return `# 280 capability reference
-
-Generated from the \`@280/contracts\` capability catalog (version ${CAPABILITY_CATALOG_VERSION}). This is the authoritative list of what a 280 app may do; \`setup.md\` links here. If a required operation is not listed as supported, stop and report it rather than working around the network boundary.
+What a 280 app may do at runtime, and how the platform handles credentials, identity, and access. \`setup.md\` links here.
 
 ## Supported stacks
 
@@ -268,26 +248,20 @@ ${CAPABILITY_REQUIREMENT}
 | --- | --- |
 ${stackRows()}
 
-## SDK capabilities
+## Credentials and config
 
-Every external integration goes through \`@two80/sdk\`. The container reaches only the 280 API, which authorizes each call for the current app and user; the app holds no provider credentials.
+The app talks to providers directly with their own SDKs and APIs; the container reaches the internet without restriction. Keep every credential out of the codebase: declare it in \`280.json\` as a \`sensitive\` config variable with an empty value. The user enters it in the dashboard, the platform stores it encrypted and injects it into the container as a Cloudflare secret, and the app reads it from \`process.env.NAME\`. Non-secret ids, regions, and flags carry a committed \`value\` and ship as plain env vars.
 
-| Capability | Slug | Operations |
-| --- | --- | --- |
-${capabilityTable}
+    { "config": [
+      { "name": "STRIPE_SECRET_KEY", "value": "", "sensitive": true },
+      { "name": "AWS_REGION", "value": "us-east-1", "sensitive": false }
+    ] }
 
-Declare every integration the app uses in \`280.json\` as an alias mapped to its capability and the operations it calls, so push can gate the deploy until that alias is connected. The alias (\`todos\` below) is your app-chosen name; 280 binds it to a real resource at connect time.
+A deploy parks until every \`sensitive\` variable with an empty value has been entered; push relays that as a missing-config prompt for the user to complete in the dashboard.
 
-    { "integrations": { "todos": { "capability": "${example.slug}", "operations": [${exampleOps}] } } }
+## Identity and access control
 
-### Request scoping
-
-Every capability is a factory that takes the **incoming request** and returns a typed client scoped to the current caller. Nothing is global or cached across requests: the SDK reads the gateway-stamped identity header off the request you pass and forwards it, so the 280 API can authorize the call for this app and this user. Pass whatever exposes the request headers where you handle the request:
-
-- a Fetch \`Request\` (its \`.headers\` are read for you): \`googleSheets(request)\`
-- Next's \`headers()\` result: \`googleSheets(await headers())\`
-
-Read identity from the same request the same way, via \`identity()\`:
+Access control is the platform's job, not the app's. \`@two80/sdk\` exposes the gateway-signed identity for each request; the app never handles login or verifies the identity itself.
 
     import { identity } from "@two80/sdk";
 
@@ -298,30 +272,11 @@ Read identity from the same request the same way, via \`identity()\`:
       anonymous;              // true for a public app's no-session visitor
     }
 
-### Framework example: Google Sheets
+Declare feature roles, sharing grants, route gates, and general-access modes in \`280.json\`; the gateway enforces them and stamps the identity header the SDK reads. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
 
-    import { googleSheets } from "@two80/sdk";
+## Runtime notes
 
-    // In a Next.js route handler or Server Action, pass the incoming request.
-    export async function POST(request: Request) {
-      const sheets = googleSheets(request);
-      // "todos" is the alias from 280.json, not a spreadsheet id.
-      await sheets.read({ resource: "todos", range });            // -> { range, majorDimension, values }
-      await sheets.append({ resource: "todos", range, values });  // -> { updatedRange, updatedRows, updatedCells }
-      await sheets.update({ resource: "todos", range, values });  // -> { updatedRange, updatedRows, updatedCells }
-    }
-
-\`resource\` is the alias you declared in \`280.json\` (e.g. \`"todos"\`), not a spreadsheet id: 280 binds that alias to a real sheet at connect time, so the app never carries a raw sheet id. \`range\` is A1 notation (e.g. \`Sheet1!A1:C10\`), and \`values\` is a 2D array. A failed call throws \`IntegrationRequestError\` with \`{ code, message, status, retryable }\`. Full package docs: <https://www.npmjs.com/package/@two80/sdk>.
-
-## Explicitly unsupported
-
-The container runs full Node 20, so native modules, child processes, and local disk writes all work. What the boundary forbids:
-
-| Not supported | Do this instead |
-| --- | --- |
-${unsupportedRows()}
-
-Provider SDKs, raw API calls, connection strings, and any app-managed credential are unsupported by design: route the need through an \`@two80/sdk\` capability, or report it as missing.
+The container runs full Node 20: native modules, child processes, raw TCP, and local disk writes all work. Local disk is per instance and lost on restart, and a single instance sleeps after about 2 minutes idle, so persist state externally and do work in request handlers rather than idle loops.
 `;
 }
 

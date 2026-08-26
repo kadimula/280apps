@@ -82,7 +82,7 @@ export class DepotBuilder extends CloudflareContainerDeployment {
     await this.run(
       ctx,
       'depot',
-      ['build', '--push', '-t', image, '-f', dockerfile, '.'],
+      ['build', '--push', '--platform', 'linux/amd64', '-t', image, '-f', dockerfile, '.'],
       'build the image on Depot',
       {
         DEPOT_PROJECT_ID: projectId,

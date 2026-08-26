@@ -1,7 +1,8 @@
-// ControlPlaneConfigDelivery resolves the container-env map for a rollout, and the
-// zero-trust guard the whole channel rests on: TWO80_CONFIG (what this returns) may
-// NEVER carry a secret's value. A secret is a kind='secret' row the app never reads;
-// config is kind='config'. resolve reveals only config-kind rows.
+// ControlPlaneConfigDelivery resolves a rollout's config into two channels: plaintext
+// `env` (the TWO80_CONFIG var) and `secrets` (Worker secret bindings), split by each
+// entry's `sensitive` flag. Two guards the channel rests on: a sensitive value NEVER
+// lands in the plaintext env, and a kind='secret' store row is NEVER read (resolve
+// reveals only kind='config' rows).
 
 import { describe, expect, it } from 'vitest';
 import type { ConfigEntry } from '@280/contracts';
@@ -28,36 +29,50 @@ const configVal = (name: string, value: string): AppSecret =>
   ({ appId: app.id, name, envelope: value, setBy: 'owner', setAt: 1, kind: 'config' });
 
 describe('ControlPlaneConfigDelivery', () => {
-  it('merges committed-public config with revealed dashboard config', async () => {
-    const store = storeWith([configVal('SHEET_ID', 'revealed-id')]);
+  it('routes non-sensitive to env and revealed sensitive to secrets', async () => {
+    const store = storeWith([configVal('API_KEY', 'revealed-key')]);
     const delivery = new ControlPlaneConfigDelivery(store, cipher);
     const manifestConfig: ConfigEntry[] = [
       { name: 'REGION', value: 'us-east-1', sensitive: false },
-      { name: 'SHEET_ID', value: '', sensitive: true },
+      { name: 'API_KEY', value: '', sensitive: true },
     ];
-    expect(await delivery.resolve(app, manifestConfig)).toEqual({ REGION: 'us-east-1', SHEET_ID: 'revealed-id' });
+    expect(await delivery.resolve(app, manifestConfig)).toEqual({
+      env: { REGION: 'us-east-1' },
+      secrets: { API_KEY: 'revealed-key' },
+    });
   });
 
-  it('NEVER reveals a secret value into the config map (zero-trust guard)', async () => {
+  it('keeps a committed sensitive value out of the plaintext env', async () => {
+    const delivery = new ControlPlaneConfigDelivery(storeWith([]), cipher);
+    const resolved = await delivery.resolve(app, [
+      { name: 'REGION', value: 'us-east-1', sensitive: false },
+      { name: 'STRIPE_KEY', value: 'sk_live_committed', sensitive: true },
+    ]);
+    expect(resolved).toEqual({
+      env: { REGION: 'us-east-1' },
+      secrets: { STRIPE_KEY: 'sk_live_committed' },
+    });
+  });
+
+  it('NEVER reads a kind=secret store row (zero-trust guard)', async () => {
     // The store holds a real secret value under kind='secret'. Even if a config entry
     // shared its name, resolve must not pull the secret-kind row.
     const store = storeWith([
       secret('GOOGLE_SA_JSON', 'super-secret-private-key'),
-      configVal('SHEET_ID', 'public-sheet-id'),
+      configVal('API_KEY', 'entered-key'),
     ]);
     const delivery = new ControlPlaneConfigDelivery(store, cipher);
-    const map = await delivery.resolve(app, [
-      { name: 'SHEET_ID', value: '', sensitive: true },
+    const resolved = await delivery.resolve(app, [
+      { name: 'API_KEY', value: '', sensitive: true },
       { name: 'REGION', value: 'us-east-1', sensitive: false },
     ]);
-    expect(map).toEqual({ SHEET_ID: 'public-sheet-id', REGION: 'us-east-1' });
-    expect(JSON.stringify(map)).not.toContain('super-secret-private-key');
-    expect(map).not.toHaveProperty('GOOGLE_SA_JSON');
+    expect(resolved).toEqual({ env: { REGION: 'us-east-1' }, secrets: { API_KEY: 'entered-key' } });
+    expect(JSON.stringify(resolved)).not.toContain('super-secret-private-key');
   });
 
-  it('omits a required config value that has not been entered yet', async () => {
+  it('omits a required secret value that has not been entered yet', async () => {
     const delivery = new ControlPlaneConfigDelivery(storeWith([]), cipher);
-    const map = await delivery.resolve(app, [{ name: 'SHEET_ID', value: '', sensitive: true }]);
-    expect(map).toEqual({}); // the waiting gate is what blocks go-live; delivery just omits it
+    const resolved = await delivery.resolve(app, [{ name: 'API_KEY', value: '', sensitive: true }]);
+    expect(resolved).toEqual({ env: {}, secrets: {} }); // the waiting gate is what blocks go-live
   });
 });

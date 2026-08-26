@@ -13,7 +13,11 @@ export interface RolloutJob {
   files: ContextFile[];
   runtime: {
     routes: RouteGate[];
+    // Non-secret config, baked into the plaintext TWO80_CONFIG Worker var.
     env: Record<string, string>;
+    // Sensitive config, uploaded as write-only Worker secret bindings the container
+    // forwards into process.env; never enters the plaintext roll config.
+    secrets: Record<string, string>;
   };
 }
 

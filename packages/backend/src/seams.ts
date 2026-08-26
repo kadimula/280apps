@@ -306,6 +306,14 @@ export interface ContainerApp {
   script: string;
 }
 
+// ResolvedConfig splits a rollout's config into the two channels the roll uses:
+// plaintext non-secret env (TWO80_CONFIG var) and sensitive secrets (Worker secret
+// bindings). Sensitivity is the config entry's `sensitive` flag.
+export interface ResolvedConfig {
+  env: Record<string, string>;
+  secrets: Record<string, string>;
+}
+
 export interface ConfigDelivery {
-  resolve(app: ContainerApp, config: ConfigEntry[]): Promise<Record<string, string>>;
+  resolve(app: ContainerApp, config: ConfigEntry[]): Promise<ResolvedConfig>;
 }

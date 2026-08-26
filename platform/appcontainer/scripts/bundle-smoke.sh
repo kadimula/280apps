@@ -50,7 +50,7 @@ if grep -qiE 'could not resolve|build failed' "$log"; then
   exit 1
 fi
 
-for marker in ContainerProxy TWO80_SDK_API_ORIGIN TWO80_API; do
+for marker in ContainerProxy TWO80_SDK_API_ORIGIN TWO80_API TWO80_SECRET_NAMES; do
   if ! grep -rq "$marker" "$out"; then
     echo "[smoke] FAIL: expected marker '$marker' missing from bundle" >&2
     exit 1
@@ -62,4 +62,4 @@ if grep -rq '@280/egress\|makeEgressHandler\|oauth2.googleapis.com' "$out"; then
   exit 1
 fi
 
-echo "[smoke] OK: fixed SDK API boundary resolves from the vendored layout"
+echo "[smoke] OK: config, secret, and SDK-origin injection resolve from the vendored layout"

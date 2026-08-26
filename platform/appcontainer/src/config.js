@@ -20,6 +20,32 @@ export function parseConfig(raw) {
   return out;
 }
 
+// parseSecrets resolves the sensitive env map from the DO's Worker secret bindings.
+// TWO80_SECRET_NAMES (a plaintext var) lists which of env's keys are secrets to
+// forward; each named binding is read off env, non-string values dropped. The names
+// carry no secret material, only the values in the secret bindings do.
+export function parseSecrets(env, rawNames) {
+  const out = {};
+  if (env === null || typeof env !== 'object') return out;
+  for (const name of parseSecretNames(rawNames)) {
+    const value = env[name];
+    if (typeof value === 'string') out[name] = value;
+  }
+  return out;
+}
+
+function parseSecretNames(raw) {
+  if (typeof raw !== 'string' || raw === '') return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((name) => typeof name === 'string' && name !== '');
+}
+
 export function parseSdkApi(raw) {
   if (typeof raw !== 'string' || raw === '') return { origin: '', host: '' };
   try {

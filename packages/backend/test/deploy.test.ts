@@ -122,7 +122,11 @@ describe('sync + activation', () => {
     await uploadAll(port, res.app.id, res.missing, content);
 
     expect((await port.status(res.app.id, res.deployId)).state).toBe(State.Live);
-    expect(builder.rollouts[0]?.runtime).not.toHaveProperty('secrets');
+    // A declared secret (kind='secret') is backend-held: it reaches neither the
+    // plaintext env nor the injected secret bindings the container forwards.
+    const runtime = builder.rollouts[0]!.runtime;
+    expect(runtime.env).not.toHaveProperty('STRIPE_KEY');
+    expect(runtime.secrets).toEqual({});
   });
 
   it('parks before rollout until required config (sensitive, no committed value) is entered', async () => {

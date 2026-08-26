@@ -29,7 +29,7 @@ function activation(files: Record<string, string>): { act: RolloutJob } {
         path,
         read: async () => new TextEncoder().encode(body),
       })),
-      runtime: { routes: [], env: {} },
+      runtime: { routes: [], env: {}, secrets: {} },
     },
   };
 }
@@ -111,7 +111,7 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
     expect(seq).toEqual(['depot build', 'wrangler deploy']);
 
     const depot = calls.find((c) => c.cmd === 'depot')!;
-    expect(depot.args).toEqual(['build', '--push', '-t', 'registry.cloudflare.com/acct1/demo-abc:dep_1', '-f', 'Dockerfile', '.']);
+    expect(depot.args).toEqual(['build', '--push', '--platform', 'linux/amd64', '-t', 'registry.cloudflare.com/acct1/demo-abc:dep_1', '-f', 'Dockerfile', '.']);
     expect(depot.env).toMatchObject({
       DEPOT_PROJECT_ID: 'proj_base',
       DEPOT_BUILD_ID: 'build_1',
@@ -287,6 +287,63 @@ describe('DepotBuilder (injected exec + fake Depot API)', () => {
       GOOGLE_SHEET_ID: '1AbC',
       REGION: 'us-east-1',
     });
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('uploads sensitive config as Worker secrets and re-rolls, names-only in vars', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    let rollConfig: Record<string, unknown> = {};
+    const { exec, calls } = recordingExec();
+    const wrapped: ExecFn = async (cmd, args, opts) => {
+      if (cmd === 'wrangler' && args[0] === 'deploy') {
+        rollConfig = JSON.parse(await readFile(join(opts.cwd, 'wrangler.roll.json'), 'utf8'));
+      }
+      return exec(cmd, args, opts);
+    };
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({
+      accountId: 'acct1', apiToken: 't', depotToken: 'd', projectId: 'p',
+      workerEntry: 'harness.js', workdir, exec: wrapped, api, fetch: credsFetch(),
+    });
+    await deploy(
+      builder,
+      rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, {
+        env: { REGION: 'us-east-1' },
+        secrets: { STRIPE_KEY: 'sk_live_x', DB_URL: 'postgres://u:p@h/db' },
+      }),
+    );
+
+    const vars = rollConfig.vars as Record<string, string>;
+    // Non-secret config rides the plaintext var; secret NAMES (never values) list the bindings.
+    expect(JSON.parse(vars.TWO80_CONFIG)).toEqual({ REGION: 'us-east-1' });
+    expect(JSON.parse(vars.TWO80_SECRET_NAMES)).toEqual(['STRIPE_KEY', 'DB_URL']);
+    expect(JSON.stringify(rollConfig)).not.toContain('sk_live_x');
+
+    // Command sequence: roll, secret bulk (value on stdin), then re-roll.
+    const wr = calls.filter((c) => c.cmd === 'wrangler');
+    expect(wr.map((c) => `${c.args[0]} ${c.args[1] ?? ''}`)).toEqual([
+      'deploy --config',
+      'secret bulk',
+      'deploy --config',
+    ]);
+    const bulk = wr.find((c) => c.args[0] === 'secret')!;
+    expect(JSON.parse(bulk.input ?? '')).toEqual({ STRIPE_KEY: 'sk_live_x', DB_URL: 'postgres://u:p@h/db' });
+    expect(bulk.env).toMatchObject({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'acct1' });
+    await rm(workdir, { recursive: true, force: true });
+  });
+
+  it('a no-secret roll makes exactly one deploy and no secret bulk', async () => {
+    const workdir = mkdtempSync(join(tmpdir(), '280-wd-'));
+    const { exec, calls } = recordingExec();
+    const { api } = fakeApi();
+    const builder = new DepotBuilder({
+      accountId: 'a', apiToken: 't', depotToken: 'd', projectId: 'p',
+      workerEntry: 'harness.js', workdir, exec, api, fetch: credsFetch(),
+    });
+    await deploy(builder, rolloutOf(activation({ Dockerfile: 'FROM node:20' }).act, { env: { REGION: 'us-east-1' } }));
+    const wr = calls.filter((c) => c.cmd === 'wrangler');
+    expect(wr).toHaveLength(1);
+    expect(wr[0].args[0]).toBe('deploy');
     await rm(workdir, { recursive: true, force: true });
   });
 

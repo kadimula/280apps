@@ -202,15 +202,29 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
   // (The old `wrangler containers apply` never existed in wrangler 4.116 — it
   // no-oped while the deploy reported success. See report §7.)
   protected async roll(ctx: string, image: string, job: RolloutJob): Promise<void> {
+    const cfEnv = { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId };
     const configPath = join(ctx, ROLL_CONFIG_FILE);
     await writeFile(configPath, JSON.stringify(this.rollConfig(job, image), null, 2));
-    await this.run(
-      ctx,
-      'wrangler',
-      ['deploy', '--config', ROLL_CONFIG_FILE, '--containers-rollout', 'immediate'],
-      'roll the container application',
-      { CLOUDFLARE_API_TOKEN: this.apiToken, CLOUDFLARE_ACCOUNT_ID: this.accountId },
-    );
+    const rollArgs = ['deploy', '--config', ROLL_CONFIG_FILE, '--containers-rollout', 'immediate'];
+    await this.run(ctx, 'wrangler', rollArgs, 'roll the container application', cfEnv);
+
+    // Sensitive config is uploaded as write-only Worker secret bindings after the
+    // deploy (secret bulk requires the script to exist), then the roll is repeated so
+    // container instances start from a version that already carries the secrets. The
+    // harness forwards each named binding into process.env; TWO80_SECRET_NAMES (a
+    // plaintext var) lists which. secret bulk is idempotent, so a changed credential
+    // lands on the next push, and a no-secret app skips both extra steps entirely.
+    if (Object.keys(job.runtime.secrets).length > 0) {
+      await this.run(
+        ctx,
+        'wrangler',
+        ['secret', 'bulk', '--config', ROLL_CONFIG_FILE],
+        'upload app secrets',
+        cfEnv,
+        JSON.stringify(job.runtime.secrets),
+      );
+      await this.run(ctx, 'wrangler', rollArgs, 'roll the container application', cfEnv);
+    }
   }
 
   // rollConfig is the wrangler config the roll deploys: the App280Container harness
@@ -261,6 +275,11 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
         // non-secret values. Omitted when empty so a config-less roll is byte-identical.
         ...(Object.keys(job.runtime.env).length > 0
           ? { TWO80_CONFIG: JSON.stringify(job.runtime.env) }
+          : {}),
+        // The names (never values) of the Worker secret bindings the harness forwards
+        // into process.env. Values are uploaded out of band via `wrangler secret bulk`.
+        ...(Object.keys(job.runtime.secrets).length > 0
+          ? { TWO80_SECRET_NAMES: JSON.stringify(Object.keys(job.runtime.secrets)) }
           : {}),
       },
     };
@@ -349,8 +368,9 @@ export abstract class CloudflareContainerDeployment implements ContainerBuilder 
     args: string[],
     what: string,
     env?: Record<string, string>,
+    input?: string,
   ): Promise<void> {
-    const res = await this.exec(cmd, args, env ? { cwd, env } : { cwd });
+    const res = await this.exec(cmd, args, { cwd, ...(env ? { env } : {}), ...(input === undefined ? {} : { input }) });
     if (res.code === 0) return;
     throw new DeployErr({
       code: DeployCode.Unavailable,

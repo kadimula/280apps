@@ -3,14 +3,9 @@
 // constructor decodes it into process.env. Tested here because platform/appcontainer
 // is not a workspace package with its own runner; the decoder is dependency-free.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-vi.mock('@cloudflare/containers', () => ({
-  Container: class {},
-  ContainerProxy: class {},
-}));
-
-import { parseConfig, parseSdkApi } from '../../../platform/appcontainer/src/config.js';
+import { parseConfig, parseSecrets, parseSdkApi } from '../../../platform/appcontainer/src/config.js';
 import { App280Container } from '../../../platform/appcontainer/src/container.js';
 
 describe('appcontainer parseConfig', () => {
@@ -35,22 +30,43 @@ describe('appcontainer parseConfig', () => {
   });
 });
 
+describe('appcontainer parseSecrets', () => {
+  it('forwards only the named Worker secret bindings, dropping non-strings', () => {
+    const env = { STRIPE_KEY: 'sk_live', DB_URL: 'postgres://x', NOISE: 'ignored', N: 5 };
+    expect(parseSecrets(env, JSON.stringify(['STRIPE_KEY', 'DB_URL', 'MISSING', 'N']))).toEqual({
+      STRIPE_KEY: 'sk_live',
+      DB_URL: 'postgres://x',
+    });
+  });
+
+  it('returns {} for an absent, empty, or malformed names manifest', () => {
+    const env = { A: 'v' };
+    for (const raw of [undefined, '', 'not json', '{"A":"v"}', '[1,2]']) {
+      expect(parseSecrets(env, raw)).toEqual({});
+    }
+  });
+});
+
 describe('App280Container network boundary', () => {
-  it('permits only the SDK API host and injects its origin', () => {
+  it('reaches the internet directly and injects config, secrets, and the SDK origin', () => {
     const container = new App280Container({}, {
       TWO80_SDK_API_ORIGIN: 'https://api.280apps.com',
       TWO80_CONFIG: JSON.stringify({ REGION: 'us-east-1' }),
+      TWO80_SECRET_NAMES: JSON.stringify(['STRIPE_KEY']),
+      STRIPE_KEY: 'sk_live_x',
     });
-    expect(container.enableInternet).toBe(false);
-    expect(container.interceptHttps).toBe(true);
-    expect(container.allowedHosts).toEqual(['api.280apps.com']);
-    expect(container.envVars).toEqual({ REGION: 'us-east-1', TWO80_API: 'https://api.280apps.com' });
+    expect(container.enableInternet).toBe(true);
+    expect(container.allowedHosts).toBeUndefined();
+    expect(container.envVars).toEqual({
+      REGION: 'us-east-1',
+      STRIPE_KEY: 'sk_live_x',
+      TWO80_API: 'https://api.280apps.com',
+    });
   });
 
-  it('allows nothing when the platform origin is malformed', () => {
+  it('injects no TWO80_API when the platform origin is malformed, but still reaches the internet', () => {
     const container = new App280Container({}, { TWO80_SDK_API_ORIGIN: 'https://*.280apps.com' });
-    expect(container.enableInternet).toBe(false);
-    expect(container.allowedHosts).toEqual([]);
+    expect(container.enableInternet).toBe(true);
     expect(container.envVars).not.toHaveProperty('TWO80_API');
   });
 });

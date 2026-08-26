@@ -5,6 +5,7 @@ import {
   publicConfig,
   requiredConfigNames,
   stateTerminal,
+  type ConfigEntry,
   type DeployError,
   type Manifest,
 } from '@280/contracts';
@@ -67,9 +68,22 @@ function rolloutJob(deps: ContainerDeploymentDeps, app: App, dep: Deploy): Rollo
     })),
     runtime: {
       routes: dep.manifest.routes ?? [],
-      env: publicConfig(dep.manifest.config ?? []),
+      ...committedConfig(dep.manifest.config ?? []),
     },
   };
+}
+
+// The committed (in-repo) config split into the two roll channels by the `sensitive`
+// flag. ControlPlaneConfigDelivery.resolve overlays dashboard-entered values on top;
+// this is the value used when no config delivery is wired (tests, self-host).
+function committedConfig(config: ConfigEntry[]): { env: Record<string, string>; secrets: Record<string, string> } {
+  const sensitive = new Set(config.filter((c) => c.sensitive).map((c) => c.name));
+  const env: Record<string, string> = {};
+  const secrets: Record<string, string> = {};
+  for (const [name, value] of Object.entries(publicConfig(config))) {
+    (sensitive.has(name) ? secrets : env)[name] = value;
+  }
+  return { env, secrets };
 }
 
 function nowSecs(): number {
@@ -121,7 +135,11 @@ export class ContainerDeploymentCoordinator {
 
     if (state === State.WaitingSecrets && !(await this.deps.store.resumeActivation(app.id, dep.id))) return;
 
-    if (this.deps.config) job.runtime.env = await this.deps.config.resolve(job.app, config);
+    if (this.deps.config) {
+      const resolved = await this.deps.config.resolve(job.app, config);
+      job.runtime.env = resolved.env;
+      job.runtime.secrets = resolved.secrets;
+    }
     await this.rollout(job);
     await this.deps.store.finishLive(app.id, dep.id);
   }

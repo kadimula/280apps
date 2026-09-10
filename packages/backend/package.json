@@ -51,7 +51,7 @@
     "@googleapis/sheets": "^14.0.0",
     "@hono/node-server": "^2.0.0",
     "google-auth-library": "^10.1.0",
-    "hono": "^4.13.0",
+    "hono": "^4.13.5",
     "pg": "^8.13.0"
   },
   "devDependencies": {

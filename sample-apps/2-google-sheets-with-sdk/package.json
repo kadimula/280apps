@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@two80/sdk": "file:../../packages/sdk",
-    "next": "15.5.22",
+    "next": "16.3.1",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
